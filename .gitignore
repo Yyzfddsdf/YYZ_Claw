@@ -3,3 +3,7 @@ backend/node_modules/
 frontend/node_modules/
 frontend/dist/
 npm-debug.log*
+History/*.sqlite
+History/*.sqlite-*
+memory.sqlite
+memory.sqlite-*

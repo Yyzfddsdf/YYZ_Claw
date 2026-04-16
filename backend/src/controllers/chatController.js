@@ -1,0 +1,1624 @@
+import fs from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+
+import {
+  approvalModeSchema,
+  chatRequestSchema,
+  conversationApprovalModeSchema,
+  conversationCompressionSchema
+} from "../schemas/chatSchema.js";
+import { configSchema } from "../schemas/configSchema.js";
+import {
+  conversationSkillsSchema,
+  conversationDeveloperPromptSchema,
+  conversationUpsertSchema,
+  conversationWorkplaceSchema
+} from "../schemas/historySchema.js";
+import {
+  DEFAULT_HISTORY_TITLE,
+  DEFAULT_WORKPLACE_PATH,
+  buildCompressionSnapshotMetadata,
+  buildCompressionTokenSnapshot,
+  buildConversationPromptMessages,
+  buildForkTitle,
+  createValidationError,
+  extractFirstSentence,
+  isAutoTitleCandidate,
+  loadApprovalRules,
+  normalizeUsageRecordPayload,
+  resolveAgentRuntimeConfig,
+  scheduleAsyncTitleGeneration
+} from "../services/chat/conversationRuntimeShared.js";
+import { AgentConversationRecorder } from "../services/orchestration/AgentConversationRecorder.js";
+import { resolveSubagentCompletionDispatchRequest } from "../services/orchestration/subagentCompletionShared.js";
+import { isAbortError } from "../services/runs/runAbort.js";
+import { endSse, initSse, writeSseEvent } from "../services/stream/SseChannel.js";
+
+function formatZodError(zodError) {
+  return zodError.issues
+    .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`)
+    .join("; ");
+}
+
+function buildAgentMeta(agent) {
+  if (!agent) {
+    return null;
+  }
+
+  return {
+    agentId: String(agent.agentId ?? "").trim(),
+    agentType: String(agent.agentType ?? "").trim(),
+    agentDisplayName: String(agent.displayName ?? "").trim(),
+    agentStatus: String(agent.status ?? "idle").trim() || "idle",
+    agentBusy: String(agent.status ?? "").trim() === "running"
+  };
+}
+
+function resolveSkillOwnerHistory(history, historyStore) {
+  if (!history) {
+    return null;
+  }
+
+  const source = String(history?.source ?? "").trim().toLowerCase();
+  if (source !== "subagent") {
+    return history;
+  }
+
+  const parentConversationId = String(history?.parentConversationId ?? "").trim();
+  if (!parentConversationId) {
+    return history;
+  }
+
+  return historyStore?.getConversation?.(parentConversationId) ?? history;
+}
+
+function getEffectiveHistorySkills(history, historyStore) {
+  const skillOwnerHistory = resolveSkillOwnerHistory(history, historyStore);
+  return Array.isArray(skillOwnerHistory?.skills)
+    ? skillOwnerHistory.skills
+    : Array.isArray(history?.skills)
+      ? history.skills
+      : [];
+}
+
+function enrichHistorySummary(history, orchestratorStore, historyStore) {
+  if (!history) {
+    return history;
+  }
+
+  const source = String(history?.source ?? "").trim().toLowerCase();
+  const agent = orchestratorStore?.findAgentByConversationId?.(history.id) ?? null;
+  const sessionId = source === "subagent"
+    ? String(history.parentConversationId ?? "").trim()
+    : String(history.id ?? "").trim();
+  const childAgents =
+    source === "subagent"
+      ? []
+      : orchestratorStore?.listAgents?.(sessionId, { includePrimary: false }) ?? [];
+
+  return {
+    ...history,
+    skills: getEffectiveHistorySkills(history, historyStore),
+    ...(buildAgentMeta(agent) ?? {}),
+    subagentCount: Array.isArray(childAgents) ? childAgents.length : 0
+  };
+}
+
+function enrichHistoryDetail(history, orchestratorStore, historyStore) {
+  const summary = enrichHistorySummary(history, orchestratorStore, historyStore);
+  if (!summary) {
+    return summary;
+  }
+
+  const source = String(summary?.source ?? "").trim().toLowerCase();
+  if (source === "subagent") {
+    return {
+      ...summary,
+      subagents: []
+    };
+  }
+
+  const sessionId = String(summary.id ?? "").trim();
+  const subagents = orchestratorStore?.listAgents?.(sessionId, { includePrimary: false }) ?? [];
+  return {
+    ...summary,
+    subagents: subagents.map((agent) => ({
+      ...buildAgentMeta(agent),
+      conversationId: String(agent?.conversationId ?? "").trim(),
+      lastActiveAt: Number(agent?.lastActiveAt ?? 0)
+    }))
+  };
+}
+
+function parseBooleanFlag(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function parseJsonField(rawValue, fieldName) {
+  if (typeof rawValue !== "string") {
+    return rawValue;
+  }
+
+  const normalized = rawValue.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    throw createValidationError(`${fieldName} must be valid JSON`);
+  }
+}
+
+function normalizeStreamRequestBody(body) {
+  const raw = body && typeof body === "object" ? body : {};
+  const messages = parseJsonField(raw.messages, "messages");
+
+  return {
+    ...raw,
+    messages: Array.isArray(messages) ? messages : raw.messages,
+    enableDeepThinking: parseBooleanFlag(raw.enableDeepThinking)
+  };
+}
+
+function normalizeMessageMeta(meta) {
+  return meta && typeof meta === "object" && !Array.isArray(meta) ? { ...meta } : {};
+}
+
+function mergeParsedFilesIntoMessages(messages, parsedFilePayload) {
+  const parsedFiles = Array.isArray(parsedFilePayload?.files) ? parsedFilePayload.files : [];
+
+  if (!Array.isArray(messages) || messages.length === 0 || parsedFiles.length === 0) {
+    return Array.isArray(messages) ? messages : [];
+  }
+
+  const nextMessages = messages.map((message) => ({
+    ...message,
+    meta: normalizeMessageMeta(message?.meta)
+  }));
+
+  let targetUserMessageIndex = -1;
+  for (let index = nextMessages.length - 1; index >= 0; index -= 1) {
+    if (String(nextMessages[index]?.role ?? "").trim() === "user") {
+      targetUserMessageIndex = index;
+      break;
+    }
+  }
+
+  if (targetUserMessageIndex < 0) {
+    return nextMessages;
+  }
+
+  const targetMessage = nextMessages[targetUserMessageIndex];
+  const nextMeta = normalizeMessageMeta(targetMessage.meta);
+  const previousFiles = Array.isArray(nextMeta.parsedFiles) ? nextMeta.parsedFiles : [];
+  const truncatedFileCount = Number(parsedFilePayload?.truncatedFileCount ?? 0);
+
+  nextMeta.parsedFiles = [...previousFiles, ...parsedFiles];
+
+  if (truncatedFileCount > 0) {
+    nextMeta.parsedFilesTruncatedCount = truncatedFileCount;
+  }
+
+  nextMessages[targetUserMessageIndex] = {
+    ...targetMessage,
+    meta: nextMeta
+  };
+
+  return nextMessages;
+}
+
+function findLastUserMessage(messages) {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (String(candidate?.role ?? "").trim() === "user") {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveWorkplacePath(inputPath) {
+  const candidate = String(inputPath ?? "").trim();
+  return candidate ? path.resolve(candidate) : DEFAULT_WORKPLACE_PATH;
+}
+
+async function ensureDirectoryPath(inputPath) {
+  const resolvedPath = resolveWorkplacePath(inputPath);
+
+  let stats;
+  try {
+    stats = await fs.stat(resolvedPath);
+  } catch {
+    throw createValidationError("workplacePath does not exist");
+  }
+
+  if (!stats.isDirectory()) {
+    throw createValidationError("workplacePath must be a directory");
+  }
+
+  return resolvedPath;
+}
+
+async function selectDirectoryFromSystemDialog(initialPath) {
+  if (process.platform !== "win32") {
+    const unsupportedError = new Error("system folder picker is only supported on Windows");
+    unsupportedError.statusCode = 501;
+    throw unsupportedError;
+  }
+
+  const initial = String(initialPath ?? "").trim();
+  const script = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "$initial = $env:WORKPLACE_INITIAL_PATH",
+    "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
+    "$dialog.Description = '选择会话工作区目录'",
+    "$dialog.ShowNewFolderButton = $true",
+    "if ($initial -and (Test-Path -LiteralPath $initial -PathType Container)) { $dialog.SelectedPath = $initial }",
+    "$result = $dialog.ShowDialog()",
+    "if ($result -eq [System.Windows.Forms.DialogResult]::OK) {",
+    "  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+    "  Write-Output $dialog.SelectedPath",
+    "  exit 0",
+    "}",
+    "exit 2"
+  ].join("; ");
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+        env: {
+          ...process.env,
+          WORKPLACE_INITIAL_PATH: initial
+        }
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          if (Number(error.code) === 2) {
+            resolve({ canceled: true, selectedPath: "" });
+            return;
+          }
+
+          reject(new Error(String(stderr ?? error.message ?? "open folder dialog failed").trim()));
+          return;
+        }
+
+        const selectedPath = String(stdout ?? "").trim();
+        if (!selectedPath) {
+          resolve({ canceled: true, selectedPath: "" });
+          return;
+        }
+
+        resolve({
+          canceled: false,
+          selectedPath
+        });
+      }
+    );
+  });
+}
+
+function attachForegroundRunResponse(req, res, run, conversationRunCoordinator) {
+  if (
+    !run ||
+    !conversationRunCoordinator ||
+    typeof conversationRunCoordinator.attachSseResponse !== "function"
+  ) {
+    return () => {};
+  }
+
+  const detachSse = conversationRunCoordinator.attachSseResponse(run, res, {
+    listenerId: `foreground_response_${String(run.runId ?? "").trim()}`
+  });
+
+  const abortRun = () => {
+    conversationRunCoordinator.abortRun?.(run, "client disconnected");
+    cleanup();
+  };
+
+  const cleanup = () => {
+    detachSse?.();
+    req.off?.("aborted", abortRun);
+    req.off?.("error", abortRun);
+  };
+
+  req.on?.("aborted", abortRun);
+  req.on?.("error", abortRun);
+
+  return cleanup;
+}
+
+function emitRunEvent(run, payload, conversationRunCoordinator, res) {
+  const emitted =
+    conversationRunCoordinator &&
+    typeof conversationRunCoordinator.emitEvent === "function" &&
+    run
+      ? conversationRunCoordinator.emitEvent(run, payload)
+      : false;
+
+  if (!emitted) {
+    writeSseEvent(res, "agent", payload);
+  }
+}
+
+export function createChatController({
+  chatAgent,
+  toolRegistry,
+  configStore,
+  historyStore,
+  memoryStore,
+  compressionService,
+  attachmentParserService,
+  approvalRulesStore,
+  agentsPromptStore,
+  skillValidator,
+  skillPromptBuilder,
+  skillCatalog,
+  conversationAgentRuntimeService,
+  conversationEventBroadcaster,
+  conversationRunCoordinator,
+  orchestratorStore,
+  orchestratorSchedulerService,
+  orchestratorSupervisorService,
+  wakeDispatcher
+}) {
+  return {
+    parseUploadedFiles: async (req, res) => {
+      const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+
+      if (uploadedFiles.length === 0) {
+        throw createValidationError("at least one file is required");
+      }
+
+      if (
+        !attachmentParserService ||
+        typeof attachmentParserService.parseFiles !== "function"
+      ) {
+        throw createValidationError("attachment parser service is unavailable");
+      }
+
+      const parsedFilePayload = await attachmentParserService.parseFiles(uploadedFiles);
+
+      res.json({
+        files: Array.isArray(parsedFilePayload?.files) ? parsedFilePayload.files : [],
+        truncatedFileCount: Number(parsedFilePayload?.truncatedFileCount ?? 0)
+      });
+    },
+
+    selectWorkplaceBySystemDialog: async (req, res) => {
+      const requestedInitialPath = String(req.body?.initialPath ?? "").trim();
+      let initialPath = DEFAULT_WORKPLACE_PATH;
+
+      if (requestedInitialPath) {
+        try {
+          initialPath = await ensureDirectoryPath(requestedInitialPath);
+        } catch {
+          initialPath = DEFAULT_WORKPLACE_PATH;
+        }
+      }
+
+      const result = await selectDirectoryFromSystemDialog(initialPath);
+
+      if (result.canceled) {
+        return res.json({ canceled: true });
+      }
+
+      const selectedPath = await ensureDirectoryPath(result.selectedPath);
+      res.json({
+        canceled: false,
+        selectedPath
+      });
+    },
+
+    listHistories: async (_req, res) => {
+      const histories = historyStore.listConversations().map((history) =>
+        enrichHistorySummary(history, orchestratorStore, historyStore)
+      );
+      res.json({ histories });
+    },
+
+    getHistoryById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const history = historyStore.getConversation(conversationId);
+
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.json({ history: enrichHistoryDetail(history, orchestratorStore, historyStore) });
+    },
+
+    subscribeConversationEvents: async (req, res) => {
+      initSse(res);
+
+      if (
+        !conversationEventBroadcaster ||
+        typeof conversationEventBroadcaster.subscribe !== "function"
+      ) {
+        writeSseEvent(res, "agent", {
+          conversationId: "",
+          type: "error",
+          message: "conversation event broadcaster is unavailable"
+        });
+        endSse(res);
+        return;
+      }
+
+      const unsubscribe = conversationEventBroadcaster.subscribe(res);
+      req.on("close", unsubscribe);
+      req.on("error", unsubscribe);
+    },
+
+    stopRunByConversationId: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const activeRun =
+        conversationRunCoordinator?.getRunByConversationId?.(conversationId) ?? null;
+      if (!activeRun) {
+        return res.json({
+          success: true,
+          stopped: false
+        });
+      }
+
+      conversationRunCoordinator?.abortRun?.(activeRun, "stopped by user");
+      res.json({
+        success: true,
+        stopped: true,
+        runId: String(activeRun.runId ?? "").trim()
+      });
+    },
+
+    forkHistoryById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      if (String(history?.source ?? "").trim().toLowerCase() === "subagent") {
+        const conflictError = createValidationError("subagent conversation does not support fork");
+        conflictError.statusCode = 409;
+        throw conflictError;
+      }
+
+      const forkedHistory = historyStore.cloneConversationAsFork(conversationId, {
+        conversationId: `conv_${randomUUID()}`,
+        title: buildForkTitle(history.title),
+        workplacePath: history.workplacePath,
+        approvalMode: history.approvalMode,
+        developerPrompt: history.developerPrompt,
+        skills: history.skills,
+        model: history.model
+      });
+
+      res.status(201).json({
+        history: enrichHistoryDetail(forkedHistory, orchestratorStore, historyStore)
+      });
+    },
+
+    updateWorkplaceById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationWorkplaceSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const workplacePath = await ensureDirectoryPath(validation.data.workplacePath);
+
+      if (history.workplaceLocked && history.workplacePath !== workplacePath) {
+        const lockedError = createValidationError("workplace is locked for this conversation");
+        lockedError.statusCode = 409;
+        throw lockedError;
+      }
+
+      if (history.workplaceLocked) {
+        return res.json({
+          history: enrichHistoryDetail(history, orchestratorStore, historyStore),
+          locked: true
+        });
+      }
+
+      const updated = historyStore.updateConversationWorkplace(conversationId, workplacePath);
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        locked: false
+      });
+    },
+
+    updateApprovalModeById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationApprovalModeSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const updated = historyStore.updateConversationApprovalMode(
+        conversationId,
+        validation.data.approvalMode
+      );
+
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        approvalMode: validation.data.approvalMode
+      });
+    },
+
+    updateSkillsById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationSkillsSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const targetConversationId =
+        String(history?.source ?? "").trim().toLowerCase() === "subagent" &&
+        String(history?.parentConversationId ?? "").trim()
+          ? String(history.parentConversationId).trim()
+          : conversationId;
+
+      const updatedTarget = historyStore.updateConversationSkills(
+        targetConversationId,
+        validation.data.skills
+      );
+      const responseHistory =
+        targetConversationId === conversationId
+          ? updatedTarget
+          : historyStore.getConversation(conversationId) ?? updatedTarget;
+
+      res.json({
+        history: enrichHistoryDetail(responseHistory, orchestratorStore, historyStore),
+        skills: validation.data.skills,
+        skillOwnerConversationId: targetConversationId
+      });
+    },
+
+    updateDeveloperPromptById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationDeveloperPromptSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const updated = historyStore.updateConversationDeveloperPrompt(
+        conversationId,
+        validation.data.developerPrompt
+      );
+
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        developerPrompt: validation.data.developerPrompt
+      });
+    },
+
+    compressHistoryById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationCompressionSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const existing = historyStore.getConversation(conversationId);
+      if (!existing) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const configValidation = configSchema.safeParse(await configStore.read());
+      if (!configValidation.success) {
+        throw createValidationError(
+          "config/config.json is invalid. Save model/baseURL/apiKey from frontend first."
+        );
+      }
+
+      const latestTokenUsage = existing?.tokenUsage ?? null;
+      const compressionResult = await compressionService.compressConversation({
+        messages: validation.data.messages,
+        runtimeConfig: configValidation.data,
+        latestTokenUsage,
+        trigger: validation.data.trigger
+      });
+
+      const nextMessages = Array.isArray(compressionResult?.messages)
+        ? compressionResult.messages
+        : validation.data.messages;
+
+      let history = historyStore.upsertConversation({
+        conversationId,
+        title: existing.title,
+        workplacePath: existing.workplacePath,
+        parentConversationId: existing.parentConversationId,
+        source: existing.source,
+        model: existing.model,
+        approvalMode: existing.approvalMode,
+        skills: existing.skills,
+        developerPrompt: existing.developerPrompt,
+        messages: nextMessages
+      });
+
+      if (compressionResult?.compressed) {
+        const snapshot = buildCompressionTokenSnapshot(compressionResult);
+        if (snapshot) {
+          history =
+            historyStore.updateConversationTokenSnapshot(
+              conversationId,
+              snapshot,
+              buildCompressionSnapshotMetadata(compressionResult, existing?.model)
+            ) ?? history;
+        }
+      }
+
+      res.json({
+        history: enrichHistoryDetail(history, orchestratorStore, historyStore),
+        compression: {
+          compressed: Boolean(compressionResult?.compressed),
+          reason: String(compressionResult?.reason ?? ""),
+          usageRatio: Number(compressionResult?.usageRatio ?? 0),
+          estimatedTokensBefore: Number(compressionResult?.estimatedTokensBefore ?? 0),
+          estimatedTokensAfter: Number(compressionResult?.estimatedTokensAfter ?? 0),
+          trigger: validation.data.trigger
+        }
+      });
+    },
+
+    upsertHistoryById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationUpsertSchema.safeParse(req.body);
+
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const existing = historyStore.getConversation(conversationId);
+
+      const requestedWorkplacePath = String(validation.data.workplacePath ?? "").trim();
+      const workplacePath = requestedWorkplacePath
+        ? await ensureDirectoryPath(requestedWorkplacePath)
+        : undefined;
+      const developerPrompt = String(validation.data.developerPrompt ?? "").trim();
+
+      if (
+        existing?.workplaceLocked &&
+        workplacePath &&
+        String(existing.workplacePath) !== workplacePath
+      ) {
+        const lockedError = createValidationError("workplace is locked for this conversation");
+        lockedError.statusCode = 409;
+        throw lockedError;
+      }
+
+      if (!existing && validation.data.messages.length === 0) {
+        const reusableEmptyConversation = historyStore.findLatestEmptyConversation();
+        if (reusableEmptyConversation) {
+          return res.json({
+            history: reusableEmptyConversation,
+            reusedConversation: true
+          });
+        }
+
+        const emptyConversationError = createValidationError(
+          "at least one message is required to create a conversation"
+        );
+        emptyConversationError.statusCode = 400;
+        throw emptyConversationError;
+      }
+
+      let title = String(validation.data.title ?? "").trim();
+      const firstUserMessage = validation.data.messages.find(
+        (item) => item.role === "user" && item.content.trim().length > 0
+      );
+      const firstSentence = extractFirstSentence(firstUserMessage?.content);
+
+      if (isAutoTitleCandidate(title) && !isAutoTitleCandidate(existing?.title)) {
+        title = String(existing.title).trim();
+      }
+
+      if (isAutoTitleCandidate(title)) {
+        title = DEFAULT_HISTORY_TITLE;
+      }
+
+      let history = historyStore.mergeConversation({
+        conversationId,
+        title,
+        workplacePath,
+        parentConversationId: existing?.parentConversationId,
+        source: existing?.source,
+        model: existing?.model,
+        approvalMode: validation.data.approvalMode,
+        skills: validation.data.skills,
+        developerPrompt,
+        messages: validation.data.messages
+      });
+
+      if (firstUserMessage && !history.workplaceLocked) {
+        history = historyStore.lockConversationWorkplace(conversationId) ?? history;
+      }
+
+      if (isAutoTitleCandidate(title)) {
+        scheduleAsyncTitleGeneration({
+          conversationId,
+          firstSentence,
+          configStore,
+          historyStore
+        });
+      }
+
+      res.json({ history: enrichHistoryDetail(history, orchestratorStore, historyStore) });
+    },
+
+    deleteHistoryById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (history) {
+        const source = String(history?.source ?? "").trim().toLowerCase();
+        if (source === "subagent") {
+          const agent = orchestratorStore?.findAgentByConversationId?.(conversationId) ?? null;
+          if (agent?.agentId) {
+            orchestratorSupervisorService.deleteSubagent({
+              conversationId: history.parentConversationId,
+              agentId: agent.agentId
+            });
+          } else {
+            historyStore.deleteConversation(conversationId);
+          }
+        } else {
+          const subagents = orchestratorSupervisorService.listSubagents(conversationId);
+          for (const subagent of subagents) {
+            orchestratorSupervisorService.deleteSubagent({
+              conversationId,
+              agentId: subagent.agentId
+            });
+          }
+          historyStore.deleteConversation(conversationId);
+          orchestratorStore?.deleteSession?.(conversationId);
+          orchestratorSchedulerService?.resetSession?.(conversationId);
+        }
+      }
+      res.status(200).json({ success: true });
+    },
+
+    deleteHistoryMessageById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+      const messageId = String(req.params.messageId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      if (!messageId) {
+        throw createValidationError("messageId is required");
+      }
+
+      const deleteResult = historyStore.deleteConversationMessage(conversationId, messageId);
+      if (!deleteResult) {
+        const notFoundError = createValidationError("message not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.json({
+        history: enrichHistoryDetail(deleteResult.history, orchestratorStore, historyStore),
+        deletedMessageIds: Array.isArray(deleteResult.deletedMessageIds)
+          ? deleteResult.deletedMessageIds
+          : []
+      });
+    },
+
+    clearHistoryMessagesById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const clearedHistory = historyStore.clearConversationMessages(conversationId);
+      if (!clearedHistory) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.json({
+        history: enrichHistoryDetail(clearedHistory, orchestratorStore, historyStore)
+      });
+    },
+
+    confirmToolApprovalById: async (req, res) => {
+      const approvalId = String(req.params.approvalId || "").trim();
+
+      if (!approvalId) {
+        throw createValidationError("approvalId is required");
+      }
+
+      const pendingApproval = historyStore.getPendingToolApproval(approvalId);
+      if (!pendingApproval) {
+        const notFoundError = createValidationError("pending approval not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      if (pendingApproval.status !== "pending") {
+        const conflictError = createValidationError("pending approval is no longer pending");
+        conflictError.statusCode = 409;
+        throw conflictError;
+      }
+
+      initSse(res);
+      let foregroundStatus = "idle";
+      let foregroundRun = null;
+      let detachForegroundRunResponse = () => {};
+      let resolvedRuntime = null;
+      let runResult = null;
+      let executionContext = null;
+      let completionDispatchRequest = null;
+
+      try {
+        if (toolRegistry && typeof toolRegistry.refresh === "function") {
+          await toolRegistry.refresh();
+        }
+
+        orchestratorSupervisorService?.ensureSession?.(pendingApproval.conversationId);
+        const resumedHistory = historyStore.getConversation(pendingApproval.conversationId);
+        resolvedRuntime =
+          conversationAgentRuntimeService &&
+          typeof conversationAgentRuntimeService.resolveConversationRuntime === "function"
+            ? await conversationAgentRuntimeService.resolveConversationRuntime(
+                pendingApproval.conversationId
+              )
+            : {
+                history: resumedHistory,
+                sessionId: String(
+                  pendingApproval.executionContext?.sessionId ?? pendingApproval.conversationId
+                ).trim(),
+                agentId: String(pendingApproval.executionContext?.agentId ?? "").trim(),
+                agentType: String(pendingApproval.executionContext?.agentType ?? "primary").trim(),
+                isSubagent:
+                  String(resumedHistory?.source ?? "").trim().toLowerCase() === "subagent",
+                activeSkillNames: Array.isArray(pendingApproval.executionContext?.activeSkillNames)
+                  ? pendingApproval.executionContext.activeSkillNames
+                  : [],
+                developerPrompt: String(
+                  pendingApproval.executionContext?.developerPrompt ?? ""
+                ).trim(),
+                definitionPrompt: "",
+                chatAgent
+              };
+        const runtimeChatAgent = resolvedRuntime?.chatAgent ?? chatAgent;
+        const runtimeModel = String(pendingApproval.runtimeConfig?.model ?? "").trim();
+        const recorder = new AgentConversationRecorder({
+          initialMessages: Array.isArray(resumedHistory?.messages) ? resumedHistory.messages : []
+        });
+
+        foregroundRun = wakeDispatcher?.beginForegroundRun?.({
+          sessionId: resolvedRuntime?.sessionId,
+          agentId: resolvedRuntime?.agentId,
+          conversationId: pendingApproval.conversationId,
+          allowExistingRun: true,
+          allowRestore: true
+        }) ?? null;
+        detachForegroundRunResponse = attachForegroundRunResponse(
+          req,
+          res,
+          foregroundRun,
+          conversationRunCoordinator
+        );
+
+        emitRunEvent(
+          foregroundRun,
+          {
+          type: "session_resume",
+          approvalId,
+          conversationId: pendingApproval.conversationId
+          },
+          conversationRunCoordinator,
+          res
+        );
+
+        executionContext = {
+          ...(pendingApproval.executionContext ?? {}),
+          conversationId: pendingApproval.conversationId,
+          runId: foregroundRun?.runId,
+          sessionId: resolvedRuntime?.sessionId,
+          agentId: resolvedRuntime?.agentId,
+          agentType: resolvedRuntime?.agentType,
+          currentAtomicStepId: foregroundRun?.stepId,
+          abortSignal: foregroundRun?.signal ?? null,
+          historyStore,
+          rawConversationMessages: Array.isArray(resumedHistory?.messages)
+            ? resumedHistory.messages
+            : [],
+          runtimeConfig: pendingApproval.runtimeConfig,
+          memoryStore,
+          skillCatalog,
+          skillValidator,
+          skillPromptBuilder,
+          activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
+            ? resolvedRuntime.activeSkillNames
+            : [],
+          developerPrompt: String(
+            resolvedRuntime?.developerPrompt ??
+              pendingApproval.executionContext?.developerPrompt ??
+              ""
+          ).trim(),
+          orchestratorStore,
+          orchestratorSchedulerService,
+          orchestratorSupervisorService
+        };
+
+        runResult = await runtimeChatAgent.resumePendingApproval({
+          pendingApproval,
+          runtimeConfig: pendingApproval.runtimeConfig,
+          approvalStore: historyStore,
+          approvalRules: await loadApprovalRules(approvalRulesStore),
+          executionContext,
+          onEvent: (payload) => {
+            if (payload?.type === "usage") {
+              const usage = normalizeUsageRecordPayload(payload.usage);
+              if (usage) {
+                historyStore.recordConversationTokenUsage(
+                  pendingApproval.conversationId,
+                  usage,
+                  {
+                    model: String(payload.model ?? runtimeModel ?? "").trim()
+                  }
+                );
+                recorder.applyEvent({
+                  ...payload,
+                  usage
+                });
+              }
+            } else {
+              recorder.applyEvent(payload);
+            }
+
+            emitRunEvent(foregroundRun, payload, conversationRunCoordinator, res);
+          }
+        });
+
+        const nextMessages = recorder.getMessages();
+        const updatedResumedHistory = historyStore.mergeConversation({
+          conversationId: pendingApproval.conversationId,
+          title: resumedHistory?.title,
+          workplacePath: resumedHistory?.workplacePath,
+          parentConversationId: resumedHistory?.parentConversationId,
+          source: resumedHistory?.source,
+          model: runtimeModel || resumedHistory?.model,
+          approvalMode: resumedHistory?.approvalMode,
+          skills: resumedHistory?.skills,
+          developerPrompt: resumedHistory?.developerPrompt,
+          messages: nextMessages
+        });
+
+        historyStore.updatePendingToolApprovalStatus(approvalId, "completed");
+
+        if (runResult?.status === "pending_approval") {
+          foregroundStatus = "waiting_approval";
+          emitRunEvent(
+            foregroundRun,
+            {
+            type: "session_pause",
+            pendingApprovalId: runResult.approvalId,
+            toolCallId: runResult.toolCallId,
+            toolName: runResult.toolName,
+            history: updatedResumedHistory
+            },
+            conversationRunCoordinator,
+            res
+          );
+        } else {
+          foregroundStatus = "idle";
+          emitRunEvent(
+            foregroundRun,
+            {
+            type: "session_end",
+            history: updatedResumedHistory
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+
+        completionDispatchRequest = resolveSubagentCompletionDispatchRequest({
+          executionContext,
+          runResult,
+          status: foregroundStatus,
+          displayName:
+            orchestratorStore?.findAgentByConversationId?.(pendingApproval.conversationId)
+              ?.displayName ?? "",
+          agentType: resolvedRuntime?.agentType
+        });
+      } catch (error) {
+        foregroundStatus = isAbortError(error) ? "idle" : "error";
+        historyStore.updatePendingToolApprovalStatus(approvalId, "failed");
+        if (!isAbortError(error)) {
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "error",
+              message: error?.message || "approval confirmation failed"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        } else if (!res.writableEnded) {
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "session_end",
+              status: "aborted"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+      } finally {
+        detachForegroundRunResponse?.();
+        if (foregroundRun) {
+          await wakeDispatcher?.finishForegroundRun?.({
+            sessionId: foregroundRun.sessionId,
+            agentId: foregroundRun.agentId,
+            status: foregroundStatus
+          });
+        }
+        if (completionDispatchRequest) {
+          await orchestratorSupervisorService?.dispatchCompletionToPrimary?.(completionDispatchRequest);
+        }
+        endSse(res);
+      }
+    },
+
+    rejectToolApprovalById: async (req, res) => {
+      const approvalId = String(req.params.approvalId || "").trim();
+
+      if (!approvalId) {
+        throw createValidationError("approvalId is required");
+      }
+
+      const pendingApproval = historyStore.getPendingToolApproval(approvalId);
+      if (!pendingApproval) {
+        const notFoundError = createValidationError("pending approval not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const sessionInfo =
+        orchestratorSupervisorService?.ensureSession?.(pendingApproval.conversationId) ?? null;
+      const agentRecord =
+        orchestratorStore?.findAgentByConversationId?.(pendingApproval.conversationId) ?? null;
+      const sessionId = String(
+        pendingApproval.executionContext?.sessionId ??
+          sessionInfo?.sessionId ??
+          pendingApproval.conversationId
+      ).trim();
+      const agentId = String(
+        pendingApproval.executionContext?.agentId ??
+          agentRecord?.agentId ??
+          sessionInfo?.primaryAgentId ??
+          ""
+      ).trim();
+
+      historyStore.updatePendingToolApprovalStatus(approvalId, "rejected");
+
+      if (sessionId && agentId) {
+        await wakeDispatcher?.finishForegroundRun?.({
+          sessionId,
+          agentId,
+          status: "idle"
+        });
+      }
+
+      res.json({ success: true, approvalId });
+    },
+
+    streamChat: async (req, res) => {
+      const normalizedRequestBody = normalizeStreamRequestBody(req.body);
+      const chatValidation = chatRequestSchema.safeParse(normalizedRequestBody);
+      if (!chatValidation.success) {
+        throw createValidationError(formatZodError(chatValidation.error));
+      }
+
+      const configValidation = configSchema.safeParse(await configStore.read());
+      if (!configValidation.success) {
+        throw createValidationError(
+          "config/config.json is invalid. Save model/baseURL/apiKey from frontend first."
+        );
+      }
+
+      initSse(res);
+      let foregroundRun = null;
+      let foregroundStatus = "idle";
+      let detachForegroundRunResponse = () => {};
+      let currentConversationId = "";
+      let resolvedRuntime = null;
+      let runResult = null;
+      let executionContext = null;
+      let completionDispatchRequest = null;
+
+      try {
+        if (toolRegistry && typeof toolRegistry.refresh === "function") {
+          await toolRegistry.refresh();
+        }
+
+        const conversationId = String(chatValidation.data.conversationId ?? "").trim();
+        currentConversationId = conversationId;
+        if (!conversationId) {
+          throw createValidationError("conversationId is required");
+        }
+
+        let existingConversation = historyStore.getConversation(conversationId);
+        const firstUserMessage = chatValidation.data.messages.find(
+          (item) => item.role === "user" && item.content.trim().length > 0
+        );
+        const firstSentence = extractFirstSentence(firstUserMessage?.content);
+
+        if (
+          conversationId &&
+          existingConversation &&
+          !existingConversation.workplaceLocked &&
+          firstUserMessage
+        ) {
+          const lockedConversation = historyStore.lockConversationWorkplace(conversationId);
+          if (lockedConversation) {
+            existingConversation = lockedConversation;
+          }
+        }
+
+        const workplacePath = String(existingConversation?.workplacePath ?? "").trim() ||
+          DEFAULT_WORKPLACE_PATH;
+        const approvalMode = approvalModeSchema.parse(
+          chatValidation.data.approvalMode ?? existingConversation?.approvalMode ?? "confirm"
+        );
+        const persistedSkillNames = Array.isArray(existingConversation?.skills)
+          ? existingConversation.skills
+          : [];
+        const conversationSource = String(existingConversation?.source ?? "").trim().toLowerCase();
+        const historyRuntimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
+          isSubagent: conversationSource === "subagent"
+        });
+        const developerPrompt =
+          conversationSource === "subagent"
+            ? String(existingConversation?.developerPrompt ?? "").trim()
+            : String(
+                chatValidation.data.developerPrompt ?? existingConversation?.developerPrompt ?? ""
+              ).trim();
+        let effectiveMessages = Array.isArray(chatValidation.data.messages)
+          ? chatValidation.data.messages
+          : [];
+
+        const sessionInfo =
+          orchestratorSupervisorService?.ensureSession?.(conversationId) ?? null;
+        resolvedRuntime =
+          conversationAgentRuntimeService &&
+          typeof conversationAgentRuntimeService.resolveConversationRuntime === "function"
+            ? await conversationAgentRuntimeService.resolveConversationRuntime(conversationId)
+            : {
+                history: existingConversation,
+                sessionId: String(sessionInfo?.sessionId ?? conversationId).trim(),
+                agentId: String(
+                  orchestratorStore?.findAgentByConversationId?.(conversationId)?.agentId ??
+                    sessionInfo?.primaryAgentId ??
+                    ""
+                ).trim(),
+                agentType:
+                  String(existingConversation?.source ?? "").trim().toLowerCase() === "subagent"
+                    ? "subagent"
+                    : "primary",
+                isSubagent:
+                  String(existingConversation?.source ?? "").trim().toLowerCase() === "subagent",
+                activeSkillNames: persistedSkillNames,
+                developerPrompt,
+                definitionPrompt: "",
+                chatAgent
+              };
+        const runtimeChatAgent = resolvedRuntime?.chatAgent ?? chatAgent;
+        const runtimeExecutionConfig = resolveAgentRuntimeConfig(configValidation.data, {
+          isSubagent: Boolean(resolvedRuntime?.isSubagent),
+          enableDeepThinking: Boolean(chatValidation.data.enableDeepThinking)
+        });
+
+        const nextForegroundRun = wakeDispatcher?.beginForegroundRun?.({
+          sessionId: resolvedRuntime?.sessionId,
+          agentId: resolvedRuntime?.agentId,
+          conversationId
+        }) ?? null;
+        if (nextForegroundRun?.busy) {
+          const busyError = createValidationError("conversation agent is already running");
+          busyError.statusCode = 409;
+          throw busyError;
+        }
+        foregroundRun = nextForegroundRun;
+        detachForegroundRunResponse = attachForegroundRunResponse(
+          req,
+          res,
+          foregroundRun,
+          conversationRunCoordinator
+        );
+
+        if (effectiveMessages.length > 0) {
+          existingConversation = historyStore.mergeConversation({
+            conversationId,
+            title: String(existingConversation?.title ?? DEFAULT_HISTORY_TITLE),
+            workplacePath,
+            parentConversationId: existingConversation?.parentConversationId,
+            source: existingConversation?.source,
+            model: historyRuntimeConfig.model,
+            approvalMode,
+            skills: persistedSkillNames,
+            developerPrompt,
+            messages: effectiveMessages
+          });
+
+          effectiveMessages = Array.isArray(existingConversation?.messages)
+            ? existingConversation.messages
+            : effectiveMessages;
+        }
+
+        if (conversationId && firstSentence) {
+          if (existingConversation && isAutoTitleCandidate(existingConversation.title)) {
+            scheduleAsyncTitleGeneration({
+              conversationId,
+              firstSentence,
+              configStore,
+              historyStore
+            });
+          }
+        }
+
+        emitRunEvent(
+          foregroundRun,
+          { type: "session_start" },
+          conversationRunCoordinator,
+          res
+        );
+
+        const shouldAutoCompress = compressionService.shouldAutoCompress({
+          messages: effectiveMessages,
+          maxContextWindow: configValidation.data.maxContextWindow,
+          latestTokenUsage: existingConversation?.tokenUsage ?? null
+        });
+
+        if (shouldAutoCompress) {
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "compression_started",
+              trigger: "auto"
+            },
+            conversationRunCoordinator,
+            res
+          );
+
+          const compressionResult = await compressionService.compressConversation({
+            messages: effectiveMessages,
+            runtimeConfig: configValidation.data,
+            latestTokenUsage: existingConversation?.tokenUsage ?? null,
+            trigger: "auto"
+          });
+
+          if (compressionResult?.compressed && Array.isArray(compressionResult.messages)) {
+            let updatedHistory = historyStore.upsertConversation({
+              conversationId,
+              title: existingConversation?.title,
+              workplacePath: existingConversation?.workplacePath,
+              parentConversationId: existingConversation?.parentConversationId,
+              source: existingConversation?.source,
+              model: existingConversation?.model,
+              approvalMode: existingConversation?.approvalMode,
+              skills: existingConversation?.skills,
+              developerPrompt: existingConversation?.developerPrompt,
+              messages: compressionResult.messages
+            });
+
+            const compressionSnapshot = buildCompressionTokenSnapshot(compressionResult);
+            if (compressionSnapshot) {
+              updatedHistory =
+                historyStore.updateConversationTokenSnapshot(
+                  conversationId,
+                  compressionSnapshot,
+                  buildCompressionSnapshotMetadata(compressionResult, existingConversation?.model)
+                ) ?? updatedHistory;
+            }
+
+            existingConversation = updatedHistory ?? existingConversation;
+            effectiveMessages = Array.isArray(updatedHistory?.messages)
+              ? updatedHistory.messages
+              : compressionResult.messages;
+
+            emitRunEvent(
+              foregroundRun,
+              {
+                type: "compression_completed",
+                trigger: "auto",
+                history: updatedHistory,
+                compression: {
+                  compressed: true,
+                  reason: String(compressionResult?.reason ?? ""),
+                  usageRatio: Number(compressionResult?.usageRatio ?? 0),
+                  estimatedTokensBefore: Number(compressionResult?.estimatedTokensBefore ?? 0),
+                  estimatedTokensAfter: Number(compressionResult?.estimatedTokensAfter ?? 0)
+                }
+              },
+              conversationRunCoordinator,
+              res
+            );
+          } else {
+            emitRunEvent(
+              foregroundRun,
+              {
+                type: "compression_completed",
+                trigger: "auto",
+                compression: {
+                  compressed: false,
+                  reason: String(compressionResult?.reason ?? "auto_compression_skipped"),
+                  usageRatio: Number(compressionResult?.usageRatio ?? 0),
+                  estimatedTokensBefore: Number(compressionResult?.estimatedTokensBefore ?? 0),
+                  estimatedTokensAfter: Number(compressionResult?.estimatedTokensAfter ?? 0)
+                }
+              },
+              conversationRunCoordinator,
+              res
+            );
+          }
+        }
+
+        const modelHistoryMessages = compressionService.buildModelMessages(effectiveMessages);
+        const recorder = new AgentConversationRecorder({
+          initialMessages: effectiveMessages
+        });
+        const promptMessages = await buildConversationPromptMessages({
+          agentsPromptStore,
+          skillPromptBuilder,
+          workspacePath: workplacePath,
+          developerPrompt: resolvedRuntime?.developerPrompt,
+          activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
+            ? resolvedRuntime.activeSkillNames
+            : [],
+          definitionPrompt: resolvedRuntime?.definitionPrompt,
+          includeAgentsPrompt: !resolvedRuntime?.isSubagent,
+          includeSubagentGuardPrompt: Boolean(resolvedRuntime?.isSubagent)
+        });
+
+        executionContext = {
+          conversationId,
+          runId: foregroundRun?.runId,
+          sessionId: resolvedRuntime?.sessionId,
+          agentId: resolvedRuntime?.agentId,
+          agentType: resolvedRuntime?.agentType,
+          currentAtomicStepId: foregroundRun?.stepId,
+          abortSignal: foregroundRun?.signal ?? null,
+          workplacePath,
+          workingDirectory: workplacePath,
+          historyStore,
+          rawConversationMessages: effectiveMessages,
+          runtimeConfig: runtimeExecutionConfig,
+          memoryStore,
+          skillCatalog,
+          skillValidator,
+          skillPromptBuilder,
+          activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
+            ? resolvedRuntime.activeSkillNames
+            : [],
+          developerPrompt: String(resolvedRuntime?.developerPrompt ?? "").trim(),
+          orchestratorStore,
+          orchestratorSchedulerService,
+          orchestratorSupervisorService
+        };
+
+        runResult = await runtimeChatAgent.run({
+          messages: [
+            ...promptMessages,
+            ...modelHistoryMessages
+          ],
+          runtimeConfig: runtimeExecutionConfig,
+          executionContext,
+          approvalMode,
+          approvalStore: historyStore,
+          approvalRules: await loadApprovalRules(approvalRulesStore),
+          onEvent: (payload) => {
+            if (payload?.type === "usage") {
+              const usage = normalizeUsageRecordPayload(payload.usage);
+              if (usage) {
+                historyStore.recordConversationTokenUsage(conversationId, usage, {
+                  model: String(payload.model ?? runtimeExecutionConfig.model ?? "").trim()
+                });
+                recorder.applyEvent({
+                  ...payload,
+                  usage
+                });
+              }
+            } else {
+              recorder.applyEvent(payload);
+            }
+
+            emitRunEvent(foregroundRun, payload, conversationRunCoordinator, res);
+          }
+        });
+
+        const nextMessages = recorder.getMessages();
+        existingConversation = historyStore.mergeConversation({
+          conversationId,
+          title: existingConversation?.title,
+          workplacePath: existingConversation?.workplacePath,
+          parentConversationId: existingConversation?.parentConversationId,
+          source: existingConversation?.source,
+          model: runtimeExecutionConfig.model,
+          approvalMode: existingConversation?.approvalMode ?? approvalMode,
+          skills: existingConversation?.skills,
+          developerPrompt: existingConversation?.developerPrompt,
+          messages: nextMessages
+        });
+
+        if (runResult?.status === "pending_approval") {
+          foregroundStatus = "waiting_approval";
+          emitRunEvent(
+            foregroundRun,
+            {
+            type: "session_pause",
+            pendingApprovalId: runResult.approvalId,
+            toolCallId: runResult.toolCallId,
+            toolName: runResult.toolName,
+            history: existingConversation
+            },
+            conversationRunCoordinator,
+            res
+          );
+        } else {
+          foregroundStatus = "idle";
+          emitRunEvent(
+            foregroundRun,
+            {
+            type: "session_end",
+            history: existingConversation
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+
+        completionDispatchRequest = resolveSubagentCompletionDispatchRequest({
+          executionContext,
+          runResult,
+          status: foregroundStatus,
+          displayName:
+            orchestratorStore?.findAgentByConversationId?.(conversationId)?.displayName ?? "",
+          agentType: resolvedRuntime?.agentType
+        });
+      } catch (error) {
+        foregroundStatus = isAbortError(error) ? "idle" : "error";
+        if (!isAbortError(error)) {
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "error",
+              message: error?.message || "chat stream failed"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        } else if (!res.writableEnded) {
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "session_end",
+              status: "aborted"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+      } finally {
+        detachForegroundRunResponse?.();
+        if (foregroundRun) {
+          await wakeDispatcher?.finishForegroundRun?.({
+            sessionId: foregroundRun.sessionId,
+            agentId: foregroundRun.agentId,
+            status: foregroundStatus
+          });
+        }
+        if (completionDispatchRequest) {
+          await orchestratorSupervisorService?.dispatchCompletionToPrimary?.(completionDispatchRequest);
+        }
+        endSse(res);
+      }
+    }
+  };
+}

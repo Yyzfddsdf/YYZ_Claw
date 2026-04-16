@@ -1,0 +1,4 @@
+interface:
+  display_name: "Session Memory"
+  short_description: "Keep concise task memory updated"
+  default_prompt: "Use $session-memory to keep SESSION_MEMORY.md current with completed work, next steps, and risks."

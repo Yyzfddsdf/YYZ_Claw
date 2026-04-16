@@ -1,0 +1,139 @@
+﻿/* Form Styles (Config Panel) */
+.config-module {
+  padding: 2rem;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+  overflow-y: auto;
+}
+
+.config-form {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.config-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.config-form span {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+.config-form input {
+  padding: 0.625rem 0.875rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  background: var(--bg-main);
+  color: var(--text-main);
+  transition: var(--transition);
+}
+
+.config-form input:focus {
+  outline: none;
+  border-color: var(--brand);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 3px var(--brand-light);
+}
+
+.config-form input:disabled {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.config-form textarea {
+  min-height: 180px;
+  resize: vertical;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  background: var(--bg-main);
+  color: var(--text-main);
+  transition: var(--transition);
+}
+
+.config-form textarea:focus {
+  outline: none;
+  border-color: var(--brand);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 3px var(--brand-light);
+}
+
+.config-form textarea:disabled {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.config-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-light), transparent);
+  margin: 2rem 0 1.5rem;
+}
+
+.config-subtitle {
+  margin-top: 0;
+}
+
+.config-form button[type="submit"] {
+  margin-top: 1rem;
+  align-self: flex-start;
+  background: var(--brand);
+  color: white;
+  border: none;
+  padding: 0.625rem 2rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+
+.config-form button[type="submit"]:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.config-form button[type="submit"]:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.status-note {
+  margin-top: 1.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+}
+
+.status-note.success {
+  background: var(--success-light);
+  color: var(--success);
+  border-color: #a7f3d0;
+}
+
+.status-note.error {
+  background: var(--danger-light);
+  color: var(--danger);
+  border-color: #fecaca;
+}
+

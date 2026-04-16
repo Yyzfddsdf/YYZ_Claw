@@ -1,0 +1,26 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "build": "node -e \"console.log('backend has no compile step')\""
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "mammoth": "^1.9.1",
+    "multer": "^2.0.2",
+    "openai": "^4.79.2",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5",
+    "yaml": "^2.8.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}

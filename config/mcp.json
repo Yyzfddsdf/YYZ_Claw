@@ -1,0 +1,19 @@
+{
+  "servers": [
+    {
+      "name": "stitch",
+      "transport": "http",
+      "command": "",
+      "args": [],
+      "cwd": "",
+      "env": {},
+      "url": "https://stitch.googleapis.com/mcp",
+      "httpHeaders": {
+        "X-Goog-Api-Key": ""
+      },
+      "enabled": true,
+      "startupTimeoutMs": 10000,
+      "requestTimeoutMs": 30000
+    }
+  ]
+}

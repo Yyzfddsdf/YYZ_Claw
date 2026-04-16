@@ -1,0 +1,6 @@
+interface:
+  display_name: "Skills Creator"
+  short_description: "Create and update standard skills"
+  default_prompt: "Use $skills_creator to scaffold, validate, or update a skill. Generate openai.yaml only when UI metadata is needed."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,9 @@
+{
+  "model": "qwen3.5-flash",
+  "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "apiKey": "",
+  "maxContextWindow": 128000,
+  "compressionModel": "",
+  "compressionBaseURL": "",
+  "compressionApiKey": ""
+}

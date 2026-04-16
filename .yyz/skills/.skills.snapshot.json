@@ -1,0 +1,127 @@
+{
+  "generatedAt": 1775921022886,
+  "fingerprint": [
+    {
+      "relativePath": "_system/skills_creator",
+      "skillFilePath": "_system/skills_creator/SKILL.md",
+      "size": 2487,
+      "mtimeMs": 1775920328259.1045
+    },
+    {
+      "relativePath": "_system/ui-styling",
+      "skillFilePath": "_system/ui-styling/SKILL.md",
+      "size": 10373,
+      "mtimeMs": 1774350032000
+    },
+    {
+      "relativePath": "yyz_greeting",
+      "skillFilePath": "yyz_greeting/SKILL.md",
+      "size": 931,
+      "mtimeMs": 1775920459968.982
+    }
+  ],
+  "skills": [
+    {
+      "name": "yyz_greeting",
+      "normalizedName": "yyz_greeting",
+      "displayName": "YYZ 先生的问候",
+      "shortDescription": "一个简单的技能，用于称呼用户为\"yyz 先生\"",
+      "defaultPrompt": "",
+      "description": "一个简单的技能，用于称呼用户为\"yyz 先生\"",
+      "version": "1.0.0",
+      "author": "",
+      "license": "",
+      "platforms": [],
+      "requiredEnvironmentVariables": [],
+      "prerequisites": [],
+      "metadata": {},
+      "hermes": {
+        "label": "",
+        "enabled": true,
+        "hidden": false,
+        "relatedSkills": [],
+        "requiresTools": [],
+        "requiresToolsets": [],
+        "fallbackForTools": [],
+        "fallbackForToolsets": []
+      },
+      "rootDir": "D:\\d2l-zh\\yyz's interest\\.yyz\\skills\\yyz_greeting",
+      "skillFilePath": "D:\\d2l-zh\\yyz's interest\\.yyz\\skills\\yyz_greeting\\SKILL.md",
+      "relativePath": "yyz_greeting",
+      "category": "",
+      "isSystem": false,
+      "size": 931,
+      "mtimeMs": 1775920459968.982,
+      "bodyLength": 372
+    },
+    {
+      "name": "ckm:ui-styling",
+      "normalizedName": "ckm:ui-styling",
+      "displayName": "ckm:ui-styling",
+      "shortDescription": "Create beautiful, accessible user interfaces with shadcn/ui components (built on Radix UI + Tailwind), Tailwind CSS utility-first styling, and canvas-based visual designs. Use when building user interfaces, implementing design systems, creating responsive layouts, adding accessible components (dialogs, dropdowns, forms, tables), customizing themes and colors, implementing dark mode, generating visual designs and posters, or establishing consistent styling patterns across applications.",
+      "defaultPrompt": "",
+      "description": "Create beautiful, accessible user interfaces with shadcn/ui components (built on Radix UI + Tailwind), Tailwind CSS utility-first styling, and canvas-based visual designs. Use when building user interfaces, implementing design systems, creating responsive layouts, adding accessible components (dialogs, dropdowns, forms, tables), customizing themes and colors, implementing dark mode, generating visual designs and posters, or establishing consistent styling patterns across applications.",
+      "version": "1.0.0",
+      "author": "",
+      "license": "MIT",
+      "platforms": [],
+      "requiredEnvironmentVariables": [],
+      "prerequisites": [],
+      "metadata": {
+        "author": "claudekit",
+        "version": "1.0.0"
+      },
+      "hermes": {
+        "label": "",
+        "enabled": true,
+        "hidden": false,
+        "relatedSkills": [],
+        "requiresTools": [],
+        "requiresToolsets": [],
+        "fallbackForTools": [],
+        "fallbackForToolsets": []
+      },
+      "rootDir": "D:\\d2l-zh\\yyz's interest\\.yyz\\skills\\_system\\ui-styling",
+      "skillFilePath": "D:\\d2l-zh\\yyz's interest\\.yyz\\skills\\_system\\ui-styling\\SKILL.md",
+      "relativePath": "_system/ui-styling",
+      "category": "_system",
+      "isSystem": true,
+      "size": 10373,
+      "mtimeMs": 1774350032000,
+      "bodyLength": 9414
+    },
+    {
+      "name": "skills_creator",
+      "normalizedName": "skills_creator",
+      "displayName": "Skills Creator",
+      "shortDescription": "Create and update standard skills",
+      "defaultPrompt": "Use $skills_creator to scaffold, validate, or update a skill.",
+      "description": "Guide for creating effective skills. Use when creating or updating a skill that extends Codex with specialized knowledge, workflows, or tool integrations.",
+      "version": "1.0.0",
+      "author": "",
+      "license": "",
+      "platforms": [],
+      "requiredEnvironmentVariables": [],
+      "prerequisites": [],
+      "metadata": {},
+      "hermes": {
+        "label": "",
+        "enabled": true,
+        "hidden": false,
+        "relatedSkills": [],
+        "requiresTools": [],
+        "requiresToolsets": [],
+        "fallbackForTools": [],
+        "fallbackForToolsets": []
+      },
+      "rootDir": "D:\\d2l-zh\\yyz's interest\\.yyz\\skills\\_system\\skills_creator",
+      "skillFilePath": "D:\\d2l-zh\\yyz's interest\\.yyz\\skills\\_system\\skills_creator\\SKILL.md",
+      "relativePath": "_system/skills_creator",
+      "category": "_system",
+      "isSystem": true,
+      "size": 2487,
+      "mtimeMs": 1775920328259.1045,
+      "bodyLength": 2244
+    }
+  ]
+}

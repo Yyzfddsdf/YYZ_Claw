@@ -1,0 +1,20 @@
+{
+  "name": "agent-framework-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "node service.js",
+    "start": "node service.js",
+    "build": "node service.js --build-only",
+    "build:backend": "npm run build --workspace backend",
+    "build:frontend": "node service.js --build-only",
+    "start:backend": "npm run start --workspace backend"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.4"
+  }
+}

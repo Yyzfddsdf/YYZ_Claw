@@ -1,0 +1,17 @@
+name: yyz_greeting
+displayName: YYZ 先生的问候
+shortDescription: 一个简单的技能，用于称呼用户为"yyz 先生"
+category: _system
+description: 专门为 yyz 先生设计的个人问候技能，记住并尊重用户的称呼偏好。
+version: 1.0.0
+author: yyz
+platforms:
+  - windows
+  - web
+prerequisites: []
+requiredEnvironmentVariables: []
+relatedSkills: []
+requiresTools: []
+requiresToolsets: []
+fallbackForTools: []
+fallbackForToolsets: []

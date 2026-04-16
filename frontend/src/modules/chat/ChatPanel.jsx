@@ -196,6 +196,77 @@ function getMemoryToolSummary(toolName) {
   }
 }
 
+function getMessageMetaKind(message) {
+  return String(message?.meta?.kind ?? message?.meta?.kimd ?? "").trim();
+}
+
+function clipOrchestratorText(value, maxLength = 96) {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function resolveOrchestratorAgentLabel(agentId) {
+  const normalized = String(agentId ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.startsWith("primary:")) {
+    return "主智能体";
+  }
+
+  if (normalized.startsWith("subagent:")) {
+    return clipOrchestratorText(normalized.split(":")[2] || "子智能体", 28);
+  }
+
+  return clipOrchestratorText(normalized, 28);
+}
+
+function buildOrchestratorNotice(message) {
+  const orchestrator =
+    message?.meta?.orchestrator && typeof message.meta.orchestrator === "object"
+      ? message.meta.orchestrator
+      : {};
+  const subtype = String(message?.meta?.subtype ?? orchestrator.subtype ?? "").trim();
+  const sourceLabel = resolveOrchestratorAgentLabel(orchestrator.sourceAgentId);
+  const targetLabel = resolveOrchestratorAgentLabel(orchestrator.targetAgentId);
+
+  if (subtype === "agent_dispatch") {
+    return {
+      badge: "调度提醒",
+      summary:
+        sourceLabel && targetLabel
+          ? `${sourceLabel} 向 ${targetLabel} 下发了一条任务提醒`
+          : `${targetLabel || sourceLabel || "调度器"} 收到了一条任务提醒`
+    };
+  }
+
+  if (subtype === "subagent_finish_report") {
+    return {
+      badge: "完成提醒",
+      summary:
+        sourceLabel && targetLabel
+          ? `${sourceLabel} 向 ${targetLabel} 发回了完成提醒`
+          : `${sourceLabel || "子智能体"} 发回了一条完成提醒`
+    };
+  }
+
+  if (subtype === "agent_report_light" || subtype === "agent_report_full") {
+    return {
+      badge: "进度提醒",
+      summary: `${sourceLabel || "子智能体"} 发来了一条进度提醒`
+    };
+  }
+
+  return {
+    badge: "调度器提醒",
+    summary: `${sourceLabel || targetLabel || "调度器"} 产生了一条系统提醒`
+  };
+}
+
 function formatFileSize(size) {
   const numericSize = Number(size ?? 0);
   if (!Number.isFinite(numericSize) || numericSize <= 0) {
@@ -1358,6 +1429,8 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
             {chat.messages.map((message, index) => {
               const isLastMessage = index === chat.messages.length - 1;
               const isStreamingThisMessage = isLastMessage && chat.isStreaming && message.role === "assistant";
+              const messageMetaKind = getMessageMetaKind(message);
+              const isOrchestratorMessage = messageMetaKind === "orchestrator_message";
               const imageAttachments = getImageAttachments(message);
               const parsedFileAttachments = getParsedFileAttachments(message);
               const toolPayload =
@@ -1397,6 +1470,7 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                 String(activeConversationRuntimeReplyError?.messageId ?? "").trim() === String(message.id ?? "").trim()
                   ? activeConversationRuntimeReplyError
                   : null;
+              const orchestratorNotice = isOrchestratorMessage ? buildOrchestratorNotice(message) : null;
               const deleteButton = (
                 <button
                   type="button"
@@ -1417,13 +1491,13 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
               return (
                 <article
                   key={message.id}
-                  className={`bubble bubble-${message.role} ${
-                    isCompressionSummary ? "bubble-compression" : ""
-                  } ${isMemoryToolCard ? "bubble-memory-tool" : ""} ${
-                    isStreamingThisMessage ? "is-streaming" : ""
-                  }`}
+                  className={`bubble ${
+                    isOrchestratorMessage ? "bubble-orchestrator-note" : `bubble-${message.role}`
+                  } ${isCompressionSummary ? "bubble-compression" : ""} ${
+                    isMemoryToolCard ? "bubble-memory-tool" : ""
+                  } ${isStreamingThisMessage ? "is-streaming" : ""}`}
                 >
-                  {!isMemoryToolCard && (
+                  {!isMemoryToolCard && !isOrchestratorMessage && (
                     <header>
                       <strong>
                         {message.role === "user" && "User"}
@@ -1442,6 +1516,19 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                     <div className="compression-card-content">
                       <p className="compression-card-title">上下文压缩节点</p>
                       <MarkdownMessage content={message.content || ""} className="bubble-content" />
+                    </div>
+                  ) : isOrchestratorMessage ? (
+                    <div className="orchestrator-note-card">
+                      <div className="orchestrator-note-main">
+                        <span className="orchestrator-note-badge">{orchestratorNotice.badge}</span>
+                        <p className="orchestrator-note-summary">{orchestratorNotice.summary}</p>
+                      </div>
+                      <div className="orchestrator-note-meta">
+                        {typeof message.timestamp === "number" && (
+                          <span>{formatTimestamp(message.timestamp)}</span>
+                        )}
+                        {deleteButton}
+                      </div>
                     </div>
                   ) : isMemoryToolCard ? (
                     <div className="memory-tool-strip">
@@ -1473,7 +1560,6 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                           {toolPayload.result || "暂无响应"}
                         </pre>
                       )}
-
                     </div>
                   ) : isToolCard ? (
                     <div className="tool-card-content">

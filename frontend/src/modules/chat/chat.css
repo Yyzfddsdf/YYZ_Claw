@@ -1301,6 +1301,62 @@
   text-align: center;
 }
 
+.bubble-orchestrator-note {
+  align-self: center;
+  width: min(100%, 760px);
+}
+
+.orchestrator-note-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.95rem;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 88%, #cbd5e1);
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  box-shadow: none;
+}
+
+.orchestrator-note-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.orchestrator-note-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.orchestrator-note-summary {
+  margin: 0;
+}
+
+.orchestrator-note-summary {
+  color: #0f172a;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.orchestrator-note-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+  color: var(--text-placeholder);
+  font-size: 0.75rem;
+}
+
 .bubble-compression {
   align-self: stretch;
   max-width: 760px;

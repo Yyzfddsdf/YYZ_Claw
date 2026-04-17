@@ -13,6 +13,7 @@ import {
 
 const DEFAULT_APPROVAL_MODE = "confirm";
 const MAX_RUNTIME_TOOL_EVENT_CONTENT_CHARS = 1800;
+const INTERNAL_TOOL_IMAGE_MESSAGE_KIND = "tool_image_input";
 
 function createStatusError(message, statusCode) {
   const error = new Error(message);
@@ -86,6 +87,35 @@ function clipRuntimeText(text, maxChars = MAX_RUNTIME_TOOL_EVENT_CONTENT_CHARS) 
   const headChars = Math.max(400, Math.floor(maxChars * 0.82));
   const tailChars = Math.max(80, Math.floor(maxChars * 0.12));
   return `${source.slice(0, headChars)}\n...[truncated]...\n${source.slice(-tailChars)}`;
+}
+
+function normalizeToolImageAttachments(attachments) {
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+
+  return attachments
+    .map((attachment, index) => {
+      if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
+        return null;
+      }
+
+      const dataUrl = String(attachment.dataUrl ?? attachment.url ?? "").trim();
+      const mimeType = String(attachment.mimeType ?? "").trim().toLowerCase();
+      if (!dataUrl || !mimeType.startsWith("image/")) {
+        return null;
+      }
+
+      return {
+        id: String(attachment.id ?? `tool_image_${index + 1}`).trim() || `tool_image_${index + 1}`,
+        type: "image",
+        name: String(attachment.name ?? "").trim(),
+        mimeType,
+        dataUrl,
+        size: Number(attachment.size ?? 0)
+      };
+    })
+    .filter(Boolean);
 }
 
 export class ChatAgent {
@@ -449,6 +479,79 @@ export class ChatAgent {
     });
   }
 
+  buildToolImageInputPayload(toolCall, toolResult) {
+    const imageAttachments = normalizeToolImageAttachments(toolResult?.imageAttachments);
+    if (imageAttachments.length === 0) {
+      return null;
+    }
+
+    const toolName = String(toolResult?.name ?? toolCall?.function?.name ?? "tool").trim() || "tool";
+    const toolCallId = String(toolCall?.id ?? "").trim();
+    const content = `Tool ${toolName} returned ${imageAttachments.length} image(s). Use them for the next reasoning step.`;
+    const modelContent = [
+      {
+        type: "text",
+        text: content
+      },
+      ...imageAttachments.map((attachment) => ({
+        type: "image_url",
+        image_url: {
+          url: attachment.dataUrl
+        }
+      }))
+    ];
+
+    return {
+      type: "tool_image_input",
+      kind: INTERNAL_TOOL_IMAGE_MESSAGE_KIND,
+      toolCallId,
+      toolName,
+      content,
+      imageAttachments,
+      modelContent
+    };
+  }
+
+  appendToolImageInput({
+    toolCall,
+    toolResult,
+    conversation,
+    executionContext,
+    onEvent,
+    assembler
+  }) {
+    const imageInputPayload = this.buildToolImageInputPayload(toolCall, toolResult);
+    if (!imageInputPayload) {
+      return;
+    }
+
+    this.recordRuntimeToolEvent(executionContext, {
+      phase: "result",
+      toolCallId: imageInputPayload.toolCallId,
+      toolName: `${imageInputPayload.toolName}:image_input`,
+      isError: false,
+      content: imageInputPayload.content,
+      metadata: {
+        imageCount: imageInputPayload.imageAttachments.length
+      }
+    });
+
+    onEvent?.({
+      type: imageInputPayload.type,
+      kind: imageInputPayload.kind,
+      toolCallId: imageInputPayload.toolCallId,
+      toolName: imageInputPayload.toolName,
+      content: imageInputPayload.content,
+      imageAttachments: imageInputPayload.imageAttachments,
+      mergedText: assembler.getMergedText()
+    });
+
+    conversation.push({
+      role: "user",
+      content: imageInputPayload.modelContent
+    });
+  }
+
   buildApiConversation(conversation = [], options = {}) {
     const runtimeInjectionComposer =
       options.runtimeInjectionComposer ?? this.runtimeInjectionComposer;
@@ -684,6 +787,15 @@ export class ChatAgent {
           tool_call_id: toolCall.id,
           content: toolResult.modelContent ?? toolResult.content
         });
+
+        this.appendToolImageInput({
+          toolCall,
+          toolResult,
+          conversation,
+          executionContext,
+          onEvent,
+          assembler
+        });
       }
 
       emptyFinalResponseCount = 0;
@@ -850,6 +962,15 @@ export class ChatAgent {
           tool_call_id: toolCall.id,
           content: toolResult.modelContent ?? toolResult.content
         });
+
+        this.appendToolImageInput({
+          toolCall,
+          toolResult,
+          conversation,
+          executionContext,
+          onEvent,
+          assembler
+        });
       }
 
       emptyFinalResponseCount = 0;
@@ -916,6 +1037,15 @@ export class ChatAgent {
         role: "tool",
         tool_call_id: toolCall.id,
         content: toolResult.modelContent ?? toolResult.content
+      });
+
+      this.appendToolImageInput({
+        toolCall,
+        toolResult,
+        conversation,
+        executionContext,
+        onEvent,
+        assembler
       });
     }
 

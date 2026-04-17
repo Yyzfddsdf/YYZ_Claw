@@ -11,6 +11,7 @@ export const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 export const MCP_CONFIG_FILE = path.join(CONFIG_DIR, "mcp.json");
 export const APPROVAL_RULES_FILE = path.join(PROJECT_ROOT, ".yyz", "rules.md");
 export const GLOBAL_AGENTS_FILE = path.join(PROJECT_ROOT, ".yyz", "AGENTS.md");
+export const MEMORY_SUMMARY_FILE = path.join(PROJECT_ROOT, ".yyz", "memory_summary.json");
 export const SKILLS_DIR = path.join(PROJECT_ROOT, ".yyz", "skills");
 export const SKILLS_SNAPSHOT_FILE = path.join(SKILLS_DIR, ".skills.snapshot.json");
 export const HISTORY_DIR = path.join(PROJECT_ROOT, "History");

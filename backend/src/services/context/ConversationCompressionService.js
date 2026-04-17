@@ -682,6 +682,22 @@ export class ConversationCompressionService {
       .filter(Boolean);
   }
 
+  buildEffectiveConversationSummaryText(
+    messages = [],
+    { maxCharsPerMessage = 8000, maxTotalChars = 24000 } = {}
+  ) {
+    const effectiveMessages = selectEffectiveConversationMessages(messages, {
+      headMessageCount: this.headMessageCount,
+      tailMessageCount: this.tailMessageCount
+    });
+    const serializedMessages = effectiveMessages
+      .map((message) => clipForPrompt(serializeSummaryMessage(message), maxCharsPerMessage))
+      .filter(Boolean)
+      .join("\n\n");
+
+    return clipForPrompt(serializedMessages, maxTotalChars);
+  }
+
   toModelMessage(message) {
     const normalized = normalizeMessage(message);
     const imageAttachments = normalizeImageAttachments(normalized.meta);

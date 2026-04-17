@@ -29,9 +29,11 @@ export class ConversationAgentRuntimeService {
     this.compressionService = options.compressionService ?? null;
     this.approvalRulesStore = options.approvalRulesStore ?? null;
     this.agentsPromptStore = options.agentsPromptStore ?? null;
+    this.memorySummaryStore = options.memorySummaryStore ?? null;
     this.skillCatalog = options.skillCatalog ?? null;
     this.skillValidator = options.skillValidator ?? null;
     this.skillPromptBuilder = options.skillPromptBuilder ?? null;
+    this.memorySummaryService = options.memorySummaryService ?? null;
     this.orchestratorSchedulerService = options.orchestratorSchedulerService ?? null;
     this.orchestratorStore = options.orchestratorStore ?? null;
     this.orchestratorSupervisorService = options.orchestratorSupervisorService ?? null;
@@ -191,12 +193,14 @@ export class ConversationAgentRuntimeService {
     const workplacePath = normalizeText(existingConversation?.workplacePath);
     const promptMessages = await buildConversationPromptMessages({
       agentsPromptStore: this.agentsPromptStore,
+      memorySummaryStore: this.memorySummaryStore,
       skillPromptBuilder: this.skillPromptBuilder,
       workspacePath: workplacePath,
       developerPrompt: resolved.developerPrompt,
       activeSkillNames: resolved.activeSkillNames,
       definitionPrompt: resolved.definitionPrompt,
       includeAgentsPrompt: !resolved.isSubagent,
+      includeMemorySummaryPrompt: !resolved.isSubagent,
       includeSubagentGuardPrompt: resolved.isSubagent
     });
     const modelHistoryMessages = this.compressionService.buildModelMessages(effectiveMessages);
@@ -281,6 +285,12 @@ export class ConversationAgentRuntimeService {
         firstSentence,
         configStore: this.configStore,
         historyStore: this.historyStore
+      });
+    }
+
+    if (!resolved.isSubagent && normalizeText(runResult?.status) !== "pending_approval") {
+      this.memorySummaryService?.scheduleRefresh?.({
+        conversationId
       });
     }
 

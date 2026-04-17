@@ -203,8 +203,16 @@ function buildPreviewFromMessages(messages) {
   }
 
   const normalized = normalizeChatMessage(last);
+  const kind = String(normalized.meta?.kind ?? "").trim();
+  const imageCount = normalizeImageAttachments(normalized.meta?.attachments).length;
+
+  if (kind === "tool_image_input") {
+    const toolName = String(normalized.meta?.toolName ?? "").trim();
+    const label = toolName ? `工具看图(${toolName})` : "工具看图";
+    return imageCount > 0 ? `${label} [图片 ${imageCount}]` : label;
+  }
+
   if (!normalized.content.trim()) {
-    const imageCount = normalizeImageAttachments(normalized.meta?.attachments).length;
     return imageCount > 0 ? `[图片 ${imageCount}]` : "";
   }
 
@@ -311,6 +319,61 @@ function compareConversationSummary(left, right) {
   }
 
   return String(left?.id ?? "").localeCompare(String(right?.id ?? ""));
+}
+
+function collectSubagentDescendantConversationIds(conversationList, rootConversationId) {
+  const normalizedRootConversationId = String(rootConversationId ?? "").trim();
+  if (
+    !normalizedRootConversationId ||
+    !Array.isArray(conversationList) ||
+    conversationList.length === 0
+  ) {
+    return [];
+  }
+
+  const childrenByParentConversationId = new Map();
+  for (const summary of conversationList) {
+    const conversationId = String(summary?.id ?? "").trim();
+    const parentConversationId = String(summary?.parentConversationId ?? "").trim();
+    if (!conversationId || !parentConversationId) {
+      continue;
+    }
+
+    const children = childrenByParentConversationId.get(parentConversationId);
+    if (children) {
+      children.push(summary);
+    } else {
+      childrenByParentConversationId.set(parentConversationId, [summary]);
+    }
+  }
+
+  const visitedConversationIds = new Set([normalizedRootConversationId]);
+  const pendingConversationIds = [normalizedRootConversationId];
+  const descendantSubagentConversationIds = new Set();
+
+  while (pendingConversationIds.length > 0) {
+    const currentConversationId = String(pendingConversationIds.pop() ?? "").trim();
+    if (!currentConversationId) {
+      continue;
+    }
+
+    const childConversations = childrenByParentConversationId.get(currentConversationId) ?? [];
+    for (const childConversation of childConversations) {
+      const childConversationId = String(childConversation?.id ?? "").trim();
+      if (!childConversationId || visitedConversationIds.has(childConversationId)) {
+        continue;
+      }
+
+      visitedConversationIds.add(childConversationId);
+      pendingConversationIds.push(childConversationId);
+
+      if (String(childConversation?.source ?? "").trim().toLowerCase() === "subagent") {
+        descendantSubagentConversationIds.add(childConversationId);
+      }
+    }
+  }
+
+  return Array.from(descendantSubagentConversationIds);
 }
 
 function normalizeSkillCatalog(skills) {
@@ -1632,22 +1695,58 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function deleteConversation(conversationId) {
-    if (!conversationId || isStreaming || isCompressing || !historyLoaded || pendingApproval) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (
+      !normalizedConversationId ||
+      isStreaming ||
+      isCompressing ||
+      !historyLoaded ||
+      pendingApproval
+    ) {
       return;
     }
 
     try {
-      await deleteHistoryById(conversationId);
+      const currentConversationList = Array.isArray(conversationListRef.current)
+        ? conversationListRef.current
+        : [];
+      const localSubagentConversationIds = collectSubagentDescendantConversationIds(
+        currentConversationList,
+        normalizedConversationId
+      );
+      const response = await deleteHistoryById(normalizedConversationId);
 
-      const remained = conversationList.filter((item) => item.id !== conversationId);
+      const deletedConversationIdSet = new Set([
+        normalizedConversationId,
+        ...localSubagentConversationIds
+      ]);
+      const serverDeletedConversationIds = Array.isArray(response?.deletedConversationIds)
+        ? response.deletedConversationIds
+        : [];
+      for (const deletedConversationId of serverDeletedConversationIds) {
+        const normalizedDeletedConversationId = String(deletedConversationId ?? "").trim();
+        if (normalizedDeletedConversationId) {
+          deletedConversationIdSet.add(normalizedDeletedConversationId);
+        }
+      }
+
+      const remained = currentConversationList.filter(
+        (item) => !deletedConversationIdSet.has(String(item?.id ?? "").trim())
+      );
       setConversationList(remained);
       updateQueuedUserMessageList((prev) =>
-        prev.filter((item) => String(item?.conversationId ?? "").trim() !== String(conversationId))
+        prev.filter(
+          (item) => !deletedConversationIdSet.has(String(item?.conversationId ?? "").trim())
+        )
       );
-      conversationMessageCacheRef.current.delete(String(conversationId));
-      clearConversationRuntimeReplyError(conversationId);
+      for (const deletedConversationId of deletedConversationIdSet) {
+        conversationMessageCacheRef.current.delete(deletedConversationId);
+        clearConversationRuntimeReplyError(deletedConversationId);
+        activeAgentRunConversationIdsRef.current.delete(deletedConversationId);
+        externalStreamStatesRef.current.delete(deletedConversationId);
+      }
 
-      if (activeConversationId !== conversationId) {
+      if (!deletedConversationIdSet.has(String(activeConversationId ?? "").trim())) {
         return;
       }
 
@@ -1769,7 +1868,6 @@ export function useChatSession(maxContextWindow = 0) {
       }
 
       const selectedPath = String(response?.selectedPath ?? "").trim();
-
       if (!selectedPath) {
         setError("未获取到目录绝对路径");
         return;
@@ -1969,16 +2067,28 @@ export function useChatSession(maxContextWindow = 0) {
     const normalizedTrigger = String(trigger ?? "").trim() === "auto" ? "auto" : "manual";
     const targetConversationId = String(activeConversationIdRef.current ?? "").trim();
 
-    if (!historyLoaded || !targetConversationId || isStreaming || pendingApproval) {
+    if (!historyLoaded || !targetConversationId) {
+      return null;
+    }
+
+    if (isStreaming) {
+      setError("当前会话正在回复，暂时不能手动压缩");
+      return null;
+    }
+
+    if (pendingApproval) {
+      setError("当前存在待审批工具调用，暂时不能手动压缩");
       return null;
     }
 
     if (isDraftConversationActive) {
+      setError("草稿会话尚未保存，暂时不能手动压缩");
       return null;
     }
 
     const currentMessages = messagesRef.current.map(normalizeChatMessage);
     if (currentMessages.length === 0) {
+      setError("当前会话没有可压缩内容");
       return null;
     }
 
@@ -2447,6 +2557,33 @@ export function useChatSession(maxContextWindow = 0) {
 
         return nextList;
       });
+
+      return true;
+    }
+
+    if (event?.type === "tool_image_input") {
+      const imageAttachments = normalizeImageAttachments(event?.imageAttachments);
+      if (imageAttachments.length === 0) {
+        return true;
+      }
+
+      updateTargetMessages((prev) => [
+        ...prev,
+        normalizeChatMessage({
+          id: createId("tool-image-input"),
+          role: "user",
+          timestamp: Date.now(),
+          content:
+            String(event?.content ?? "").trim()
+            || "Tool returned image attachments for follow-up reasoning.",
+          meta: {
+            kind: "tool_image_input",
+            toolCallId: String(event?.toolCallId ?? "").trim(),
+            toolName: String(event?.toolName ?? "").trim(),
+            attachments: imageAttachments
+          }
+        })
+      ]);
 
       return true;
     }
@@ -3197,6 +3334,7 @@ export function useChatSession(maxContextWindow = 0) {
       reloadSkillCatalog: refreshSkillCatalog,
       workplaceSelecting,
       pendingApproval,
+      isDraftConversation: isDraftConversationActive,
       retryNotice,
       activeConversationRuntimeReplyError,
       queuedUserMessages: activeQueuedUserMessages,

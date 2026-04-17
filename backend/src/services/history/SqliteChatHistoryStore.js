@@ -34,14 +34,22 @@ function buildPreviewFromMessages(messages) {
       );
     });
 
+  const kind = String(lastNonEmpty?.meta?.kind ?? "").trim();
+  const attachments = Array.isArray(lastNonEmpty?.meta?.attachments)
+    ? lastNonEmpty.meta.attachments
+    : [];
+
+  if (kind === "tool_image_input") {
+    const toolName = String(lastNonEmpty?.meta?.toolName ?? "").trim();
+    const label = toolName ? `工具看图(${toolName})` : "工具看图";
+    return attachments.length > 0 ? `${label} [图片 ${attachments.length}]` : label;
+  }
+
   const content = String(lastNonEmpty?.content ?? "").trim();
   if (content.length > 0) {
     return clipText(content, 80);
   }
 
-  const attachments = Array.isArray(lastNonEmpty?.meta?.attachments)
-    ? lastNonEmpty.meta.attachments
-    : [];
   return attachments.length > 0 ? `[图片 ${attachments.length}]` : "";
 }
 

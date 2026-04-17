@@ -1430,9 +1430,16 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
               const isLastMessage = index === chat.messages.length - 1;
               const isStreamingThisMessage = isLastMessage && chat.isStreaming && message.role === "assistant";
               const messageMetaKind = getMessageMetaKind(message);
+              const isInternalToolImageMessage = messageMetaKind === "tool_image_input";
               const isOrchestratorMessage = messageMetaKind === "orchestrator_message";
               const imageAttachments = getImageAttachments(message);
               const parsedFileAttachments = getParsedFileAttachments(message);
+              const messageText = String(message.content ?? "").trim();
+              const isAttachmentOnlyUserMessage =
+                message.role === "user" &&
+                messageText.length === 0 &&
+                ((imageAttachments.length > 0 && parsedFileAttachments.length === 0) ||
+                  (parsedFileAttachments.length > 0 && imageAttachments.length === 0));
               const toolPayload =
                 message.role === "tool"
                   ? message.meta?.kind === "tool_event"
@@ -1495,16 +1502,24 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                     isOrchestratorMessage ? "bubble-orchestrator-note" : `bubble-${message.role}`
                   } ${isCompressionSummary ? "bubble-compression" : ""} ${
                     isMemoryToolCard ? "bubble-memory-tool" : ""
-                  } ${isStreamingThisMessage ? "is-streaming" : ""}`}
+                  } ${isAttachmentOnlyUserMessage ? "bubble-user-attachment-only" : ""} ${
+                    isAttachmentOnlyUserMessage ? "bubble-attachment-only" : ""
+                  } ${isInternalToolImageMessage ? "bubble-tool-image-input" : ""} ${
+                    isStreamingThisMessage ? "is-streaming" : ""
+                  }`}
                 >
                   {!isMemoryToolCard && !isOrchestratorMessage && (
                     <header>
                       <strong>
-                        {message.role === "user" && "User"}
+                        {isInternalToolImageMessage && "Tool Image Input"}
+                        {message.role === "user" && !isInternalToolImageMessage && "User"}
                         {message.role === "assistant" && (isCompressionSummary ? "Compression" : "Assistant")}
                         {message.role === "tool" && "Tool"}
                         {message.role === "system" && "System"}
                       </strong>
+                      {isInternalToolImageMessage && (
+                        <span className="bubble-meta-badge is-tool-image-input">自动注入</span>
+                      )}
                       {typeof message.timestamp === "number" && (
                         <span>{formatTimestamp(message.timestamp)}</span>
                       )}
@@ -1665,11 +1680,15 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                         </div>
                       )}
 
-                      {String(message.content ?? "").trim().length > 0 && (
+                      {messageText.length > 0 && (
                         <MarkdownMessage content={message.content || ""} className="bubble-content" />
                       )}
                       {imageAttachments.length > 0 && (
-                        <div className="message-image-grid">
+                        <div
+                          className={`message-image-grid ${
+                            isAttachmentOnlyUserMessage ? "is-large" : ""
+                          }`}
+                        >
                           {imageAttachments.slice(0, 3).map((attachment) => (
                             <img
                               key={String(attachment.id ?? attachment.dataUrl)}
@@ -1688,7 +1707,11 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                       )}
 
                       {parsedFileAttachments.length > 0 && (
-                        <div className="message-file-grid">
+                        <div
+                          className={`message-file-grid ${
+                            isAttachmentOnlyUserMessage ? "is-large" : ""
+                          }`}
+                        >
                           {parsedFileAttachments.slice(0, 3).map((file) => (
                             <button
                               key={file.id}
@@ -1932,7 +1955,6 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                 placeholder={placeholder}
                 disabled={inputDisabled}
                 rows={1}
-                required
                 title=""
               />
 
@@ -2124,6 +2146,8 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                           disabled={
                             chat.isStreaming ||
                             chat.isCompressing ||
+                            chat.pendingApproval ||
+                            chat.isDraftConversation ||
                             !chat.historyLoaded ||
                             !chat.activeConversationId ||
                             !chat.canManualCompress

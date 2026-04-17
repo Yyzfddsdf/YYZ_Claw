@@ -34,6 +34,35 @@ function normalizeToolCalls(toolCalls) {
     : [];
 }
 
+function normalizeImageAttachments(attachments) {
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+
+  return attachments
+    .map((attachment, index) => {
+      if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
+        return null;
+      }
+
+      const dataUrl = String(attachment.dataUrl ?? attachment.url ?? "").trim();
+      const mimeType = String(attachment.mimeType ?? "").trim().toLowerCase();
+      if (!dataUrl || !mimeType.startsWith("image/")) {
+        return null;
+      }
+
+      return {
+        id: String(attachment.id ?? `image_${index + 1}`).trim() || `image_${index + 1}`,
+        type: "image",
+        name: String(attachment.name ?? "").trim(),
+        mimeType,
+        dataUrl,
+        size: Number(attachment.size ?? 0)
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeMessage(message = {}) {
   return {
     id: String(message?.id ?? createId("message")),
@@ -258,6 +287,32 @@ export class AgentConversationRecorder {
           }
         })
       );
+      return;
+    }
+
+    if (event?.type === "tool_image_input") {
+      const imageAttachments = normalizeImageAttachments(event?.imageAttachments);
+      if (imageAttachments.length === 0) {
+        return;
+      }
+
+      this.messages.push(
+        normalizeMessage({
+          id: createId("tool-image-input"),
+          role: "user",
+          timestamp: Date.now(),
+          content:
+            String(event?.content ?? "").trim()
+            || "Tool returned image attachments for follow-up reasoning.",
+          meta: {
+            kind: "tool_image_input",
+            toolCallId: String(event?.toolCallId ?? "").trim(),
+            toolName: String(event?.toolName ?? "").trim(),
+            attachments: imageAttachments
+          }
+        })
+      );
+      this.activeAssistantMessageId = "";
       return;
     }
 

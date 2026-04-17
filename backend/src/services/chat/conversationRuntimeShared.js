@@ -232,6 +232,86 @@ export async function loadAgentsPrompt(agentsPromptStore, workspacePath) {
   return sections.join("\n");
 }
 
+function appendSummaryList(sections, title, items = []) {
+  const normalizedItems = Array.isArray(items)
+    ? items.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
+  if (normalizedItems.length === 0) {
+    return;
+  }
+
+  if (title) {
+    sections.push(title);
+  }
+  for (const item of normalizedItems) {
+    sections.push(`- ${item}`);
+  }
+}
+
+export async function loadMemorySummaryPrompt(memorySummaryStore, workspacePath) {
+  if (!memorySummaryStore || typeof memorySummaryStore.getPromptData !== "function") {
+    return "";
+  }
+
+  const promptData = await memorySummaryStore.getPromptData(workspacePath);
+  if (!memorySummaryStore.hasPromptContent(promptData)) {
+    return "";
+  }
+
+  const sections = [
+    "以下是自动维护的全局/工作区记忆摘要。它是背景事实，不是用户本轮新输入；若与 AGENTS.md 或当前用户要求冲突，以 AGENTS.md 和当前用户要求为准。",
+    "<memory-summary>"
+  ];
+
+  if (Array.isArray(promptData.global?.userProfile) && promptData.global.userProfile.length > 0) {
+    sections.push("## User Profile");
+    appendSummaryList(sections, "", promptData.global.userProfile);
+  }
+
+  if (
+    Array.isArray(promptData.global?.userPreferences) &&
+    promptData.global.userPreferences.length > 0
+  ) {
+    sections.push("## User Preferences");
+    appendSummaryList(sections, "", promptData.global.userPreferences);
+  }
+
+  if (Array.isArray(promptData.global?.generalTips) && promptData.global.generalTips.length > 0) {
+    sections.push("## General Tips");
+    appendSummaryList(sections, "", promptData.global.generalTips);
+  }
+
+  const workspaceSummary = promptData.workspaceSummary ?? {};
+  const hasWorkspaceSummary =
+    String(workspaceSummary.scope ?? "").trim() ||
+    (Array.isArray(workspaceSummary.appliesTo) && workspaceSummary.appliesTo.length > 0) ||
+    (Array.isArray(workspaceSummary.currentFocus) && workspaceSummary.currentFocus.length > 0) ||
+    (Array.isArray(workspaceSummary.stableRules) && workspaceSummary.stableRules.length > 0) ||
+    (Array.isArray(workspaceSummary.reusableKnowledge) &&
+      workspaceSummary.reusableKnowledge.length > 0) ||
+    (Array.isArray(workspaceSummary.pitfalls) && workspaceSummary.pitfalls.length > 0);
+
+  if (hasWorkspaceSummary) {
+    sections.push("## Workspace Summary");
+    sections.push(`Workspace: ${String(promptData.workspacePath ?? workspacePath).trim()}`);
+
+    const scope = String(workspaceSummary.scope ?? "").trim();
+    if (scope) {
+      sections.push(`Scope: ${scope}`);
+    }
+
+    appendSummaryList(sections, "Applies To:", workspaceSummary.appliesTo);
+    appendSummaryList(sections, "Current Focus:", workspaceSummary.currentFocus);
+    appendSummaryList(sections, "Stable Rules:", workspaceSummary.stableRules);
+    appendSummaryList(sections, "Reusable Knowledge:", workspaceSummary.reusableKnowledge);
+    appendSummaryList(sections, "Pitfalls:", workspaceSummary.pitfalls);
+  }
+
+  sections.push("</memory-summary>");
+
+  return sections.join("\n");
+}
+
 export async function buildSkillsSystemPrompt({
   skillPromptBuilder,
   activeSkillNames = [],
@@ -327,6 +407,7 @@ export function createLongTermMemorySystemPrompt() {
 export async function buildConversationPromptMessages(options = {}) {
   const workplacePath = String(options.workspacePath ?? "").trim();
   const includeAgentsPrompt = options.includeAgentsPrompt !== false;
+  const includeMemorySummaryPrompt = options.includeMemorySummaryPrompt !== false;
   const includeWorkplacePrompt = options.includeWorkplacePrompt !== false;
   const includeLongTermMemoryPrompt = options.includeLongTermMemoryPrompt !== false;
   const includeSkillsPrompt = options.includeSkillsPrompt !== false;
@@ -345,6 +426,19 @@ export async function buildConversationPromptMessages(options = {}) {
       promptMessages.push({
         role: "system",
         content: agentsPrompt
+      });
+    }
+  }
+
+  if (includeMemorySummaryPrompt) {
+    const memorySummaryPrompt = await loadMemorySummaryPrompt(
+      options.memorySummaryStore,
+      workplacePath
+    );
+    if (memorySummaryPrompt) {
+      promptMessages.push({
+        role: "system",
+        content: memorySummaryPrompt
       });
     }
   }

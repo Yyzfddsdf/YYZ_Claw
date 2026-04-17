@@ -7,3 +7,4 @@ History/*.sqlite
 History/*.sqlite-*
 memory.sqlite
 memory.sqlite-*
+.yyz/memory_summary.json

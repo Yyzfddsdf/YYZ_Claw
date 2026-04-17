@@ -14,6 +14,35 @@ function normalizeHookMessage(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeToolImageAttachments(attachments) {
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+
+  return attachments
+    .map((attachment, index) => {
+      if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
+        return null;
+      }
+
+      const dataUrl = String(attachment.dataUrl ?? attachment.url ?? "").trim();
+      const mimeType = String(attachment.mimeType ?? "").trim().toLowerCase();
+      if (!dataUrl || !mimeType.startsWith("image/")) {
+        return null;
+      }
+
+      return {
+        id: String(attachment.id ?? `tool_image_${index + 1}`).trim() || `tool_image_${index + 1}`,
+        type: "image",
+        name: String(attachment.name ?? "").trim(),
+        mimeType,
+        dataUrl,
+        size: Number(attachment.size ?? 0)
+      };
+    })
+    .filter(Boolean);
+}
+
 export function normalizeToolResultHooks(hooks) {
   if (!Array.isArray(hooks)) {
     return [];
@@ -129,12 +158,19 @@ export function normalizeExecutedToolResponse({
 
   const hooks = normalizeToolResultHooks(envelope.hooks);
   const content = stringifyToolResult(envelope.result);
+  const imageAttachments = normalizeToolImageAttachments(envelope.imageAttachments);
+  const resultPayload =
+    envelope.result && typeof envelope.result === "object" && !Array.isArray(envelope.result)
+      ? envelope.result
+      : null;
 
   return {
     name: String(toolName ?? "").trim(),
     content,
     modelContent: appendToolResultHooksToContent(content, hooks),
     hooks,
+    imageAttachments,
+    resultPayload,
     isError: Boolean(isError)
   };
 }

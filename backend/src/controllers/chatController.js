@@ -253,22 +253,57 @@ async function ensureDirectoryPath(inputPath) {
   return resolvedPath;
 }
 
-async function selectDirectoryFromSystemDialog(initialPath) {
-  if (process.platform !== "win32") {
-    const unsupportedError = new Error("system folder picker is only supported on Windows");
-    unsupportedError.statusCode = 501;
-    throw unsupportedError;
-  }
+function runDialogCommand(command, args, options = {}) {
+  return new Promise((resolve) => {
+    execFile(
+      command,
+      args,
+      {
+        encoding: options.encoding ?? "utf8",
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+        ...(options.env
+          ? {
+              env: {
+                ...process.env,
+                ...options.env
+              }
+            }
+          : {})
+      },
+      (error, stdout, stderr) => {
+        resolve({
+          error: error ?? null,
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? "")
+        });
+      }
+    );
+  });
+}
 
+async function selectDirectoryFromSystemDialogWindows(initialPath) {
   const initial = String(initialPath ?? "").trim();
   const script = [
     "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName System.Drawing",
     "$initial = $env:WORKPLACE_INITIAL_PATH",
+    "$owner = New-Object System.Windows.Forms.Form",
+    "$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual",
+    "$owner.Size = New-Object System.Drawing.Size(1, 1)",
+    "$owner.Location = New-Object System.Drawing.Point(-32000, -32000)",
+    "$owner.ShowInTaskbar = $false",
+    "$owner.TopMost = $true",
+    "$owner.Opacity = 0",
+    "$owner.Show()",
+    "$owner.Activate()",
     "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
     "$dialog.Description = '选择会话工作区目录'",
     "$dialog.ShowNewFolderButton = $true",
     "if ($initial -and (Test-Path -LiteralPath $initial -PathType Container)) { $dialog.SelectedPath = $initial }",
-    "$result = $dialog.ShowDialog()",
+    "$result = $dialog.ShowDialog($owner)",
+    "$owner.Close()",
+    "$owner.Dispose()",
     "if ($result -eq [System.Windows.Forms.DialogResult]::OK) {",
     "  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
     "  Write-Output $dialog.SelectedPath",
@@ -277,43 +312,191 @@ async function selectDirectoryFromSystemDialog(initialPath) {
     "exit 2"
   ].join("; ");
 
-  return new Promise((resolve, reject) => {
-    execFile(
-      "powershell.exe",
-      ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
-      {
-        encoding: "utf8",
-        windowsHide: true,
-        maxBuffer: 1024 * 1024,
-        env: {
-          ...process.env,
-          WORKPLACE_INITIAL_PATH: initial
-        }
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          if (Number(error.code) === 2) {
-            resolve({ canceled: true, selectedPath: "" });
-            return;
-          }
-
-          reject(new Error(String(stderr ?? error.message ?? "open folder dialog failed").trim()));
-          return;
-        }
-
-        const selectedPath = String(stdout ?? "").trim();
-        if (!selectedPath) {
-          resolve({ canceled: true, selectedPath: "" });
-          return;
-        }
-
-        resolve({
-          canceled: false,
-          selectedPath
-        });
+  const result = await runDialogCommand(
+    "powershell.exe",
+    ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+    {
+      encoding: "utf8",
+      env: {
+        WORKPLACE_INITIAL_PATH: initial
       }
+    }
+  );
+
+  if (result.error) {
+    if (Number(result.error.code) === 2) {
+      return { canceled: true, selectedPath: "" };
+    }
+
+    throw new Error(
+      String(result.stderr ?? result.error.message ?? "open folder dialog failed").trim()
     );
+  }
+
+  const selectedPath = String(result.stdout ?? "").trim();
+  if (!selectedPath) {
+    return { canceled: true, selectedPath: "" };
+  }
+
+  return {
+    canceled: false,
+    selectedPath
+  };
+}
+
+async function selectDirectoryFromSystemDialogMac(initialPath) {
+  const initial = String(initialPath ?? "").trim();
+  const appleScript = [
+    "set initialPath to system attribute \"WORKPLACE_INITIAL_PATH\"",
+    "if initialPath is \"\" then",
+    "  try",
+    "    set selectedFolder to choose folder with prompt \"选择会话工作区目录\"",
+    "  on error number -128",
+    "    return \"__CANCELED__\"",
+    "  end try",
+    "else",
+    "  try",
+    "    set selectedFolder to choose folder with prompt \"选择会话工作区目录\" default location (POSIX file initialPath)",
+    "  on error",
+    "    try",
+    "      set selectedFolder to choose folder with prompt \"选择会话工作区目录\"",
+    "    on error number -128",
+    "      return \"__CANCELED__\"",
+    "    end try",
+    "  end try",
+    "end if",
+    "return POSIX path of selectedFolder"
+  ].join("\n");
+
+  const result = await runDialogCommand("osascript", ["-e", appleScript], {
+    encoding: "utf8",
+    env: {
+      WORKPLACE_INITIAL_PATH: initial
+    }
   });
+
+  if (result.error) {
+    const errorCode = String(result.error.code ?? "").trim().toUpperCase();
+    if (errorCode === "ENOENT") {
+      const unsupportedError = new Error("macOS 缺少 osascript，无法打开系统目录选择器");
+      unsupportedError.statusCode = 501;
+      throw unsupportedError;
+    }
+
+    throw new Error(String(result.stderr ?? result.error.message ?? "open folder dialog failed").trim());
+  }
+
+  const selectedPath = String(result.stdout ?? "").trim();
+  if (!selectedPath || selectedPath === "__CANCELED__") {
+    return { canceled: true, selectedPath: "" };
+  }
+
+  return {
+    canceled: false,
+    selectedPath
+  };
+}
+
+async function selectDirectoryFromSystemDialogLinux(initialPath) {
+  const initial = String(initialPath ?? "").trim();
+  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    const unsupportedError = new Error("当前 Linux 环境无图形会话，无法打开目录选择器");
+    unsupportedError.statusCode = 501;
+    throw unsupportedError;
+  }
+
+  const normalizedInitial = initial ? path.resolve(initial) : "";
+  const candidates = [
+    normalizedInitial
+      ? {
+          command: "zenity",
+          args: [
+            "--file-selection",
+            "--directory",
+            "--title=选择会话工作区目录",
+            "--filename",
+            `${normalizedInitial}${path.sep}`
+          ]
+        }
+      : {
+          command: "zenity",
+          args: ["--file-selection", "--directory", "--title=选择会话工作区目录"]
+        },
+    normalizedInitial
+      ? {
+          command: "kdialog",
+          args: ["--getexistingdirectory", normalizedInitial, "选择会话工作区目录"]
+        }
+      : {
+          command: "kdialog",
+          args: ["--getexistingdirectory", String(process.cwd() ?? "/"), "选择会话工作区目录"]
+        }
+  ];
+
+  let lastFailureMessage = "";
+  let missingCommandCount = 0;
+
+  for (const candidate of candidates) {
+    const result = await runDialogCommand(candidate.command, candidate.args, {
+      encoding: "utf8"
+    });
+    const stderrText = String(result.stderr ?? "").trim();
+
+    if (!result.error) {
+      const selectedPath = String(result.stdout ?? "").trim();
+      if (!selectedPath) {
+        return { canceled: true, selectedPath: "" };
+      }
+      return {
+        canceled: false,
+        selectedPath
+      };
+    }
+
+    const errorCode = String(result.error.code ?? "").trim().toUpperCase();
+    if (errorCode === "ENOENT") {
+      missingCommandCount += 1;
+      continue;
+    }
+
+    const exitCode = Number(result.error.code);
+    if (Number.isFinite(exitCode) && exitCode === 1) {
+      return { canceled: true, selectedPath: "" };
+    }
+
+    lastFailureMessage =
+      stderrText || String(result.error.message ?? "").trim() || "open folder dialog failed";
+  }
+
+  if (missingCommandCount >= candidates.length) {
+    const unsupportedError = new Error(
+      "Linux 缺少目录选择器依赖，请安装 zenity 或 kdialog 后重试"
+    );
+    unsupportedError.statusCode = 501;
+    throw unsupportedError;
+  }
+
+  throw new Error(lastFailureMessage || "open folder dialog failed");
+}
+
+async function selectDirectoryFromSystemDialog(initialPath) {
+  if (process.platform === "win32") {
+    return selectDirectoryFromSystemDialogWindows(initialPath);
+  }
+
+  if (process.platform === "darwin") {
+    return selectDirectoryFromSystemDialogMac(initialPath);
+  }
+
+  if (process.platform === "linux") {
+    return selectDirectoryFromSystemDialogLinux(initialPath);
+  }
+
+  const unsupportedError = new Error(
+    `system folder picker is unsupported on platform: ${process.platform}`
+  );
+  unsupportedError.statusCode = 501;
+  throw unsupportedError;
 }
 
 function attachForegroundRunResponse(req, res, run, conversationRunCoordinator) {
@@ -369,6 +552,8 @@ export function createChatController({
   attachmentParserService,
   approvalRulesStore,
   agentsPromptStore,
+  memorySummaryStore,
+  memorySummaryService,
   skillValidator,
   skillPromptBuilder,
   skillCatalog,
@@ -737,6 +922,10 @@ export function createChatController({
         }
       }
 
+      memorySummaryService?.scheduleRefresh?.({
+        conversationId
+      });
+
       res.json({
         history: enrichHistoryDetail(history, orchestratorStore, historyStore),
         compression: {
@@ -847,33 +1036,165 @@ export function createChatController({
         throw createValidationError("conversationId is required");
       }
 
+      const deletedConversationIds = new Set();
+      const markDeletedConversationId = (targetConversationId) => {
+        const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
+        if (!normalizedTargetConversationId) {
+          return "";
+        }
+
+        deletedConversationIds.add(normalizedTargetConversationId);
+        return normalizedTargetConversationId;
+      };
+
+      const collectConversationSubtreePostOrder = (
+        rootConversationId,
+        visitedConversationIds = new Set(),
+        orderedConversationIds = []
+      ) => {
+        const normalizedRootConversationId = String(rootConversationId ?? "").trim();
+        if (
+          !normalizedRootConversationId ||
+          visitedConversationIds.has(normalizedRootConversationId)
+        ) {
+          return orderedConversationIds;
+        }
+
+        visitedConversationIds.add(normalizedRootConversationId);
+        const rootConversation = historyStore.getConversation(normalizedRootConversationId);
+        if (!rootConversation) {
+          return orderedConversationIds;
+        }
+
+        const childConversations = historyStore.listChildConversations(normalizedRootConversationId);
+        for (const childConversation of childConversations) {
+          collectConversationSubtreePostOrder(
+            String(childConversation?.id ?? "").trim(),
+            visitedConversationIds,
+            orderedConversationIds
+          );
+        }
+
+        orderedConversationIds.push(normalizedRootConversationId);
+        return orderedConversationIds;
+      };
+
+      const ensureDeletedConversation = (targetConversationId) => {
+        const normalizedTargetConversationId = markDeletedConversationId(targetConversationId);
+        if (!normalizedTargetConversationId) {
+          return;
+        }
+
+        if (!historyStore.getConversation(normalizedTargetConversationId)) {
+          return;
+        }
+
+        historyStore.deleteConversation(normalizedTargetConversationId);
+      };
+
       const history = historyStore.getConversation(conversationId);
       if (history) {
         const source = String(history?.source ?? "").trim().toLowerCase();
         if (source === "subagent") {
+          const subtreeConversationIds = collectConversationSubtreePostOrder(conversationId);
           const agent = orchestratorStore?.findAgentByConversationId?.(conversationId) ?? null;
           if (agent?.agentId) {
             orchestratorSupervisorService.deleteSubagent({
               conversationId: history.parentConversationId,
               agentId: agent.agentId
             });
+          }
+
+          if (subtreeConversationIds.length > 0) {
+            for (const subtreeConversationId of subtreeConversationIds) {
+              ensureDeletedConversation(subtreeConversationId);
+            }
           } else {
-            historyStore.deleteConversation(conversationId);
+            ensureDeletedConversation(conversationId);
           }
         } else {
-          const subagents = orchestratorSupervisorService.listSubagents(conversationId);
-          for (const subagent of subagents) {
+          const runtimeSubagents = orchestratorSupervisorService.listSubagents(conversationId);
+          const runtimeAgentIdByConversationId = new Map();
+          for (const runtimeSubagent of runtimeSubagents) {
+            const runtimeSubagentConversationId = String(runtimeSubagent?.conversationId ?? "").trim();
+            const runtimeSubagentAgentId = String(runtimeSubagent?.agentId ?? "").trim();
+            if (!runtimeSubagentConversationId || !runtimeSubagentAgentId) {
+              continue;
+            }
+            runtimeAgentIdByConversationId.set(runtimeSubagentConversationId, runtimeSubagentAgentId);
+          }
+
+          const deletedRuntimeAgentIds = new Set();
+          const historySubagents = historyStore.listChildConversations(conversationId, {
+            source: "subagent"
+          });
+          for (const historySubagent of historySubagents) {
+            const subagentConversationId = String(historySubagent?.id ?? "").trim();
+            if (!subagentConversationId) {
+              continue;
+            }
+
+            const subagentSubtreeConversationIds = collectConversationSubtreePostOrder(
+              subagentConversationId
+            );
+            const runtimeAgentId =
+              runtimeAgentIdByConversationId.get(subagentConversationId) ||
+              String(
+                orchestratorStore?.findAgentByConversationId?.(subagentConversationId)?.agentId ?? ""
+              ).trim();
+
+            if (runtimeAgentId && !deletedRuntimeAgentIds.has(runtimeAgentId)) {
+              orchestratorSupervisorService.deleteSubagent({
+                conversationId,
+                agentId: runtimeAgentId
+              });
+              deletedRuntimeAgentIds.add(runtimeAgentId);
+            }
+
+            if (subagentSubtreeConversationIds.length > 0) {
+              for (const subtreeConversationId of subagentSubtreeConversationIds) {
+                ensureDeletedConversation(subtreeConversationId);
+              }
+            } else {
+              ensureDeletedConversation(subagentConversationId);
+            }
+          }
+
+          for (const runtimeSubagent of runtimeSubagents) {
+            const runtimeSubagentAgentId = String(runtimeSubagent?.agentId ?? "").trim();
+            if (!runtimeSubagentAgentId || deletedRuntimeAgentIds.has(runtimeSubagentAgentId)) {
+              continue;
+            }
+
+            const runtimeSubagentConversationId = String(runtimeSubagent?.conversationId ?? "").trim();
+            const subagentSubtreeConversationIds = runtimeSubagentConversationId
+              ? collectConversationSubtreePostOrder(runtimeSubagentConversationId)
+              : [];
+
             orchestratorSupervisorService.deleteSubagent({
               conversationId,
-              agentId: subagent.agentId
+              agentId: runtimeSubagentAgentId
             });
+            deletedRuntimeAgentIds.add(runtimeSubagentAgentId);
+
+            if (subagentSubtreeConversationIds.length > 0) {
+              for (const subtreeConversationId of subagentSubtreeConversationIds) {
+                ensureDeletedConversation(subtreeConversationId);
+              }
+            } else {
+              ensureDeletedConversation(runtimeSubagentConversationId);
+            }
           }
-          historyStore.deleteConversation(conversationId);
+
+          ensureDeletedConversation(conversationId);
           orchestratorStore?.deleteSession?.(conversationId);
           orchestratorSchedulerService?.resetSession?.(conversationId);
         }
       }
-      res.status(200).json({ success: true });
+      res.status(200).json({
+        success: true,
+        deletedConversationIds: Array.from(deletedConversationIds)
+      });
     },
 
     deleteHistoryMessageById: async (req, res) => {
@@ -1089,6 +1410,12 @@ export function createChatController({
         });
 
         historyStore.updatePendingToolApprovalStatus(approvalId, "completed");
+
+        if (runResult?.status !== "pending_approval") {
+          memorySummaryService?.scheduleRefresh?.({
+            conversationId: pendingApproval.conversationId
+          });
+        }
 
         if (runResult?.status === "pending_approval") {
           foregroundStatus = "waiting_approval";
@@ -1466,6 +1793,7 @@ export function createChatController({
         });
         const promptMessages = await buildConversationPromptMessages({
           agentsPromptStore,
+          memorySummaryStore,
           skillPromptBuilder,
           workspacePath: workplacePath,
           developerPrompt: resolvedRuntime?.developerPrompt,
@@ -1474,6 +1802,7 @@ export function createChatController({
             : [],
           definitionPrompt: resolvedRuntime?.definitionPrompt,
           includeAgentsPrompt: !resolvedRuntime?.isSubagent,
+          includeMemorySummaryPrompt: !resolvedRuntime?.isSubagent,
           includeSubagentGuardPrompt: Boolean(resolvedRuntime?.isSubagent)
         });
 
@@ -1546,6 +1875,15 @@ export function createChatController({
           developerPrompt: existingConversation?.developerPrompt,
           messages: nextMessages
         });
+
+        if (
+          !resolvedRuntime?.isSubagent &&
+          runResult?.status !== "pending_approval"
+        ) {
+          memorySummaryService?.scheduleRefresh?.({
+            conversationId
+          });
+        }
 
         if (runResult?.status === "pending_approval") {
           foregroundStatus = "waiting_approval";

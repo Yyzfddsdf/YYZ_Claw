@@ -7,6 +7,7 @@ import {
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
   MCP_CONFIG_FILE,
+  MEMORY_SUMMARY_FILE,
   HISTORY_DB_FILE,
   HISTORY_DIR,
   MEMORY_DB_FILE,
@@ -20,6 +21,7 @@ import { ChatAgent } from "../services/agent/ChatAgent.js";
 import { ConfigStore } from "../services/config/ConfigStore.js";
 import { ApprovalRulesStore } from "../services/config/ApprovalRulesStore.js";
 import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
+import { MemorySummaryStore } from "../services/config/MemorySummaryStore.js";
 import { McpConfigStore } from "../services/config/McpConfigStore.js";
 import { ConversationCompressionService } from "../services/context/ConversationCompressionService.js";
 import { AttachmentParserService } from "../services/files/AttachmentParserService.js";
@@ -27,6 +29,7 @@ import { SqliteChatHistoryStore } from "../services/history/SqliteChatHistorySto
 import { HookBlockBuilder } from "../services/hooks/HookBlockBuilder.js";
 import { HookRegistry } from "../services/hooks/HookRegistry.js";
 import { LongTermMemoryRecallService } from "../services/memory/LongTermMemoryRecallService.js";
+import { MemorySummaryService } from "../services/memory/MemorySummaryService.js";
 import { SqliteLongTermMemoryStore } from "../services/memory/SqliteLongTermMemoryStore.js";
 import { McpManager } from "../services/mcp/McpManager.js";
 import { createOrchestratorMessageAdapter } from "../services/orchestration/adapters/orchestratorMessageAdapter.js";
@@ -69,6 +72,8 @@ export async function createServices() {
   const agentsPromptStore = new AgentsPromptStore({
     globalFilePath: GLOBAL_AGENTS_FILE
   });
+  const memorySummaryStore = new MemorySummaryStore(MEMORY_SUMMARY_FILE);
+  await memorySummaryStore.ensureFile();
 
   const skillCatalog = new SkillCatalog({
     rootDir: SKILLS_DIR,
@@ -114,6 +119,12 @@ export async function createServices() {
   });
 
   const compressionService = new ConversationCompressionService();
+  const memorySummaryService = new MemorySummaryService({
+    store: memorySummaryStore,
+    configStore,
+    historyStore,
+    compressionService
+  });
   const hookBlockBuilder = new HookBlockBuilder({
     hookRegistry,
     maxHooks: 3,
@@ -171,9 +182,11 @@ export async function createServices() {
     compressionService,
     approvalRulesStore,
     agentsPromptStore,
+    memorySummaryStore,
     skillCatalog,
     skillValidator,
     skillPromptBuilder,
+    memorySummaryService,
     orchestratorSchedulerService,
     orchestratorStore,
     orchestratorSupervisorService: null
@@ -230,6 +243,8 @@ export async function createServices() {
     mcpConfigStore,
     approvalRulesStore,
     agentsPromptStore,
+    memorySummaryStore,
+    memorySummaryService,
     skillCatalog,
     skillPromptBuilder,
     skillValidator,

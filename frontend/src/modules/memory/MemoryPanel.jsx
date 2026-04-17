@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   createMemoryContent,
@@ -15,861 +15,735 @@ import {
   updateMemoryNode,
   updateMemoryTopic
 } from "../../api/memoryApi";
+import { MemoryActionDock } from "./MemoryActionDock";
+import { MemoryDetailPanel } from "./MemoryDetailPanel";
+import { MemoryMap } from "./MemoryMap";
+import {
+  buildTreeStats,
+  clipText,
+  createContentSelection,
+  createNodeSelection,
+  createRootSelection,
+  createTopicSelection,
+  getSelectionKey
+} from "./memoryShared";
 import "./memory.css";
 
-function formatMetaCount(label, count) {
-  return `${label} ${Number(count ?? 0)}`;
-}
-
-function formatTimeMeta(createdAt, updatedAt) {
-  const created = String(createdAt ?? "").trim();
-  const updated = String(updatedAt ?? "").trim();
-
-  if (created && updated) {
-    return `创建 ${created} · 更新 ${updated}`;
-  }
-
-  return updated || created || "无时间";
-}
-
-function createEmptySelection() {
+function createPlaceholderBranch(key, label, subtitle = "") {
   return {
-    topicId: "",
-    contentId: "",
-    nodeId: ""
+    key,
+    id: key,
+    type: "loading",
+    label,
+    subtitle,
+    isPlaceholder: true,
+    children: []
   };
 }
 
-function normalizeKeywordList(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
+function buildMemoryTreeData({
+  topics,
+  topicCache,
+  contentCache,
+  expandedTopicId,
+  expandedContentId,
+  loadingTopicId,
+  loadingContentId
+}) {
+  const stats = buildTreeStats(topics);
 
-  return Array.from(
-    new Set(
-      value
-        .map((item) => String(item ?? "").trim())
-        .filter(Boolean)
-        .slice(0, 20)
-    )
-  );
-}
+  return {
+    key: "root:memory",
+    id: "memory-root",
+    type: "root",
+    label: "长期记忆库",
+    subtitle: `${stats.topicCount} 个主题 · ${stats.contentCount} 个内容块 · ${stats.nodeCount} 个记忆节点`,
+    children: (Array.isArray(topics) ? topics : []).map((topic) => {
+      const isExpandedTopic = String(expandedTopicId ?? "").trim() === String(topic.id ?? "").trim();
+      const topicDetail = topicCache[String(topic.id ?? "").trim()] ?? null;
+      let children = [];
 
-function formatKeywordList(value) {
-  const keywords = normalizeKeywordList(value);
-  return keywords.length > 0 ? keywords.join("，") : "无关键词";
-}
+      if (isExpandedTopic) {
+        if (!topicDetail && String(loadingTopicId ?? "").trim() === String(topic.id ?? "").trim()) {
+          children = [
+            createPlaceholderBranch(
+              `loading-topic:${topic.id}`,
+              "正在读取内容块",
+              "懒加载中"
+            )
+          ];
+        } else if (Array.isArray(topicDetail?.contents)) {
+          children = topicDetail.contents.map((content) => {
+            const isExpandedContent =
+              String(expandedContentId ?? "").trim() === String(content.id ?? "").trim();
+            const contentDetail = contentCache[String(content.id ?? "").trim()] ?? null;
+            let nodeChildren = [];
 
-function promptKeywordList(label, initialKeywords = [], exampleKeywords = []) {
-  const fallbackExamples =
-    exampleKeywords.length > 0
-      ? exampleKeywords
-      : ["session_search", "hermes", "历史检索"];
-  const rawValue = window.prompt(
-    `${label} JSON 数组，例如 ${JSON.stringify(fallbackExamples)}`,
-    JSON.stringify(normalizeKeywordList(initialKeywords))
-  );
+            if (isExpandedContent) {
+              if (
+                !contentDetail &&
+                String(loadingContentId ?? "").trim() === String(content.id ?? "").trim()
+              ) {
+                nodeChildren = [
+                  createPlaceholderBranch(
+                    `loading-content:${content.id}`,
+                    "正在读取记忆节点",
+                    "懒加载中"
+                  )
+                ];
+              } else if (Array.isArray(contentDetail?.nodes)) {
+                nodeChildren = contentDetail.nodes.map((node) => ({
+                  key: `node:${node.id}`,
+                  id: node.id,
+                  type: "node",
+                  topicId: node.topicId,
+                  contentId: node.contentId,
+                  nodeId: node.id,
+                  label: node.name,
+                  subtitle:
+                    clipText(node.coreMemory, 44) ||
+                    clipText((node.keywords || []).join(" · "), 44) ||
+                    "记忆节点",
+                  meta: String((node.keywords || []).length || ""),
+                  children: []
+                }));
+              }
+            }
 
-  if (rawValue === null) {
-    return null;
-  }
+            return {
+              key: `content:${content.id}`,
+              id: content.id,
+              type: "content",
+              topicId: content.topicId,
+              contentId: content.id,
+              label: content.name,
+              subtitle:
+                clipText(content.description, 48) ||
+                `${content.nodeCount} 个记忆节点`,
+              meta: String(content.nodeCount ?? 0),
+              children: nodeChildren
+            };
+          });
+        }
+      }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(String(rawValue));
-  } catch {
-    throw new Error("关键词必须是合法 JSON 数组");
-  }
-
-  const keywords = normalizeKeywordList(parsed);
-  if (keywords.length === 0) {
-    throw new Error("关键词至少要有 1 项");
-  }
-
-  return keywords;
+      return {
+        key: `topic:${topic.id}`,
+        id: topic.id,
+        type: "topic",
+        topicId: topic.id,
+        label: topic.name,
+        subtitle: `${topic.contentCount} 个内容块 · ${topic.nodeCount} 个记忆节点`,
+        meta: String(topic.contentCount ?? 0),
+        children
+      };
+    })
+  };
 }
 
 export function MemoryPanel({ onNavigate }) {
   const [topics, setTopics] = useState([]);
-  const [selected, setSelected] = useState(createEmptySelection);
-  const [topicDetail, setTopicDetail] = useState(null);
-  const [contentDetail, setContentDetail] = useState(null);
+  const [topicCache, setTopicCache] = useState({});
+  const [contentCache, setContentCache] = useState({});
+  const [selection, setSelection] = useState(createRootSelection);
+  const [expandedTopicId, setExpandedTopicId] = useState("");
+  const [expandedContentId, setExpandedContentId] = useState("");
   const [loadingTopics, setLoadingTopics] = useState(true);
-  const [loadingTopicDetail, setLoadingTopicDetail] = useState(false);
-  const [loadingContentDetail, setLoadingContentDetail] = useState(false);
+  const [loadingTopicId, setLoadingTopicId] = useState("");
+  const [loadingContentId, setLoadingContentId] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [fitToken, setFitToken] = useState(0);
   const [error, setError] = useState("");
 
-  const contents = useMemo(
-    () => (Array.isArray(topicDetail?.contents) ? topicDetail.contents : []),
-    [topicDetail]
+  const bumpFitToken = useCallback(() => {
+    setFitToken((prev) => prev + 1);
+  }, []);
+
+  const selectedTopic = useMemo(() => {
+    if (!selection.topicId) {
+      return null;
+    }
+    return (
+      topicCache[selection.topicId] ??
+      topics.find((topic) => String(topic?.id ?? "").trim() === selection.topicId) ??
+      null
+    );
+  }, [selection.topicId, topicCache, topics]);
+
+  const selectedContent = useMemo(() => {
+    if (!selection.contentId) {
+      return null;
+    }
+    return (
+      contentCache[selection.contentId] ??
+      selectedTopic?.contents?.find(
+        (content) => String(content?.id ?? "").trim() === selection.contentId
+      ) ??
+      null
+    );
+  }, [contentCache, selectedTopic?.contents, selection.contentId]);
+
+  const selectedNode = useMemo(() => {
+    if (!selection.nodeId || !Array.isArray(selectedContent?.nodes)) {
+      return null;
+    }
+    return (
+      selectedContent.nodes.find((node) => String(node?.id ?? "").trim() === selection.nodeId) ?? null
+    );
+  }, [selectedContent?.nodes, selection.nodeId]);
+
+  const treeData = useMemo(
+    () =>
+      buildMemoryTreeData({
+        topics,
+        topicCache,
+        contentCache,
+        expandedTopicId,
+        expandedContentId,
+        loadingTopicId,
+        loadingContentId
+      }),
+    [contentCache, expandedContentId, expandedTopicId, loadingContentId, loadingTopicId, topicCache, topics]
   );
-  const nodes = useMemo(
-    () => (Array.isArray(contentDetail?.nodes) ? contentDetail.nodes : []),
-    [contentDetail]
-  );
 
-  async function loadTopics(options = {}) {
-    setLoadingTopics(true);
-    setError("");
+  const selectedKey = useMemo(() => getSelectionKey(selection), [selection]);
 
-    try {
-      const response = await fetchMemoryTopics();
-      const nextTopics = Array.isArray(response?.topics) ? response.topics : [];
-      setTopics(nextTopics);
+  const loadTopics = useCallback(
+    async ({ forceResetSelection = false } = {}) => {
+      setLoadingTopics(true);
+      setError("");
 
-      if (options.preserveTopicId) {
-        const stillExists = nextTopics.some((topic) => topic.id === options.preserveTopicId);
-        if (!stillExists) {
-          setSelected(createEmptySelection());
-          setTopicDetail(null);
-          setContentDetail(null);
+      try {
+        const response = await fetchMemoryTopics();
+        const nextTopics = Array.isArray(response?.topics) ? response.topics : [];
+        setTopics(nextTopics);
+
+        if (forceResetSelection) {
+          startTransition(() => {
+            setSelection(createRootSelection());
+            setExpandedTopicId("");
+            setExpandedContentId("");
+          });
+          return nextTopics;
         }
+
+        const currentTopicId = String(selection.topicId ?? "").trim();
+        if (currentTopicId && !nextTopics.some((topic) => String(topic?.id ?? "").trim() === currentTopicId)) {
+          startTransition(() => {
+            setSelection(createRootSelection());
+            setExpandedTopicId("");
+            setExpandedContentId("");
+          });
+        }
+
+        return nextTopics;
+      } catch (requestError) {
+        setError(requestError?.message || "加载记忆主题失败");
+        return [];
+      } finally {
+        setLoadingTopics(false);
       }
-    } catch (requestError) {
-      setError(requestError?.message || "加载记忆主题失败");
-    } finally {
-      setLoadingTopics(false);
-    }
-  }
+    },
+    [selection.topicId]
+  );
 
-  async function loadTopicDetail(topicId, nextContentId = "") {
-    const normalizedTopicId = String(topicId ?? "").trim();
-    if (!normalizedTopicId) {
-      setSelected(createEmptySelection());
-      setTopicDetail(null);
-      setContentDetail(null);
-      return;
-    }
-
-    setLoadingTopicDetail(true);
-    setError("");
-
-    try {
-      const response = await fetchMemoryTopicById(normalizedTopicId);
-      const topic = response?.topic ?? null;
-      setTopicDetail(topic);
-      setSelected({
-        topicId: normalizedTopicId,
-        contentId: nextContentId || "",
-        nodeId: ""
-      });
-
-      if (!nextContentId) {
-        setContentDetail(null);
+  const loadTopicDetail = useCallback(
+    async (topicId, options = {}) => {
+      const normalizedTopicId = String(topicId ?? "").trim();
+      if (!normalizedTopicId) {
+        startTransition(() => {
+          setSelection(createRootSelection());
+          setExpandedTopicId("");
+          setExpandedContentId("");
+        });
+        return null;
       }
-    } catch (requestError) {
-      setError(requestError?.message || "加载内容层失败");
-    } finally {
-      setLoadingTopicDetail(false);
-    }
-  }
 
-  async function loadContentDetail(contentId) {
-    const normalizedContentId = String(contentId ?? "").trim();
-    if (!normalizedContentId) {
-      setSelected((prev) => ({
-        ...prev,
-        contentId: "",
-        nodeId: ""
-      }));
-      setContentDetail(null);
-      return;
-    }
+      const { forceRefresh = false, focusContentId = "", focusNodeId = "" } = options;
 
-    setLoadingContentDetail(true);
-    setError("");
+      setLoadingTopicId(normalizedTopicId);
+      setError("");
 
-    try {
-      const response = await fetchMemoryContentById(normalizedContentId);
-      setContentDetail(response?.content ?? null);
-      setSelected((prev) => ({
-        ...prev,
-        contentId: normalizedContentId,
-        nodeId: ""
-      }));
-    } catch (requestError) {
-      setError(requestError?.message || "加载记忆节点失败");
-    } finally {
-      setLoadingContentDetail(false);
-    }
-  }
+      try {
+        const topicDetail =
+          !forceRefresh && topicCache[normalizedTopicId]
+            ? topicCache[normalizedTopicId]
+            : (await fetchMemoryTopicById(normalizedTopicId))?.topic ?? null;
+
+        if (topicDetail) {
+          setTopicCache((prev) => ({
+            ...prev,
+            [normalizedTopicId]: topicDetail
+          }));
+
+          startTransition(() => {
+            setExpandedTopicId(normalizedTopicId);
+            setExpandedContentId(String(focusContentId ?? "").trim());
+            if (focusNodeId) {
+              setSelection(
+                createNodeSelection(normalizedTopicId, String(focusContentId ?? "").trim(), focusNodeId)
+              );
+            } else if (focusContentId) {
+              setSelection(createContentSelection(normalizedTopicId, focusContentId));
+            } else {
+              setSelection(createTopicSelection(normalizedTopicId));
+            }
+          });
+        }
+
+        return topicDetail;
+      } catch (requestError) {
+        setError(requestError?.message || "加载内容块失败");
+        return null;
+      } finally {
+        setLoadingTopicId("");
+      }
+    },
+    [topicCache]
+  );
+
+  const loadContentDetail = useCallback(
+    async (topicId, contentId, options = {}) => {
+      const normalizedTopicId = String(topicId ?? "").trim();
+      const normalizedContentId = String(contentId ?? "").trim();
+      if (!normalizedContentId) {
+        startTransition(() => {
+          setExpandedContentId("");
+          setSelection(normalizedTopicId ? createTopicSelection(normalizedTopicId) : createRootSelection());
+        });
+        return null;
+      }
+
+      const { forceRefresh = false, focusNodeId = "" } = options;
+
+      setLoadingContentId(normalizedContentId);
+      setError("");
+
+      try {
+        const contentDetail =
+          !forceRefresh && contentCache[normalizedContentId]
+            ? contentCache[normalizedContentId]
+            : (await fetchMemoryContentById(normalizedContentId))?.content ?? null;
+
+        if (contentDetail) {
+          setContentCache((prev) => ({
+            ...prev,
+            [normalizedContentId]: contentDetail
+          }));
+
+          startTransition(() => {
+            setExpandedTopicId(normalizedTopicId || String(contentDetail.topicId ?? "").trim());
+            setExpandedContentId(normalizedContentId);
+            if (focusNodeId) {
+              setSelection(
+                createNodeSelection(
+                  normalizedTopicId || contentDetail.topicId,
+                  normalizedContentId,
+                  focusNodeId
+                )
+              );
+            } else {
+              setSelection(
+                createContentSelection(normalizedTopicId || contentDetail.topicId, normalizedContentId)
+              );
+            }
+          });
+        }
+
+        return contentDetail;
+      } catch (requestError) {
+        setError(requestError?.message || "加载记忆节点失败");
+        return null;
+      } finally {
+        setLoadingContentId("");
+      }
+    },
+    [contentCache]
+  );
 
   useEffect(() => {
     loadTopics();
+  }, [loadTopics]);
+
+  const handleRefresh = useCallback(async () => {
+    await loadTopics();
+    if (expandedTopicId) {
+      await loadTopicDetail(expandedTopicId, {
+        forceRefresh: true,
+        focusContentId: expandedContentId,
+        focusNodeId: selection.nodeId
+      });
+    }
+    if (expandedContentId) {
+      await loadContentDetail(expandedTopicId, expandedContentId, {
+        forceRefresh: true,
+        focusNodeId: selection.nodeId
+      });
+    }
+    bumpFitToken();
+  }, [
+    bumpFitToken,
+    expandedContentId,
+    expandedTopicId,
+    loadContentDetail,
+    loadTopicDetail,
+    loadTopics,
+    selection.nodeId
+  ]);
+
+  const handleNodeActivate = useCallback(
+    async (nodeData) => {
+      if (!nodeData || nodeData.isPlaceholder) {
+        return;
+      }
+
+      if (nodeData.type === "root") {
+        startTransition(() => {
+          setSelection(createRootSelection());
+        });
+        return;
+      }
+
+      if (nodeData.type === "topic") {
+        await loadTopicDetail(nodeData.topicId || nodeData.id);
+        bumpFitToken();
+        return;
+      }
+
+      if (nodeData.type === "content") {
+        await loadContentDetail(nodeData.topicId, nodeData.contentId || nodeData.id);
+        bumpFitToken();
+        return;
+      }
+
+      if (nodeData.type === "node") {
+        startTransition(() => {
+          setExpandedTopicId(String(nodeData.topicId ?? "").trim());
+          setExpandedContentId(String(nodeData.contentId ?? "").trim());
+          setSelection(
+            createNodeSelection(nodeData.topicId, nodeData.contentId, nodeData.nodeId || nodeData.id)
+          );
+        });
+      }
+    },
+    [bumpFitToken, loadContentDetail, loadTopicDetail]
+  );
+
+  const handleSelectRoot = useCallback(() => {
+    startTransition(() => {
+      setSelection(createRootSelection());
+    });
   }, []);
 
-  async function handleCreateTopic() {
-    const name = window.prompt("新主题名称");
-    if (!name || !name.trim()) {
-      return;
-    }
-
+  async function handleCreateTopic(payload) {
     setBusyAction("create-topic");
     setError("");
     try {
-      const response = await createMemoryTopic({ name: name.trim() });
+      const response = await createMemoryTopic(payload);
       await loadTopics();
       if (response?.topic?.id) {
-        await loadTopicDetail(response.topic.id);
+        await loadTopicDetail(response.topic.id, { forceRefresh: true });
       }
+      bumpFitToken();
     } catch (requestError) {
       setError(requestError?.message || "新增主题失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleRenameTopic(topic) {
-    const name = window.prompt("修改主题名称", String(topic?.name ?? ""));
-    if (!name || !name.trim()) {
-      return;
-    }
-
-    setBusyAction(`rename-topic-${topic.id}`);
+  async function handleUpdateTopic(topicId, payload) {
+    setBusyAction(`update-topic:${topicId}`);
     setError("");
     try {
-      await updateMemoryTopic(topic.id, { name: name.trim() });
-      await loadTopics({ preserveTopicId: topic.id });
-      await loadTopicDetail(topic.id, selected.contentId);
+      await updateMemoryTopic(topicId, payload);
+      await loadTopics();
+      await loadTopicDetail(topicId, {
+        forceRefresh: true,
+        focusContentId: selection.contentId,
+        focusNodeId: selection.nodeId
+      });
     } catch (requestError) {
-      setError(requestError?.message || "修改主题失败");
+      setError(requestError?.message || "更新主题失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleDeleteTopic(topic) {
+  async function handleDeleteTopic(topicToDelete) {
     const confirmed = window.confirm(
-      `确定删除主题“${topic.name}”吗？其下内容层和记忆节点会一起删除。`
+      `确定删除主题“${topicToDelete?.name ?? ""}”吗？其下内容块和记忆节点会一起删除。`
     );
     if (!confirmed) {
       return;
     }
 
-    setBusyAction(`delete-topic-${topic.id}`);
+    setBusyAction(`delete-topic:${topicToDelete?.id ?? ""}`);
     setError("");
     try {
-      await deleteMemoryTopic(topic.id);
-      if (selected.topicId === topic.id) {
-        setSelected(createEmptySelection());
-        setTopicDetail(null);
-        setContentDetail(null);
-      }
-      await loadTopics({ preserveTopicId: selected.topicId });
+      await deleteMemoryTopic(topicToDelete.id);
+      setTopicCache((prev) => {
+        const next = { ...prev };
+        delete next[String(topicToDelete.id ?? "").trim()];
+        return next;
+      });
+      await loadTopics({
+        forceResetSelection:
+          String(selection.topicId ?? "").trim() === String(topicToDelete.id ?? "").trim()
+      });
+      bumpFitToken();
     } catch (requestError) {
       setError(requestError?.message || "删除主题失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleCreateContent() {
-    if (!selected.topicId) {
-      setError("请先选择一个主题");
-      return;
-    }
-
-    const name = window.prompt("新内容块名称");
-    if (!name || !name.trim()) {
-      return;
-    }
-
-    const description = window.prompt("内容块说明（可选）", "") ?? "";
-
-    setBusyAction("create-content");
+  async function handleCreateContent(payload) {
+    setBusyAction(`create-content:${payload.topicId}`);
     setError("");
     try {
-      const response = await createMemoryContent({
-        topicId: selected.topicId,
-        name: name.trim(),
-        description: description.trim()
+      const response = await createMemoryContent(payload);
+      await loadTopics();
+      await loadTopicDetail(payload.topicId, {
+        forceRefresh: true,
+        focusContentId: response?.content?.id ?? ""
       });
-      await loadTopicDetail(selected.topicId, response?.content?.id ?? "");
       if (response?.content?.id) {
-        await loadContentDetail(response.content.id);
+        await loadContentDetail(payload.topicId, response.content.id, { forceRefresh: true });
       }
-      await loadTopics({ preserveTopicId: selected.topicId });
+      bumpFitToken();
     } catch (requestError) {
       setError(requestError?.message || "新增内容块失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleEditContentName(content) {
-    const name = window.prompt("修改内容块名称", String(content?.name ?? ""));
-    if (!name || !name.trim()) {
-      return;
-    }
-
-    setBusyAction(`edit-content-name-${content.id}`);
+  async function handleUpdateContent(contentId, payload) {
+    setBusyAction(`update-content:${contentId}`);
     setError("");
     try {
-      await updateMemoryContent(content.id, {
-        name: name.trim()
+      const response = await updateMemoryContent(contentId, payload);
+      const nextTopicId = String(response?.content?.topicId ?? selection.topicId ?? "").trim();
+      await loadTopics();
+      if (nextTopicId) {
+        await loadTopicDetail(nextTopicId, {
+          forceRefresh: true,
+          focusContentId: contentId,
+          focusNodeId: selection.nodeId
+        });
+      }
+      await loadContentDetail(nextTopicId, contentId, {
+        forceRefresh: true,
+        focusNodeId: selection.nodeId
       });
-      await loadTopicDetail(selected.topicId, content.id);
-      await loadContentDetail(content.id);
-      await loadTopics({ preserveTopicId: selected.topicId });
     } catch (requestError) {
-      setError(requestError?.message || "修改内容块名称失败");
+      setError(requestError?.message || "更新内容块失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleEditContentDescription(content) {
-    const description = window.prompt(
-      "修改内容块说明",
-      String(content?.description ?? "")
+  async function handleDeleteContent(contentToDelete) {
+    const confirmed = window.confirm(
+      `确定删除内容块“${contentToDelete?.name ?? ""}”吗？其下记忆节点会一起删除。`
     );
-
-    if (description === null) {
-      return;
-    }
-
-    setBusyAction(`edit-content-description-${content.id}`);
-    setError("");
-    try {
-      await updateMemoryContent(content.id, {
-        description: String(description).trim()
-      });
-      await loadTopicDetail(selected.topicId, content.id);
-      await loadContentDetail(content.id);
-      await loadTopics({ preserveTopicId: selected.topicId });
-    } catch (requestError) {
-      setError(requestError?.message || "修改内容块说明失败");
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  async function handleDeleteContent(content) {
-    const confirmed = window.confirm(`确定删除内容块“${content.name}”吗？其下记忆节点会一起删除。`);
     if (!confirmed) {
       return;
     }
 
-    setBusyAction(`delete-content-${content.id}`);
+    setBusyAction(`delete-content:${contentToDelete?.id ?? ""}`);
     setError("");
     try {
-      await deleteMemoryContent(content.id);
-      if (selected.contentId === content.id) {
-        setContentDetail(null);
-        setSelected((prev) => ({
-          ...prev,
-          contentId: ""
-        }));
+      await deleteMemoryContent(contentToDelete.id);
+      setContentCache((prev) => {
+        const next = { ...prev };
+        delete next[String(contentToDelete.id ?? "").trim()];
+        return next;
+      });
+      await loadTopics();
+      await loadTopicDetail(contentToDelete.topicId, { forceRefresh: true });
+      if (String(selection.contentId ?? "").trim() === String(contentToDelete.id ?? "").trim()) {
+        startTransition(() => {
+          setExpandedContentId("");
+          setSelection(createTopicSelection(contentToDelete.topicId));
+        });
       }
-      await loadTopicDetail(selected.topicId);
-      await loadTopics({ preserveTopicId: selected.topicId });
+      bumpFitToken();
     } catch (requestError) {
       setError(requestError?.message || "删除内容块失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleCreateNode() {
-    if (!selected.contentId) {
-      setError("请先选择一个内容块");
-      return;
-    }
-
-    const name = window.prompt("记忆结点名称");
-    if (!name || !name.trim()) {
-      return;
-    }
-
-    const coreMemory = window.prompt("核心记忆");
-    if (!coreMemory || !coreMemory.trim()) {
-      return;
-    }
-
-    const explanation = window.prompt("解释说明");
-    if (!explanation || !explanation.trim()) {
-      return;
-    }
-
-    let specificKeywords;
-    let generalKeywords;
-    try {
-      specificKeywords = promptKeywordList(
-        "具体关键词",
-        [],
-        ["session_search", "hermes", "FTS5", "OpenAI Responses API"]
-      );
-      generalKeywords = promptKeywordList(
-        "泛化关键词",
-        [],
-        ["会话检索", "历史搜索", "检索能力", "上下文记忆"]
-      );
-    } catch (parseError) {
-      setError(parseError?.message || "关键词格式错误");
-      return;
-    }
-
-    if (!specificKeywords || !generalKeywords) {
-      return;
-    }
-
-    setBusyAction("create-node");
+  async function handleCreateNode(payload) {
+    setBusyAction(`create-node:${payload.contentId}`);
     setError("");
     try {
-      await createMemoryNode({
-        contentId: selected.contentId,
-        name: name.trim(),
-        coreMemory: coreMemory.trim(),
-        explanation: explanation.trim(),
-        specificKeywords,
-        generalKeywords
+      const response = await createMemoryNode(payload);
+      const nextNodeId = String(response?.node?.id ?? "").trim();
+      await loadTopics();
+      await loadTopicDetail(selection.topicId, {
+        forceRefresh: true,
+        focusContentId: payload.contentId,
+        focusNodeId: nextNodeId
       });
-      await loadContentDetail(selected.contentId);
-      await loadTopicDetail(selected.topicId, selected.contentId);
-      await loadTopics({ preserveTopicId: selected.topicId });
+      await loadContentDetail(selection.topicId, payload.contentId, {
+        forceRefresh: true,
+        focusNodeId: nextNodeId
+      });
+      bumpFitToken();
     } catch (requestError) {
       setError(requestError?.message || "新增记忆节点失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleEditNodeField(node, field, promptLabel) {
-    let nextValue;
-    if (field === "specificKeywords" || field === "generalKeywords") {
-      try {
-        nextValue = promptKeywordList(
-          field === "specificKeywords" ? "修改具体关键词" : "修改泛化关键词",
-          node?.[field],
-          field === "specificKeywords"
-            ? ["session_search", "hermes", "FTS5", "OpenAI Responses API"]
-            : ["会话检索", "历史搜索", "检索能力", "上下文记忆"]
-        );
-      } catch (parseError) {
-        setError(parseError?.message || "关键词格式错误");
-        return;
-      }
-      if (!nextValue) {
-        return;
-      }
-    } else {
-      nextValue = window.prompt(promptLabel, String(node?.[field] ?? ""));
-      if (nextValue === null) {
-        return;
-      }
-
-      const trimmedValue = String(nextValue).trim();
-      if (!trimmedValue) {
-        return;
-      }
-      nextValue = trimmedValue;
-    }
-
-    setBusyAction(`edit-node-${field}-${node.id}`);
+  async function handleUpdateNode(nodeId, payload) {
+    setBusyAction(`update-node:${nodeId}`);
     setError("");
     try {
-      await updateMemoryNode(node.id, {
-        [field]: nextValue
+      await updateMemoryNode(nodeId, payload);
+      await loadTopics();
+      await loadTopicDetail(selection.topicId, {
+        forceRefresh: true,
+        focusContentId: selection.contentId,
+        focusNodeId: nodeId
       });
-      await loadContentDetail(selected.contentId);
-      await loadTopicDetail(selected.topicId, selected.contentId);
-      await loadTopics({ preserveTopicId: selected.topicId });
+      await loadContentDetail(selection.topicId, selection.contentId, {
+        forceRefresh: true,
+        focusNodeId: nodeId
+      });
     } catch (requestError) {
-      setError(requestError?.message || "修改记忆节点失败");
+      setError(requestError?.message || "更新记忆节点失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleDeleteNode(node) {
-    const confirmed = window.confirm(`确定删除记忆结点“${node.name}”吗？`);
+  async function handleDeleteNode(nodeToDelete) {
+    const confirmed = window.confirm(`确定删除记忆节点“${nodeToDelete?.name ?? ""}”吗？`);
     if (!confirmed) {
       return;
     }
 
-    setBusyAction(`delete-node-${node.id}`);
+    setBusyAction(`delete-node:${nodeToDelete?.id ?? ""}`);
     setError("");
     try {
-      await deleteMemoryNode(node.id);
-      await loadContentDetail(selected.contentId);
-      await loadTopicDetail(selected.topicId, selected.contentId);
-      await loadTopics({ preserveTopicId: selected.topicId });
+      await deleteMemoryNode(nodeToDelete.id);
+      await loadTopics();
+      await loadTopicDetail(nodeToDelete.topicId, {
+        forceRefresh: true,
+        focusContentId: nodeToDelete.contentId
+      });
+      await loadContentDetail(nodeToDelete.topicId, nodeToDelete.contentId, {
+        forceRefresh: true
+      });
+      if (String(selection.nodeId ?? "").trim() === String(nodeToDelete.id ?? "").trim()) {
+        startTransition(() => {
+          setSelection(createContentSelection(nodeToDelete.topicId, nodeToDelete.contentId));
+        });
+      }
     } catch (requestError) {
       setError(requestError?.message || "删除记忆节点失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleLinkNode(node) {
-    const targetNodeId = window.prompt("输入目标记忆节点 ID");
-    if (!targetNodeId || !targetNodeId.trim()) {
-      return;
-    }
-
-    const normalizedTargetNodeId = targetNodeId.trim();
-    if (normalizedTargetNodeId === String(node?.id ?? "").trim()) {
-      setError("不能把节点关联到自己");
-      return;
-    }
-
-    const reason = window.prompt("关联原因（可选）", "") ?? "";
-
-    setBusyAction(`link-node-${node.id}`);
+  async function handleCreateRelation(payload) {
+    setBusyAction(`create-relation:${payload.fromNodeId}`);
     setError("");
     try {
-      await createMemoryNodeRelation({
-        fromNodeId: node.id,
-        toNodeId: normalizedTargetNodeId,
-        relationType: "related_to",
-        reason: reason.trim()
+      await createMemoryNodeRelation(payload);
+      await loadContentDetail(selection.topicId, selection.contentId, {
+        forceRefresh: true,
+        focusNodeId: selection.nodeId
       });
-      await loadContentDetail(selected.contentId);
     } catch (requestError) {
-      setError(requestError?.message || "建立节点关联失败");
+      setError(requestError?.message || "建立记忆关联失败");
+      throw requestError;
     } finally {
       setBusyAction("");
     }
   }
 
-  async function handleOpenRelatedNode(relatedNode) {
-    const nextTopicId = String(relatedNode?.topicId ?? "").trim();
-    const nextContentId = String(relatedNode?.contentId ?? "").trim();
-    const nextNodeId = String(relatedNode?.memoryNodeId ?? "").trim();
+  async function handleOpenRelatedNode(relation) {
+    const nextTopicId = String(relation?.topicId ?? "").trim();
+    const nextContentId = String(relation?.contentId ?? "").trim();
+    const nextNodeId = String(relation?.memoryNodeId ?? "").trim();
 
     if (!nextTopicId || !nextContentId || !nextNodeId) {
       return;
     }
 
-    await loadTopicDetail(nextTopicId, nextContentId);
-    await loadContentDetail(nextContentId);
-    setSelected({
-      topicId: nextTopicId,
-      contentId: nextContentId,
-      nodeId: nextNodeId
+    await loadTopicDetail(nextTopicId, {
+      forceRefresh: true,
+      focusContentId: nextContentId,
+      focusNodeId: nextNodeId
     });
+    await loadContentDetail(nextTopicId, nextContentId, {
+      forceRefresh: true,
+      focusNodeId: nextNodeId
+    });
+    bumpFitToken();
   }
 
   return (
     <div className="memory-panel">
-      <header className="memory-panel-header">
-        <div className="memory-panel-header-left">
-          <button type="button" className="back-button mode-pill" onClick={() => onNavigate("chat")}>
-            ← 返回会话
-          </button>
-          <div className="memory-title-wrap">
-            <h2>长期记忆</h2>
-            <p>按主题层 → 内容层 → 记忆节点层递进浏览，不做整树展开。</p>
-          </div>
+      <div className="memory-workbench">
+        <div className="memory-stage">
+          <MemoryActionDock
+            loading={loadingTopics}
+            busy={busyAction}
+            onBack={() => onNavigate("chat")}
+            onRefresh={handleRefresh}
+            onResetViewport={bumpFitToken}
+          />
+
+          <MemoryMap
+            treeData={treeData}
+            selectedKey={selectedKey}
+            loading={loadingTopics || Boolean(loadingTopicId) || Boolean(loadingContentId)}
+            fitToken={fitToken}
+            onNodeActivate={handleNodeActivate}
+            onBackgroundSelect={handleSelectRoot}
+          />
+
+          {error ? <div className="memory-floating-banner">{error}</div> : null}
         </div>
 
-        <div className="memory-panel-header-right">
-          <button
-            type="button"
-            className="refresh-button mode-pill"
-            onClick={() => loadTopics({ preserveTopicId: selected.topicId })}
-            disabled={loadingTopics || Boolean(busyAction)}
-          >
-            刷新
-          </button>
-        </div>
-      </header>
-
-      {error && <div className="memory-banner error">{error}</div>}
-
-      <div className="memory-layout">
-        <section className="memory-column">
-          <header className="memory-column-head">
-            <div>
-              <span className="memory-kicker">Layer 1</span>
-              <h3>主题层</h3>
-            </div>
-            <button
-              type="button"
-              className="memory-action"
-              onClick={handleCreateTopic}
-              disabled={Boolean(busyAction)}
-            >
-              新增
-            </button>
-          </header>
-
-          <div className="memory-column-body">
-            {loadingTopics ? (
-              <div className="memory-empty">正在加载主题...</div>
-            ) : topics.length === 0 ? (
-              <div className="memory-empty">暂无主题</div>
-            ) : (
-              <div className="memory-list">
-                {topics.map((topic) => {
-                  const isActive = selected.topicId === topic.id;
-                  return (
-                    <article
-                      key={topic.id}
-                      className={`memory-list-item ${isActive ? "is-active" : ""}`}
-                    >
-                      <button
-                        type="button"
-                        className="memory-list-main"
-                        onClick={() => loadTopicDetail(topic.id)}
-                      >
-                        <strong>{topic.name}</strong>
-                        <span>
-                          {formatMetaCount("内容块", topic.contentCount)} · {formatMetaCount("记忆", topic.nodeCount)}
-                        </span>
-                        <em>{formatTimeMeta(topic.createdAt, topic.updatedAt)}</em>
-                      </button>
-                      <div className="memory-list-actions">
-                        <button
-                          type="button"
-                          onClick={() => handleRenameTopic(topic)}
-                          disabled={Boolean(busyAction)}
-                        >
-                          改名
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTopic(topic)}
-                          disabled={Boolean(busyAction)}
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="memory-column">
-          <header className="memory-column-head">
-            <div>
-              <span className="memory-kicker">Layer 2</span>
-              <h3>内容层</h3>
-              <p>{topicDetail?.name || "先选择左侧主题"}</p>
-            </div>
-            <button
-              type="button"
-              className="memory-action"
-              onClick={handleCreateContent}
-              disabled={!selected.topicId || Boolean(busyAction)}
-            >
-              新增
-            </button>
-          </header>
-
-          <div className="memory-column-body">
-            {!selected.topicId ? (
-              <div className="memory-empty">选择主题后加载内容块</div>
-            ) : loadingTopicDetail ? (
-              <div className="memory-empty">正在加载内容层...</div>
-            ) : contents.length === 0 ? (
-              <div className="memory-empty">当前主题下暂无内容块</div>
-            ) : (
-              <div className="memory-list">
-                {contents.map((content) => {
-                  const isActive = selected.contentId === content.id;
-                  return (
-                    <article
-                      key={content.id}
-                      className={`memory-list-item ${isActive ? "is-active" : ""}`}
-                    >
-                      <button
-                        type="button"
-                        className="memory-list-main"
-                        onClick={() => loadContentDetail(content.id)}
-                      >
-                        <strong>{content.name}</strong>
-                        <span>{content.description || "无说明"}</span>
-                        <em>{formatMetaCount("记忆节点", content.nodeCount)}</em>
-                        <em>{formatTimeMeta(content.createdAt, content.updatedAt)}</em>
-                      </button>
-                      <div className="memory-list-actions">
-                        <button
-                          type="button"
-                          onClick={() => handleEditContentName(content)}
-                          disabled={Boolean(busyAction)}
-                        >
-                          改名
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEditContentDescription(content)}
-                          disabled={Boolean(busyAction)}
-                        >
-                          改说明
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteContent(content)}
-                          disabled={Boolean(busyAction)}
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="memory-column memory-column-detail">
-          <header className="memory-column-head">
-            <div>
-              <span className="memory-kicker">Layer 3</span>
-              <h3>记忆节点层</h3>
-              <p>{contentDetail?.name || "先选择中间内容块"}</p>
-            </div>
-            <button
-              type="button"
-              className="memory-action"
-              onClick={handleCreateNode}
-              disabled={!selected.contentId || Boolean(busyAction)}
-            >
-              新增
-            </button>
-          </header>
-
-          <div className="memory-column-body">
-            {!selected.contentId ? (
-              <div className="memory-empty">选择内容块后加载记忆节点</div>
-            ) : loadingContentDetail ? (
-              <div className="memory-empty">正在加载记忆节点...</div>
-            ) : nodes.length === 0 ? (
-              <div className="memory-empty">当前内容块下暂无记忆节点</div>
-            ) : (
-              <div className="memory-node-list">
-                {nodes.map((node) => (
-                  <article
-                    key={node.id}
-                    className={`memory-node ${selected.nodeId === node.id ? "is-focused" : ""}`}
-                  >
-                    <div className="memory-node-head">
-                      <div>
-                        <span className="memory-node-label">结点名称</span>
-                        <h4>{node.name}</h4>
-                        <p className="memory-node-time">{formatTimeMeta(node.createdAt, node.updatedAt)}</p>
-                      </div>
-                      <div className="memory-list-actions">
-                        <button
-                          type="button"
-                          onClick={() => handleEditNodeField(node, "name", "修改记忆结点名称")}
-                          disabled={Boolean(busyAction)}
-                        >
-                          改名
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEditNodeField(node, "coreMemory", "修改核心记忆")}
-                          disabled={Boolean(busyAction)}
-                        >
-                          改核心
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEditNodeField(node, "explanation", "修改解释说明")}
-                          disabled={Boolean(busyAction)}
-                        >
-                          改解释
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleEditNodeField(node, "specificKeywords", "修改具体关键词")
-                          }
-                          disabled={Boolean(busyAction)}
-                        >
-                          改具体词
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleEditNodeField(node, "generalKeywords", "修改泛化关键词")
-                          }
-                          disabled={Boolean(busyAction)}
-                        >
-                          改泛化词
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleLinkNode(node)}
-                          disabled={Boolean(busyAction)}
-                        >
-                          关联
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteNode(node)}
-                          disabled={Boolean(busyAction)}
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </div>
-
-                    <dl className="memory-node-grid">
-                      <div>
-                        <dt>核心记忆</dt>
-                        <dd>{node.coreMemory}</dd>
-                      </div>
-                      <div>
-                        <dt>解释说明</dt>
-                        <dd>{node.explanation}</dd>
-                      </div>
-                      <div>
-                        <dt>具体关键词</dt>
-                        <dd>{formatKeywordList(node.specificKeywords)}</dd>
-                      </div>
-                      <div>
-                        <dt>泛化关键词</dt>
-                        <dd>{formatKeywordList(node.generalKeywords)}</dd>
-                      </div>
-                    </dl>
-
-                    <div className="memory-related">
-                      <div className="memory-related-head">
-                        <span>相关记忆</span>
-                        <em>
-                          {Array.isArray(node.relatedMemoryNodes)
-                            ? `共 ${node.relatedMemoryNodes.length} 条`
-                            : "共 0 条"}
-                        </em>
-                      </div>
-
-                      {Array.isArray(node.relatedMemoryNodes) && node.relatedMemoryNodes.length > 0 ? (
-                        <div className="memory-related-list">
-                          {node.relatedMemoryNodes.map((relation) => (
-                            <button
-                              key={relation.relationId}
-                              type="button"
-                              className="memory-related-item"
-                              onClick={() => handleOpenRelatedNode(relation)}
-                            >
-                              <strong>{relation.memoryNodeName}</strong>
-                              <span>
-                                {relation.topicName} / {relation.contentName}
-                              </span>
-                              <span>
-                                {relation.reason || relation.relationType || "related_to"}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="memory-related-empty">暂无关联节点</div>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
+        <MemoryDetailPanel
+          topics={topics}
+          selection={selection}
+          topic={selectedTopic}
+          content={selectedContent}
+          node={selectedNode}
+          busyAction={busyAction}
+          onCreateTopic={handleCreateTopic}
+          onUpdateTopic={handleUpdateTopic}
+          onDeleteTopic={handleDeleteTopic}
+          onCreateContent={handleCreateContent}
+          onUpdateContent={handleUpdateContent}
+          onDeleteContent={handleDeleteContent}
+          onCreateNode={handleCreateNode}
+          onUpdateNode={handleUpdateNode}
+          onDeleteNode={handleDeleteNode}
+          onCreateRelation={handleCreateRelation}
+          onOpenRelatedNode={handleOpenRelatedNode}
+        />
       </div>
     </div>
   );

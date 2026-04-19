@@ -67,6 +67,17 @@ skill-name/
 - Do not make the skill depend on this file.
 - The bundled generator is `scripts/generate_openai_yaml.py`.
 
+Minimal template:
+
+```yaml
+interface:
+  display_name: "Your Skill Name"
+  short_description: "One-line summary of what this skill does"
+  default_prompt: "Use $your-skill-name to complete this task."
+policy:
+  allow_implicit_invocation: true
+```
+
 ### Bundled Resources
 
 #### `scripts/`
@@ -80,6 +91,15 @@ validation helpers live here:
 
 `scripts/init_skill.py` can generate both `SKILL.md` and `agents/openai.yaml`, but the YAML file is
 optional in the skill contract.
+
+#### Scaffold Path Default
+
+- Default global scope is home-level: `--path <home>/.yyz/skills`.
+- Expected default output is `<home>/.yyz/skills/<skill-name>` with no extra middle folder.
+- Optional project scope is workplace-level: `--path <workplace>/.yyz/skills`.
+- Expected workplace output is `<workplace>/.yyz/skills/<skill-name>`.
+- Category nesting is optional (for example `<home>/.yyz/skills/user` or `<workplace>/.yyz/skills/user`).
+- Do not add folders like `user/` unless category nesting is intentionally required.
 
 #### `references/`
 

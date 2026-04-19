@@ -365,6 +365,105 @@ function alignTailBoundary(messages, boundaryIndex) {
   return index;
 }
 
+function buildCompactionWindow(
+  rawMessages,
+  latestSummary,
+  { headMessageCount = DEFAULT_HEAD_MESSAGE_COUNT, tailMessageCount = DEFAULT_TAIL_MESSAGE_COUNT } = {}
+) {
+  const normalizedHeadMessageCount = Math.max(0, Number(headMessageCount ?? 0));
+  const normalizedTailMessageCount = Math.max(0, Number(tailMessageCount ?? 0));
+  const previousTailStartId = String(latestSummary?.message?.meta?.tailStartMessageId ?? "").trim();
+
+  let unsummarizedStartIndex = normalizedHeadMessageCount;
+  if (latestSummary) {
+    const previousTailStartIndex = findMessageIndexById(rawMessages, previousTailStartId);
+    if (previousTailStartIndex >= 0) {
+      unsummarizedStartIndex = previousTailStartIndex;
+    }
+  }
+
+  unsummarizedStartIndex = alignHeadBoundary(rawMessages, unsummarizedStartIndex);
+
+  let tailStartIndex = Math.max(unsummarizedStartIndex, rawMessages.length - normalizedTailMessageCount);
+  tailStartIndex = alignTailBoundary(rawMessages, tailStartIndex);
+
+  return {
+    headMessageCount: normalizedHeadMessageCount,
+    tailMessageCount: normalizedTailMessageCount,
+    unsummarizedStartIndex,
+    tailStartIndex,
+    messagesToSummarize: rawMessages.slice(unsummarizedStartIndex, tailStartIndex)
+  };
+}
+
+function hasCompactionWindow(plan) {
+  return (
+    plan &&
+    Number(plan.tailStartIndex ?? 0) > Number(plan.unsummarizedStartIndex ?? 0) &&
+    Array.isArray(plan.messagesToSummarize) &&
+    plan.messagesToSummarize.length > 0
+  );
+}
+
+function resolveCompactionWindow(
+  rawMessages,
+  latestSummary,
+  {
+    headMessageCount = DEFAULT_HEAD_MESSAGE_COUNT,
+    tailMessageCount = DEFAULT_TAIL_MESSAGE_COUNT,
+    allowAdaptiveWindow = false
+  } = {}
+) {
+  const initialPlan = buildCompactionWindow(rawMessages, latestSummary, {
+    headMessageCount,
+    tailMessageCount
+  });
+
+  if (hasCompactionWindow(initialPlan) || !allowAdaptiveWindow) {
+    return initialPlan;
+  }
+
+  const candidateHeadCounts = latestSummary
+    ? [Math.max(0, Number(headMessageCount ?? 0))]
+    : Array.from(
+        new Set(
+          [
+            Math.max(0, Number(headMessageCount ?? 0)),
+            Math.min(Math.max(0, Number(headMessageCount ?? 0)), 3),
+            Math.min(Math.max(0, Number(headMessageCount ?? 0)), 2),
+            Math.min(Math.max(0, Number(headMessageCount ?? 0)), 1)
+          ].filter((count) => Number.isFinite(count))
+        )
+      );
+  const minTailCount = Math.min(Math.max(0, Number(tailMessageCount ?? 0)), latestSummary ? 2 : 3);
+  const candidateTailCounts = [];
+  for (let count = Math.max(0, Number(tailMessageCount ?? 0)); count >= minTailCount; count -= 1) {
+    candidateTailCounts.push(count);
+  }
+
+  for (const candidateHeadCount of candidateHeadCounts) {
+    for (const candidateTailCount of candidateTailCounts) {
+      if (
+        candidateHeadCount === initialPlan.headMessageCount &&
+        candidateTailCount === initialPlan.tailMessageCount
+      ) {
+        continue;
+      }
+
+      const candidatePlan = buildCompactionWindow(rawMessages, latestSummary, {
+        headMessageCount: candidateHeadCount,
+        tailMessageCount: candidateTailCount
+      });
+
+      if (hasCompactionWindow(candidatePlan)) {
+        return candidatePlan;
+      }
+    }
+  }
+
+  return initialPlan;
+}
+
 function sanitizeToolPairs(messages) {
   const normalizedMessages = messages.map((message, index) =>
     normalizeMessage(message, `sanitized_${index}`)
@@ -846,21 +945,19 @@ export class ConversationCompressionService {
 
     const latestSummary = findLatestCompressionSummary(normalizedMessages);
     const rawMessages = normalizedMessages.filter((message) => !isCompressionSummary(message));
-    const head = rawMessages.slice(0, this.headMessageCount);
     const previousSummaryText = latestSummary?.message?.content ?? "";
-
-    let unsummarizedStartIndex = head.length;
-    if (latestSummary) {
-      const previousTailStartId = String(latestSummary.message?.meta?.tailStartMessageId ?? "").trim();
-      const previousTailStartIndex = findMessageIndexById(rawMessages, previousTailStartId);
-      if (previousTailStartIndex >= 0) {
-        unsummarizedStartIndex = previousTailStartIndex;
-      }
-    }
-
-    let tailStartIndex = Math.max(unsummarizedStartIndex, rawMessages.length - this.tailMessageCount);
-    tailStartIndex = alignTailBoundary(rawMessages, tailStartIndex);
-    unsummarizedStartIndex = alignHeadBoundary(rawMessages, unsummarizedStartIndex);
+    const compactionWindow = resolveCompactionWindow(rawMessages, latestSummary, {
+      headMessageCount: this.headMessageCount,
+      tailMessageCount: this.tailMessageCount,
+      allowAdaptiveWindow: trigger === "manual"
+    });
+    const {
+      headMessageCount,
+      tailMessageCount,
+      unsummarizedStartIndex,
+      tailStartIndex,
+      messagesToSummarize
+    } = compactionWindow;
 
     if (tailStartIndex <= unsummarizedStartIndex) {
       return {
@@ -873,7 +970,6 @@ export class ConversationCompressionService {
       };
     }
 
-    const messagesToSummarize = rawMessages.slice(unsummarizedStartIndex, tailStartIndex);
     if (messagesToSummarize.length === 0) {
       return {
         compressed: false,
@@ -914,8 +1010,8 @@ export class ConversationCompressionService {
         compressionId,
         trigger,
         previousSummaryId: String(latestSummary?.message?.id ?? "").trim(),
-        headMessageCount: this.headMessageCount,
-        tailMessageCount: this.tailMessageCount,
+        headMessageCount,
+        tailMessageCount,
         tailStartMessageId: String(tailStartMessage?.id ?? "").trim(),
         summarizedMessageIds: messagesToSummarize.map((message) => message.id),
         summarizedMessageCount: messagesToSummarize.length,

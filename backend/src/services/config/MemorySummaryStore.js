@@ -7,17 +7,15 @@ const SCHEMA_VERSION = 1;
 const MAX_WORKSPACE_ENTRIES = 24;
 const GLOBAL_LIST_MAX_ITEMS = 8;
 const GLOBAL_ITEM_MAX_CHARS = 180;
-const WORKSPACE_SCOPE_MAX_CHARS = 220;
-const WORKSPACE_APPLIES_TO_MAX_ITEMS = 5;
-const WORKSPACE_APPLIES_TO_MAX_CHARS = 120;
-const WORKSPACE_CURRENT_FOCUS_MAX_ITEMS = 4;
-const WORKSPACE_CURRENT_FOCUS_MAX_CHARS = 180;
-const WORKSPACE_STABLE_RULES_MAX_ITEMS = 5;
-const WORKSPACE_STABLE_RULES_MAX_CHARS = 180;
-const WORKSPACE_REUSABLE_KNOWLEDGE_MAX_ITEMS = 5;
-const WORKSPACE_REUSABLE_KNOWLEDGE_MAX_CHARS = 180;
-const WORKSPACE_PITFALLS_MAX_ITEMS = 4;
-const WORKSPACE_PITFALLS_MAX_CHARS = 180;
+const WORKSPACE_PURPOSE_MAX_CHARS = 220;
+const WORKSPACE_SURFACES_MAX_ITEMS = 5;
+const WORKSPACE_SURFACES_MAX_CHARS = 120;
+const WORKSPACE_INVARIANTS_MAX_ITEMS = 5;
+const WORKSPACE_INVARIANTS_MAX_CHARS = 180;
+const WORKSPACE_ENTRYPOINTS_MAX_ITEMS = 5;
+const WORKSPACE_ENTRYPOINTS_MAX_CHARS = 200;
+const WORKSPACE_GOTCHAS_MAX_ITEMS = 4;
+const WORKSPACE_GOTCHAS_MAX_CHARS = 180;
 
 function normalizeText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -78,12 +76,11 @@ function createEmptyGlobalSummary() {
 
 function createEmptyWorkspaceSummary() {
   return {
-    scope: "",
-    appliesTo: [],
-    currentFocus: [],
-    stableRules: [],
-    reusableKnowledge: [],
-    pitfalls: []
+    purpose: "",
+    surfaces: [],
+    invariants: [],
+    entrypoints: [],
+    gotchas: []
   };
 }
 
@@ -116,28 +113,29 @@ export function normalizeGlobalSummary(input) {
 
 export function normalizeWorkspaceSummary(input) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const purpose = source.purpose ?? source.scope ?? "";
+  const surfaces = source.surfaces ?? source.appliesTo ?? [];
+  const invariants = source.invariants ?? source.stableRules ?? [];
+  const entrypoints = source.entrypoints ?? source.reusableKnowledge ?? [];
+  const gotchas = source.gotchas ?? source.pitfalls ?? [];
 
   return {
-    scope: clipText(source.scope, WORKSPACE_SCOPE_MAX_CHARS),
-    appliesTo: normalizeStringList(source.appliesTo, {
-      maxItems: WORKSPACE_APPLIES_TO_MAX_ITEMS,
-      maxChars: WORKSPACE_APPLIES_TO_MAX_CHARS
+    purpose: clipText(purpose, WORKSPACE_PURPOSE_MAX_CHARS),
+    surfaces: normalizeStringList(surfaces, {
+      maxItems: WORKSPACE_SURFACES_MAX_ITEMS,
+      maxChars: WORKSPACE_SURFACES_MAX_CHARS
     }),
-    currentFocus: normalizeStringList(source.currentFocus, {
-      maxItems: WORKSPACE_CURRENT_FOCUS_MAX_ITEMS,
-      maxChars: WORKSPACE_CURRENT_FOCUS_MAX_CHARS
+    invariants: normalizeStringList(invariants, {
+      maxItems: WORKSPACE_INVARIANTS_MAX_ITEMS,
+      maxChars: WORKSPACE_INVARIANTS_MAX_CHARS
     }),
-    stableRules: normalizeStringList(source.stableRules, {
-      maxItems: WORKSPACE_STABLE_RULES_MAX_ITEMS,
-      maxChars: WORKSPACE_STABLE_RULES_MAX_CHARS
+    entrypoints: normalizeStringList(entrypoints, {
+      maxItems: WORKSPACE_ENTRYPOINTS_MAX_ITEMS,
+      maxChars: WORKSPACE_ENTRYPOINTS_MAX_CHARS
     }),
-    reusableKnowledge: normalizeStringList(source.reusableKnowledge, {
-      maxItems: WORKSPACE_REUSABLE_KNOWLEDGE_MAX_ITEMS,
-      maxChars: WORKSPACE_REUSABLE_KNOWLEDGE_MAX_CHARS
-    }),
-    pitfalls: normalizeStringList(source.pitfalls, {
-      maxItems: WORKSPACE_PITFALLS_MAX_ITEMS,
-      maxChars: WORKSPACE_PITFALLS_MAX_CHARS
+    gotchas: normalizeStringList(gotchas, {
+      maxItems: WORKSPACE_GOTCHAS_MAX_ITEMS,
+      maxChars: WORKSPACE_GOTCHAS_MAX_CHARS
     })
   };
 }
@@ -145,12 +143,11 @@ export function normalizeWorkspaceSummary(input) {
 function isWorkspaceSummaryEmpty(summary) {
   const normalized = normalizeWorkspaceSummary(summary);
   return (
-    !normalized.scope &&
-    normalized.appliesTo.length === 0 &&
-    normalized.currentFocus.length === 0 &&
-    normalized.stableRules.length === 0 &&
-    normalized.reusableKnowledge.length === 0 &&
-    normalized.pitfalls.length === 0
+    !normalized.purpose &&
+    normalized.surfaces.length === 0 &&
+    normalized.invariants.length === 0 &&
+    normalized.entrypoints.length === 0 &&
+    normalized.gotchas.length === 0
   );
 }
 

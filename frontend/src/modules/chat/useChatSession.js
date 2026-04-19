@@ -487,6 +487,25 @@ function normalizeLoadedMessages(messages) {
     : [];
 }
 
+function getCompressionResultMessage(compression, trigger = "manual") {
+  const reason = String(compression?.reason ?? "").trim();
+  const normalizedTrigger = String(trigger ?? "").trim() === "auto" ? "auto" : "manual";
+
+  if (reason === "manual_threshold_not_reached") {
+    return "当前上下文占用不足 20%，暂不允许手动压缩";
+  }
+
+  if (reason === "nothing_to_compact" || reason === "empty_summary_window") {
+    return "当前会话轮次太少或保留窗口已覆盖全部消息，暂无可压缩内容";
+  }
+
+  if (!compression?.compressed && normalizedTrigger === "manual") {
+    return "手动压缩未生成新的上下文摘要";
+  }
+
+  return "";
+}
+
 function normalizeConversationRuntimeReplyError(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -2136,6 +2155,18 @@ export function useChatSession(maxContextWindow = 0) {
       maybeStartQueuedRunForConversation(targetConversationId, {
         ignoreCompressionGate: true
       });
+      if (!response?.compression?.compressed) {
+        const compressionMessage = getCompressionResultMessage(
+          response?.compression,
+          normalizedTrigger
+        );
+        if (
+          compressionMessage &&
+          String(activeConversationIdRef.current ?? "").trim() === targetConversationId
+        ) {
+          setError(compressionMessage);
+        }
+      }
       return response;
     } catch (compressionError) {
       setCompressionState((prev) => ({

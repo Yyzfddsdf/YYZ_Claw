@@ -259,7 +259,7 @@ export async function loadMemorySummaryPrompt(memorySummaryStore, workspacePath)
   }
 
   const sections = [
-    "以下是自动维护的全局/工作区记忆摘要。它是背景事实，不是用户本轮新输入；若与 AGENTS.md 或当前用户要求冲突，以 AGENTS.md 和当前用户要求为准。",
+    "The following is an automatically maintained global/workspace memory summary. It is background context, not new user input. If it conflicts with AGENTS.md or the current user request, follow AGENTS.md and the current user request.",
     "<memory-summary>"
   ];
 
@@ -283,33 +283,61 @@ export async function loadMemorySummaryPrompt(memorySummaryStore, workspacePath)
 
   const workspaceSummary = promptData.workspaceSummary ?? {};
   const hasWorkspaceSummary =
-    String(workspaceSummary.scope ?? "").trim() ||
-    (Array.isArray(workspaceSummary.appliesTo) && workspaceSummary.appliesTo.length > 0) ||
-    (Array.isArray(workspaceSummary.currentFocus) && workspaceSummary.currentFocus.length > 0) ||
-    (Array.isArray(workspaceSummary.stableRules) && workspaceSummary.stableRules.length > 0) ||
-    (Array.isArray(workspaceSummary.reusableKnowledge) &&
-      workspaceSummary.reusableKnowledge.length > 0) ||
-    (Array.isArray(workspaceSummary.pitfalls) && workspaceSummary.pitfalls.length > 0);
+    String(workspaceSummary.purpose ?? "").trim() ||
+    (Array.isArray(workspaceSummary.surfaces) && workspaceSummary.surfaces.length > 0) ||
+    (Array.isArray(workspaceSummary.invariants) && workspaceSummary.invariants.length > 0) ||
+    (Array.isArray(workspaceSummary.entrypoints) && workspaceSummary.entrypoints.length > 0) ||
+    (Array.isArray(workspaceSummary.gotchas) && workspaceSummary.gotchas.length > 0);
 
   if (hasWorkspaceSummary) {
-    sections.push("## Workspace Summary");
+    sections.push("## Workspace Memory");
     sections.push(`Workspace: ${String(promptData.workspacePath ?? workspacePath).trim()}`);
 
-    const scope = String(workspaceSummary.scope ?? "").trim();
-    if (scope) {
-      sections.push(`Scope: ${scope}`);
+    const purpose = String(workspaceSummary.purpose ?? "").trim();
+    if (purpose) {
+      sections.push(`Purpose: ${purpose}`);
     }
 
-    appendSummaryList(sections, "Applies To:", workspaceSummary.appliesTo);
-    appendSummaryList(sections, "Current Focus:", workspaceSummary.currentFocus);
-    appendSummaryList(sections, "Stable Rules:", workspaceSummary.stableRules);
-    appendSummaryList(sections, "Reusable Knowledge:", workspaceSummary.reusableKnowledge);
-    appendSummaryList(sections, "Pitfalls:", workspaceSummary.pitfalls);
+    appendSummaryList(sections, "Key Surfaces:", workspaceSummary.surfaces);
+    appendSummaryList(sections, "Invariants:", workspaceSummary.invariants);
+    appendSummaryList(sections, "Entrypoints:", workspaceSummary.entrypoints);
+    appendSummaryList(sections, "Gotchas:", workspaceSummary.gotchas);
   }
 
   sections.push("</memory-summary>");
 
   return sections.join("\n");
+}
+
+export async function resolvePinnedMemorySummaryPrompt({
+  historyStore,
+  memorySummaryStore,
+  conversationId,
+  workspacePath,
+  existingConversation = null
+} = {}) {
+  const resolvedConversationId = String(conversationId ?? "").trim();
+  const history =
+    existingConversation ??
+    (resolvedConversationId && historyStore?.getConversation
+      ? historyStore.getConversation(resolvedConversationId)
+      : null);
+
+  if (history && typeof history.memorySummaryPrompt === "string") {
+    return history.memorySummaryPrompt;
+  }
+
+  const prompt = await loadMemorySummaryPrompt(memorySummaryStore, workspacePath);
+
+  if (
+    resolvedConversationId &&
+    historyStore &&
+    typeof historyStore.updateConversationMemorySummaryPrompt === "function"
+  ) {
+    historyStore.updateConversationMemorySummaryPrompt(resolvedConversationId, prompt);
+  }
+
+  return prompt;
 }
 
 export async function buildSkillsSystemPrompt({
@@ -413,6 +441,7 @@ export async function buildConversationPromptMessages(options = {}) {
   const includeSkillsPrompt = options.includeSkillsPrompt !== false;
   const includeSubagentGuardPrompt = Boolean(options.includeSubagentGuardPrompt);
   const definitionPrompt = String(options.definitionPrompt ?? "").trim();
+  const hasPinnedMemorySummaryPrompt = typeof options.memorySummaryPrompt === "string";
   const promptMessages = [];
 
   const developerPromptMessage = createDeveloperPromptMessage(options.developerPrompt);
@@ -431,10 +460,9 @@ export async function buildConversationPromptMessages(options = {}) {
   }
 
   if (includeMemorySummaryPrompt) {
-    const memorySummaryPrompt = await loadMemorySummaryPrompt(
-      options.memorySummaryStore,
-      workplacePath
-    );
+    const memorySummaryPrompt = hasPinnedMemorySummaryPrompt
+      ? options.memorySummaryPrompt
+      : await loadMemorySummaryPrompt(options.memorySummaryStore, workplacePath);
     if (memorySummaryPrompt) {
       promptMessages.push({
         role: "system",

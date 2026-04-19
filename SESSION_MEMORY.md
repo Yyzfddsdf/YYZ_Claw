@@ -1,21 +1,16 @@
 # SESSION MEMORY
 
 ## 上一步实际完成了什么
-- 已新增本地图片工具 `view_image`：读取本地图片并返回结构化结果，同时携带 base64 data URL 图片附件
-- 已打通 OpenAI 兼容视觉链路：工具结果若包含图片附件，`ChatAgent` 会追加一条内部 `tool_image_input` 消息（协议上按 user 多模态输入），让模型在同一轮后续推理里继续看图
-- 已完成入库策略：内部图片输入消息会通过 `AgentConversationRecorder` 落库，`meta.kind=tool_image_input`，图片 base64 存在 `meta.attachments` 中
-- 已完成前端发送修复：去掉输入框 `required` 限制，支持仅图片/仅文件发送，不再强制必须有文字
-- 已完成前端展示修复：`meta.kind=tool_image_input` 内部消息不在聊天区冒充用户显示；用户“纯图片/纯文件”消息卡片放大显示
-- 已完成构建与语法验证：`npm run build:frontend` 通过；`ChatAgent.js` 与 `viewImage.tool.js` 模块导入校验通过
+- 已把工作区记忆 schema 从 `scope/appliesTo/currentFocus/stableRules/reusableKnowledge/pitfalls` 收敛成更稳定的 `purpose/surfaces/invariants/entrypoints/gotchas`
+- 已把 `memory_summary` 的 tool schema、生成 prompt、运行时注入 prompt 统一改成英文表述
+- 已保留无规则后处理：global/workspace 仍只做基础 `normalize + merge`，没有恢复内容筛选规则
 
 ## 下一步打算做什么
-- 在真实会话里手动验证三条路径：
-  1) 用户只发图片/文件可发送
-  2) `view_image` 被调用后模型能基于图片继续回答
-  3) 历史会话重开后仍能从入库的图片附件恢复视觉上下文
-- 如需控制库体积，再加可选策略（例如按会话开关决定是否保存 base64 原文）
+- 迁移现有 `.yyz/memory_summary.json` 到新字段，避免文件仍停留在旧 schema
+- 真实触发一次 `memory_summary` refresh，观察“新 schema + 英文 prompt + 无规则后处理”下的实际生成质量
+- 如果结果还是差，优先考虑给 `memory_summary` 单独换更强模型，而不是重新堆后处理规则
 
 ## 关键约束 / 风险
-- 当前实现按需求把 base64 入库，SQLite 体积会增长更快
-- `view_image` 目前限制单图 5MB，超出会报错
-- 内部图片消息虽不在聊天区显示，但会参与会话上下文和压缩流程
+- 当前 summary 文件仍在工作区 `.yyz/memory_summary.json`，还没迁到总目录
+- 已冻结到会话的 `memory_summary_prompt` 不会热更新；要看新 prompt 效果，需要看新会话或尚未冻结的会话
+- 当前只完成了“新 workspace schema + 英文 prompt/schema + 无规则后处理”改造和代码校验，还没跑真实模型 refresh 验证最终生成质量

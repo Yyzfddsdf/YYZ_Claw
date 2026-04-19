@@ -7,6 +7,7 @@ import {
   isAutoTitleCandidate,
   loadApprovalRules,
   normalizeUsageRecordPayload,
+  resolvePinnedMemorySummaryPrompt,
   resolveAgentRuntimeConfig,
   scheduleAsyncTitleGeneration
 } from "../chat/conversationRuntimeShared.js";
@@ -191,11 +192,19 @@ export class ConversationAgentRuntimeService {
     }
 
     const workplacePath = normalizeText(existingConversation?.workplacePath);
+    const pinnedMemorySummaryPrompt = await resolvePinnedMemorySummaryPrompt({
+      historyStore: this.historyStore,
+      memorySummaryStore: this.memorySummaryStore,
+      conversationId,
+      workspacePath: workplacePath,
+      existingConversation
+    });
     const promptMessages = await buildConversationPromptMessages({
       agentsPromptStore: this.agentsPromptStore,
       memorySummaryStore: this.memorySummaryStore,
       skillPromptBuilder: this.skillPromptBuilder,
       workspacePath: workplacePath,
+      memorySummaryPrompt: pinnedMemorySummaryPrompt,
       developerPrompt: resolved.developerPrompt,
       activeSkillNames: resolved.activeSkillNames,
       definitionPrompt: resolved.definitionPrompt,

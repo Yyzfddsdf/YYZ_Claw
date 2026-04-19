@@ -28,6 +28,7 @@ import {
   isAutoTitleCandidate,
   loadApprovalRules,
   normalizeUsageRecordPayload,
+  resolvePinnedMemorySummaryPrompt,
   resolveAgentRuntimeConfig,
   scheduleAsyncTitleGeneration
 } from "../services/chat/conversationRuntimeShared.js";
@@ -1791,11 +1792,19 @@ export function createChatController({
         const recorder = new AgentConversationRecorder({
           initialMessages: effectiveMessages
         });
+        const pinnedMemorySummaryPrompt = await resolvePinnedMemorySummaryPrompt({
+          historyStore,
+          memorySummaryStore,
+          conversationId,
+          workspacePath: workplacePath,
+          existingConversation
+        });
         const promptMessages = await buildConversationPromptMessages({
           agentsPromptStore,
           memorySummaryStore,
           skillPromptBuilder,
           workspacePath: workplacePath,
+          memorySummaryPrompt: pinnedMemorySummaryPrompt,
           developerPrompt: resolvedRuntime?.developerPrompt,
           activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
             ? resolvedRuntime.activeSkillNames

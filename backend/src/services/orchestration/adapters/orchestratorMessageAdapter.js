@@ -21,6 +21,8 @@ function buildMessage(kind, context = {}) {
     sessionId: String(context.sessionId ?? "").trim(),
     sourceAgentId: String(context.sourceAgentId ?? "").trim(),
     targetAgentId: String(context.targetAgentId ?? "").trim(),
+    sourceAgentDisplayName: String(context.sourceAgentDisplayName ?? "").trim(),
+    targetAgentDisplayName: String(context.targetAgentDisplayName ?? "").trim(),
     subtype: String(context.subtype ?? "generic").trim() || "generic",
     deliveryMode: String(context.deliveryMode ?? "queued_after_atomic").trim()
       || "queued_after_atomic",

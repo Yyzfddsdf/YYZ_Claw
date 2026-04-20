@@ -6,11 +6,25 @@ import {
   readOptionalText,
   readStringArray
 } from "./orchestrationToolShared.js";
+import { resolveCurrentTurnDispatchTrigger } from "../orchestration/subagentCompletionShared.js";
+
+function normalizeText(value) {
+  return String(value ?? "").trim();
+}
+
+function isSubagentTurn(executionContext = {}, sourceAgentId = "") {
+  const normalizedAgentType = normalizeText(executionContext?.agentType).toLowerCase();
+  if (normalizedAgentType) {
+    return normalizedAgentType !== "primary";
+  }
+
+  return normalizeText(sourceAgentId).startsWith("subagent:");
+}
 
 export default {
   name: "pool_report",
   description:
-    "Publish a concise report into the shared pool. Keep titles and lines short, factual, and free of boilerplate.",
+    "Publish a concise report into the shared pool. For subagents, this is only allowed on primary-dispatch turns. Keep titles and lines short, factual, and free of boilerplate.",
   parameters: {
     type: "object",
     properties: {
@@ -45,6 +59,20 @@ export default {
     const conversationId = getConversationId(executionContext);
     const sourceAgentId = getAgentId(executionContext);
     const atomicStepId = getCurrentAtomicStepId(executionContext);
+    const subagentTurn = isSubagentTurn(executionContext, sourceAgentId);
+
+    if (subagentTurn) {
+      const trigger = resolveCurrentTurnDispatchTrigger(executionContext);
+      if (!trigger.isPrimaryDispatchTurn) {
+        return {
+          accepted: false,
+          reason: "not_primary_dispatch_turn",
+          delivery: "skipped",
+          onlyInPrimaryDispatchTurn: true,
+          trigger
+        };
+      }
+    }
 
     return supervisor.reportToPool({
       conversationId,

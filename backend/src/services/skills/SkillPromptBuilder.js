@@ -1,8 +1,10 @@
-function toSkillBullet(skill) {
+function toSkillLines(skill) {
   const labelParts = [skill.name];
   const scope = String(skill.scope ?? "").trim();
   const category = String(skill.category ?? "").trim();
   const description = String(skill.description ?? "").trim();
+  const defaultPrompt = String(skill.defaultPrompt ?? "").trim();
+  const allowImplicitInvocation = skill.allowImplicitInvocation === true;
 
   if (scope) {
     labelParts.push(`<${scope}>`);
@@ -12,7 +14,12 @@ function toSkillBullet(skill) {
     labelParts.push(`[${category}]`);
   }
 
-  return `- ${labelParts.join(" ")}${description ? ` - ${description}` : ""}`;
+  const lines = [`- ${labelParts.join(" ")}${description ? ` - ${description}` : ""}`];
+  if (allowImplicitInvocation && defaultPrompt) {
+    lines.push(`  default prompt: ${defaultPrompt}`);
+  }
+
+  return lines;
 }
 
 export class SkillPromptBuilder {
@@ -49,7 +56,7 @@ export class SkillPromptBuilder {
 
     if (selectedSkills.length > 0) {
       sections.push("## 当前会话已启用技能");
-      sections.push(...selectedSkills.slice(0, limit).map((skill) => toSkillBullet(skill)));
+      sections.push(...selectedSkills.slice(0, limit).flatMap((skill) => toSkillLines(skill)));
     }
 
     if (sections.length === 0) {

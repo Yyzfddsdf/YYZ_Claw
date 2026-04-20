@@ -149,6 +149,7 @@ export class OrchestratorSupervisorService {
       description: normalizeText(definition?.description),
       specialty: normalizeText(definition?.metadata?.specialty),
       inheritedBaseToolNames: normalizeLineList(definition?.inheritedBaseToolNames),
+      exclusiveToolNames: normalizeLineList(definition?.exclusiveToolNames),
       inheritedBaseHookNames: normalizeLineList(definition?.inheritedBaseHookNames)
     }));
   }

@@ -14,6 +14,46 @@ async function readOptionalText(filePath) {
   }
 }
 
+function normalizeToolModule(toolModule) {
+  const candidate = toolModule?.default ?? toolModule?.tool ?? toolModule;
+  const toolName = normalizeText(candidate?.name);
+  return toolName;
+}
+
+async function readToolNamesFromDir(dirPath) {
+  const normalizedDirPath = normalizeText(dirPath);
+  if (!normalizedDirPath) {
+    return [];
+  }
+
+  let entries = [];
+  try {
+    entries = await fs.readdir(normalizedDirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const toolFilePaths = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".tool.js"))
+    .map((entry) => path.join(normalizedDirPath, entry.name))
+    .sort((left, right) => left.localeCompare(right));
+  const toolNames = [];
+
+  for (const toolFilePath of toolFilePaths) {
+    try {
+      const importedModule = await import(pathToFileURL(toolFilePath).href);
+      const toolName = normalizeToolModule(importedModule);
+      if (toolName) {
+        toolNames.push(toolName);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return Array.from(new Set(toolNames));
+}
+
 function normalizeDefinition(rawDefinition = {}, baseDir) {
   const agentType = normalizeText(rawDefinition.agentType).toLowerCase();
   if (!agentType) {
@@ -38,6 +78,7 @@ function normalizeDefinition(rawDefinition = {}, baseDir) {
     inheritedBaseHookNames: Array.isArray(rawDefinition.inheritedBaseHookNames)
       ? rawDefinition.inheritedBaseHookNames.map((item) => normalizeText(item)).filter(Boolean)
       : [],
+    exclusiveToolNames: [],
     metadata:
       rawDefinition.metadata &&
       typeof rawDefinition.metadata === "object" &&
@@ -81,10 +122,12 @@ export class SubagentDefinitionRegistry {
       const rawDefinition = importedModule?.default ?? importedModule?.definition ?? importedModule;
       const definition = normalizeDefinition(rawDefinition, agentDir);
       const prompt = await readOptionalText(definition.promptFile);
+      const exclusiveToolNames = await readToolNamesFromDir(definition.toolsDir);
 
       this.definitionMap.set(definition.agentType, {
         ...definition,
-        prompt
+        prompt,
+        exclusiveToolNames
       });
     }
 
@@ -106,6 +149,7 @@ export class SubagentDefinitionRegistry {
       description: item.description,
       inheritedBaseToolNames: [...item.inheritedBaseToolNames],
       inheritedBaseHookNames: [...item.inheritedBaseHookNames],
+      exclusiveToolNames: [...item.exclusiveToolNames],
       metadata: { ...item.metadata }
     }));
   }

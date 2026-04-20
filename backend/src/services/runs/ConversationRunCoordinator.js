@@ -7,6 +7,14 @@ function normalizeText(value) {
   return String(value ?? "").trim();
 }
 
+function cloneValue(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value));
+}
+
 function buildRunPayload(run, payload = {}) {
   const normalizedPayload =
     payload && typeof payload === "object" && !Array.isArray(payload)
@@ -39,6 +47,10 @@ function buildRunPayload(run, payload = {}) {
 export class ConversationRunCoordinator {
   constructor(options = {}) {
     this.conversationEventBroadcaster = options.conversationEventBroadcaster ?? null;
+    const configuredMaxReplayEventsPerRun = Number(options.maxReplayEventsPerRun);
+    this.maxReplayEventsPerRun = Number.isFinite(configuredMaxReplayEventsPerRun)
+      ? Math.max(64, Math.trunc(configuredMaxReplayEventsPerRun))
+      : 0;
     this.runsById = new Map();
     this.runIdsByAgentKey = new Map();
     this.runIdsByConversationId = new Map();
@@ -101,6 +113,8 @@ export class ConversationRunCoordinator {
       status: normalizeText(options.status) || "running",
       createdAt: Date.now(),
       lastEventAt: 0,
+      eventSeq: 0,
+      replayEvents: [],
       listeners: new Map(),
       abortController,
       signal: abortController.signal
@@ -169,7 +183,7 @@ export class ConversationRunCoordinator {
       return false;
     }
 
-    const nextPayload = buildRunPayload(run, payload);
+    const nextPayload = this.captureReplayEvent(run, buildRunPayload(run, payload));
     run.lastEventAt = Date.now();
 
     for (const listener of run.listeners.values()) {
@@ -214,7 +228,49 @@ export class ConversationRunCoordinator {
     }
 
     run.listeners.clear();
+    run.replayEvents = [];
     return run;
+  }
+
+  captureReplayEvent(run, payload) {
+    const normalizedPayload =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? { ...payload }
+        : { type: "message", value: payload };
+    const nextEventSeq = Number(run.eventSeq ?? 0) + 1;
+    run.eventSeq = nextEventSeq;
+    normalizedPayload.eventSeq = nextEventSeq;
+    const nextReplayEvents = Array.isArray(run.replayEvents) ? run.replayEvents : [];
+    nextReplayEvents.push(cloneValue(normalizedPayload));
+    if (this.maxReplayEventsPerRun > 0 && nextReplayEvents.length > this.maxReplayEventsPerRun) {
+      nextReplayEvents.splice(0, nextReplayEvents.length - this.maxReplayEventsPerRun);
+    }
+    run.replayEvents = nextReplayEvents;
+    return normalizedPayload;
+  }
+
+  replayActiveRunsToSse(res, options = {}) {
+    if (!res || res.writableEnded) {
+      return 0;
+    }
+
+    const eventName = normalizeText(options.eventName) || "agent";
+    let replayCount = 0;
+    for (const run of this.runsById.values()) {
+      const replayEvents = Array.isArray(run?.replayEvents) ? run.replayEvents : [];
+      if (replayEvents.length === 0) {
+        continue;
+      }
+
+      for (const eventPayload of replayEvents) {
+        if (res.writableEnded) {
+          return replayCount;
+        }
+        writeSseEvent(res, eventName, eventPayload);
+        replayCount += 1;
+      }
+    }
+    return replayCount;
   }
 
   resolveRun(target) {

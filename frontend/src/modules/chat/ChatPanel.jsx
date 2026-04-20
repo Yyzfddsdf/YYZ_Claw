@@ -208,7 +208,12 @@ function clipOrchestratorText(value, maxLength = 96) {
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
-function resolveOrchestratorAgentLabel(agentId) {
+function resolveOrchestratorAgentLabel(displayName, agentId) {
+  const normalizedDisplayName = String(displayName ?? "").replace(/\s+/g, " ").trim();
+  if (normalizedDisplayName) {
+    return clipOrchestratorText(normalizedDisplayName, 28);
+  }
+
   const normalized = String(agentId ?? "").trim();
   if (!normalized) {
     return "";
@@ -231,8 +236,14 @@ function buildOrchestratorNotice(message) {
       ? message.meta.orchestrator
       : {};
   const subtype = String(message?.meta?.subtype ?? orchestrator.subtype ?? "").trim();
-  const sourceLabel = resolveOrchestratorAgentLabel(orchestrator.sourceAgentId);
-  const targetLabel = resolveOrchestratorAgentLabel(orchestrator.targetAgentId);
+  const sourceLabel = resolveOrchestratorAgentLabel(
+    orchestrator.sourceAgentDisplayName,
+    orchestrator.sourceAgentId
+  );
+  const targetLabel = resolveOrchestratorAgentLabel(
+    orchestrator.targetAgentDisplayName,
+    orchestrator.targetAgentId
+  );
 
   if (subtype === "agent_dispatch") {
     return {
@@ -849,10 +860,10 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
     }));
   }
 
-  function toggleReasoningResult(messageId) {
+  function toggleReasoningResult(messageId, currentExpanded = false) {
     setExpandedReasoningMap((prev) => ({
       ...prev,
-      [messageId]: !prev[messageId]
+      [messageId]: !Boolean(currentExpanded)
     }));
   }
 
@@ -1469,9 +1480,13 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                       (reasoningFinishedAt > 0 ? reasoningFinishedAt : reasoningNow) - reasoningStartedAt
                     )
                   : 0;
-              const isReasoningExpanded =
-                Boolean(expandedReasoningMap[message.id]) ||
-                (hasReasoningContent && !String(message.content ?? "").trim());
+              const hasManualReasoningState = Object.prototype.hasOwnProperty.call(
+                expandedReasoningMap,
+                message.id
+              );
+              const isReasoningExpanded = hasManualReasoningState
+                ? Boolean(expandedReasoningMap[message.id])
+                : hasReasoningContent && !String(message.content ?? "").trim();
               const runtimeReplyErrorForMessage =
                 message.role === "assistant" &&
                 String(activeConversationRuntimeReplyError?.messageId ?? "").trim() === String(message.id ?? "").trim()
@@ -1520,8 +1535,8 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                       {isInternalToolImageMessage && (
                         <span className="bubble-meta-badge is-tool-image-input">自动注入</span>
                       )}
-                      {typeof message.timestamp === "number" && (
-                        <span>{formatTimestamp(message.timestamp)}</span>
+                      {Number(message?.timestamp ?? 0) > 0 && (
+                        <span>{formatTimestamp(Number(message.timestamp))}</span>
                       )}
                       {!isToolCard && deleteButton}
                     </header>
@@ -1539,8 +1554,8 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                         <p className="orchestrator-note-summary">{orchestratorNotice.summary}</p>
                       </div>
                       <div className="orchestrator-note-meta">
-                        {typeof message.timestamp === "number" && (
-                          <span>{formatTimestamp(message.timestamp)}</span>
+                        {Number(message?.timestamp ?? 0) > 0 && (
+                          <span>{formatTimestamp(Number(message.timestamp))}</span>
                         )}
                         {deleteButton}
                       </div>
@@ -1551,9 +1566,9 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                         <span className="memory-tool-strip-text">
                           {getMemoryToolSummary(toolPayload.toolName)}
                         </span>
-                        {typeof message.timestamp === "number" && (
+                        {Number(message?.timestamp ?? 0) > 0 && (
                           <span className="memory-tool-strip-time">
-                            {formatTimestamp(message.timestamp)}
+                            {formatTimestamp(Number(message.timestamp))}
                           </span>
                         )}
                         <button
@@ -1656,7 +1671,7 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                             className={`assistant-reasoning-toggle ${
                               isReasoningExpanded ? "is-open" : ""
                             }`}
-                            onClick={() => toggleReasoningResult(message.id)}
+                            onClick={() => toggleReasoningResult(message.id, isReasoningExpanded)}
                           >
                             <span className="assistant-reasoning-label">
                               思考过程
@@ -1766,8 +1781,8 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
               <article className="bubble bubble-assistant bubble-runtime-error-only">
                 <header>
                   <strong>Assistant</strong>
-                  {typeof activeConversationRuntimeReplyError.createdAt === "number" && (
-                    <span>{formatTimestamp(activeConversationRuntimeReplyError.createdAt)}</span>
+                  {Number(activeConversationRuntimeReplyError?.createdAt ?? 0) > 0 && (
+                    <span>{formatTimestamp(Number(activeConversationRuntimeReplyError.createdAt))}</span>
                   )}
                 </header>
                 <div className="assistant-runtime-error">
@@ -1934,6 +1949,63 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {chat.pendingApproval && (
+              <div className="composer-approval-card" role="region" aria-live="polite">
+                <header className="composer-approval-head">
+                  <strong>待审批工具调用</strong>
+                  <span className="composer-approval-badge">
+                    {chat.pendingApproval.approvalMode === "auto" ? "自动审批" : "确认审批"}
+                  </span>
+                </header>
+
+                <div className="composer-approval-body">
+                  <div>
+                    <span>工具</span>
+                    <strong>{chat.pendingApproval.toolName}</strong>
+                  </div>
+                  <div>
+                    <span>分组</span>
+                    <strong>{chat.pendingApproval.toolApprovalGroup || "unknown"}</strong>
+                  </div>
+                  <div>
+                    <span>规则段</span>
+                    <strong>{chat.pendingApproval.toolApprovalSection || "unknown"}</strong>
+                  </div>
+                  <div>
+                    <span>调用 ID</span>
+                    <strong>{chat.pendingApproval.toolCallId || "未知"}</strong>
+                  </div>
+                  <div>
+                    <span>调用数</span>
+                    <strong>{chat.pendingApproval.toolCount}</strong>
+                  </div>
+                </div>
+
+                <pre className="composer-approval-json">
+                  {JSON.stringify(chat.pendingApproval.arguments ?? {}, null, 2)}
+                </pre>
+
+                <div className="composer-approval-actions">
+                  <button
+                    type="button"
+                    className="approval-confirm"
+                    onClick={chat.confirmPendingApproval}
+                    disabled={chat.isStreaming || chat.isCompressing}
+                  >
+                    确认执行
+                  </button>
+                  <button
+                    type="button"
+                    className="approval-reject"
+                    onClick={chat.rejectPendingApproval}
+                    disabled={chat.isStreaming || chat.isCompressing}
+                  >
+                    拒绝
+                  </button>
+                </div>
               </div>
             )}
 
@@ -2213,69 +2285,6 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
 
       {chat.retryNotice && <p className="status-note warning">{chat.retryNotice}</p>}
       {chat.error && <p className="status-note error">{chat.error}</p>}
-
-      {chat.pendingApproval && (
-        <div className="approval-overlay" role="dialog" aria-modal="true">
-          <div className="approval-dialog">
-            <header className="approval-dialog-head">
-              <h3>确认工具操作</h3>
-              <span className="approval-dialog-badge">
-                {chat.pendingApproval.approvalMode === "auto" ? "自动审批" : "确认审批"}
-              </span>
-            </header>
-
-            <p className="approval-dialog-note">
-              当前工具调用需要用户确认后继续执行。
-            </p>
-
-            <div className="approval-dialog-body">
-              <div>
-                <span>工具</span>
-                <strong>{chat.pendingApproval.toolName}</strong>
-              </div>
-              <div>
-                <span>分组</span>
-                <strong>{chat.pendingApproval.toolApprovalGroup || "unknown"}</strong>
-              </div>
-              <div>
-                <span>规则段</span>
-                <strong>{chat.pendingApproval.toolApprovalSection || "unknown"}</strong>
-              </div>
-              <div>
-                <span>调用 ID</span>
-                <strong>{chat.pendingApproval.toolCallId || "未知"}</strong>
-              </div>
-              <div>
-                <span>调用数</span>
-                <strong>{chat.pendingApproval.toolCount}</strong>
-              </div>
-            </div>
-
-            <pre className="approval-dialog-json">
-              {JSON.stringify(chat.pendingApproval.arguments ?? {}, null, 2)}
-            </pre>
-
-            <div className="approval-dialog-actions">
-              <button
-                type="button"
-                className="approval-confirm"
-                onClick={chat.confirmPendingApproval}
-                disabled={chat.isStreaming || chat.isCompressing}
-              >
-                确认执行
-              </button>
-              <button
-                type="button"
-                className="approval-reject"
-                onClick={chat.rejectPendingApproval}
-                disabled={chat.isStreaming || chat.isCompressing}
-              >
-                拒绝
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {viewingImage && (
         <div className="image-viewer-overlay" onClick={() => setViewingImage(null)}>

@@ -513,21 +513,42 @@ function attachForegroundRunResponse(req, res, run, conversationRunCoordinator) 
     listenerId: `foreground_response_${String(run.runId ?? "").trim()}`
   });
 
-  const abortRun = () => {
-    conversationRunCoordinator.abortRun?.(run, "client disconnected");
+  let disconnected = false;
+  const handleClientDisconnect = () => {
+    if (disconnected) {
+      return;
+    }
+    disconnected = true;
     cleanup();
   };
 
   const cleanup = () => {
     detachSse?.();
-    req.off?.("aborted", abortRun);
-    req.off?.("error", abortRun);
+    req.off?.("aborted", handleClientDisconnect);
+    req.off?.("error", handleClientDisconnect);
+    req.off?.("close", handleClientDisconnect);
   };
 
-  req.on?.("aborted", abortRun);
-  req.on?.("error", abortRun);
+  req.on?.("aborted", handleClientDisconnect);
+  req.on?.("error", handleClientDisconnect);
+  req.on?.("close", handleClientDisconnect);
 
   return cleanup;
+}
+
+function attachForegroundRunBroadcast(run, conversationRunCoordinator) {
+  if (
+    !run ||
+    !conversationRunCoordinator ||
+    typeof conversationRunCoordinator.attachConversationBroadcast !== "function"
+  ) {
+    return () => {};
+  }
+
+  const runId = String(run.runId ?? "").trim();
+  return conversationRunCoordinator.attachConversationBroadcast(run, {
+    listenerId: runId ? `foreground_broadcast_${runId}` : "foreground_broadcast"
+  });
 }
 
 function emitRunEvent(run, payload, conversationRunCoordinator, res) {
@@ -656,6 +677,12 @@ export function createChatController({
       }
 
       const unsubscribe = conversationEventBroadcaster.subscribe(res);
+      if (
+        conversationRunCoordinator &&
+        typeof conversationRunCoordinator.replayActiveRunsToSse === "function"
+      ) {
+        conversationRunCoordinator.replayActiveRunsToSse(res, { eventName: "agent" });
+      }
       req.on("close", unsubscribe);
       req.on("error", unsubscribe);
     },
@@ -1268,6 +1295,7 @@ export function createChatController({
       let foregroundStatus = "idle";
       let foregroundRun = null;
       let detachForegroundRunResponse = () => {};
+      let detachForegroundRunBroadcast = () => {};
       let resolvedRuntime = null;
       let runResult = null;
       let executionContext = null;
@@ -1317,6 +1345,10 @@ export function createChatController({
           allowExistingRun: true,
           allowRestore: true
         }) ?? null;
+        detachForegroundRunBroadcast = attachForegroundRunBroadcast(
+          foregroundRun,
+          conversationRunCoordinator
+        );
         detachForegroundRunResponse = attachForegroundRunResponse(
           req,
           res,
@@ -1480,6 +1512,7 @@ export function createChatController({
         }
       } finally {
         detachForegroundRunResponse?.();
+        detachForegroundRunBroadcast?.();
         if (foregroundRun) {
           await wakeDispatcher?.finishForegroundRun?.({
             sessionId: foregroundRun.sessionId,
@@ -1555,6 +1588,7 @@ export function createChatController({
       let foregroundRun = null;
       let foregroundStatus = "idle";
       let detachForegroundRunResponse = () => {};
+      let detachForegroundRunBroadcast = () => {};
       let currentConversationId = "";
       let resolvedRuntime = null;
       let runResult = null;
@@ -1654,6 +1688,10 @@ export function createChatController({
           throw busyError;
         }
         foregroundRun = nextForegroundRun;
+        detachForegroundRunBroadcast = attachForegroundRunBroadcast(
+          foregroundRun,
+          conversationRunCoordinator
+        );
         detachForegroundRunResponse = attachForegroundRunResponse(
           req,
           res,
@@ -1954,6 +1992,7 @@ export function createChatController({
         }
       } finally {
         detachForegroundRunResponse?.();
+        detachForegroundRunBroadcast?.();
         if (foregroundRun) {
           await wakeDispatcher?.finishForegroundRun?.({
             sessionId: foregroundRun.sessionId,

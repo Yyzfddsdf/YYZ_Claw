@@ -308,6 +308,7 @@ export class SkillCatalog {
     const displayName = String(parsed.ui?.displayName ?? "").trim();
     const shortDescription = String(parsed.ui?.shortDescription ?? "").trim();
     const defaultPrompt = String(parsed.ui?.defaultPrompt ?? "").trim();
+    const allowImplicitInvocation = parsed.ui?.allowImplicitInvocation !== false;
     const skillKey = `${scope}:${relativePath}`;
 
     return {
@@ -320,6 +321,7 @@ export class SkillCatalog {
       displayName: displayName || name,
       shortDescription: shortDescription || description,
       defaultPrompt,
+      allowImplicitInvocation,
       description,
       version,
       author,
@@ -504,6 +506,7 @@ export class SkillCatalog {
         displayName: skill.displayName,
         shortDescription: skill.shortDescription,
         defaultPrompt: skill.defaultPrompt,
+        allowImplicitInvocation: skill.allowImplicitInvocation !== false,
         description: skill.description,
         version: skill.version,
         author: skill.author,

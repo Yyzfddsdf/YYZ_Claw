@@ -1,5 +1,6 @@
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { memo, useMemo } from "react";
 
 const GREEK_LATEX_MAP = new Map([
   ["alpha", "\\alpha"],
@@ -1044,10 +1045,10 @@ function parseMarkdownBlocks(text) {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const codeFenceMatch = line.match(/^```(\w+)?\s*$/);
+    const codeFenceMatch = line.match(/^\s{0,3}```(\w+)?\s*$/);
 
     if (codeFence) {
-      if (/^```\s*$/.test(line)) {
+      if (/^\s{0,3}```\s*$/.test(line)) {
         blocks.push({
           type: "code",
           language: codeFence.language,
@@ -1173,7 +1174,7 @@ function preprocessMarkdown(text) {
   if (!content) return "";
 
   // 1. Handle Code Fences (```)
-  const codeFenceMatches = content.match(/^```/gm);
+  const codeFenceMatches = content.match(/^\s{0,3}```/gm);
   if (codeFenceMatches && codeFenceMatches.length % 2 !== 0) {
     content += "\n```";
   }
@@ -1208,9 +1209,9 @@ function preprocessMarkdown(text) {
   return content;
 }
 
-export function MarkdownMessage({ content, className = "" }) {
-  const processedContent = preprocessMarkdown(content);
-  const blocks = parseMarkdownBlocks(processedContent);
+function MarkdownMessageComponent({ content, className = "" }) {
+  const processedContent = useMemo(() => preprocessMarkdown(content), [content]);
+  const blocks = useMemo(() => parseMarkdownBlocks(processedContent), [processedContent]);
 
   if (blocks.length === 0) {
     return <p className={`markdown markdown-empty ${className}`.trim()}>...</p>;
@@ -1311,3 +1312,10 @@ export function MarkdownMessage({ content, className = "" }) {
     </div>
   );
 }
+
+export const MarkdownMessage = memo(
+  MarkdownMessageComponent,
+  (prevProps, nextProps) =>
+    String(prevProps?.content ?? "") === String(nextProps?.content ?? "") &&
+    String(prevProps?.className ?? "") === String(nextProps?.className ?? "")
+);

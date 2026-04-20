@@ -30,6 +30,45 @@ function normalizeAgentId(value, fallback = "") {
   return normalized || fallback;
 }
 
+function normalizeDisplayName(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function fallbackAgentDisplayName(agentId, agentType = "") {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const normalizedAgentType = String(agentType ?? "").trim().toLowerCase();
+  if (!normalizedAgentId) {
+    return "";
+  }
+
+  if (normalizedAgentId.startsWith("primary:") || normalizedAgentType === "primary") {
+    return "主智能体";
+  }
+
+  if (normalizedAgentId.startsWith("subagent:")) {
+    return normalizedAgentType && normalizedAgentType !== "generic" ? normalizedAgentType : "子智能体";
+  }
+
+  return normalizedAgentType && normalizedAgentType !== "generic"
+    ? normalizedAgentType
+    : normalizedAgentId;
+}
+
+function resolveAgentDisplayName(sessionState, agentId) {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  if (!normalizedAgentId || !sessionState || !(sessionState.agents instanceof Map)) {
+    return fallbackAgentDisplayName(normalizedAgentId);
+  }
+
+  const agent = sessionState.agents.get(normalizedAgentId);
+  const displayName = normalizeDisplayName(agent?.metadata?.displayName);
+  if (displayName) {
+    return displayName;
+  }
+
+  return fallbackAgentDisplayName(normalizedAgentId, agent?.agentType);
+}
+
 function uniqueAgentIds(items = []) {
   const normalized = [];
   const seen = new Set();
@@ -573,10 +612,25 @@ export class OrchestratorSchedulerService {
     const detailLines = normalizeLineList(options.detailLines);
     const payload = options.payload ?? null;
     const metadata = normalizeMetadata(options.metadata);
+    const sourceAgentDisplayName =
+      normalizeDisplayName(options.sourceAgentDisplayName)
+      || normalizeDisplayName(metadata.sourceAgentDisplayName)
+      || resolveAgentDisplayName(sessionState, sourceAgentId);
+    const targetAgentDisplayName =
+      normalizeDisplayName(options.targetAgentDisplayName)
+      || normalizeDisplayName(metadata.targetAgentDisplayName)
+      || resolveAgentDisplayName(sessionState, targetAgentId);
+    const enrichedMetadata = {
+      ...metadata,
+      sourceAgentDisplayName,
+      targetAgentDisplayName
+    };
     const message = this.resolveQueuedMessage(options, {
       sessionId: sessionState.sessionId,
       sourceAgentId,
       targetAgentId,
+      sourceAgentDisplayName,
+      targetAgentDisplayName,
       subtype,
       deliveryMode,
       broadcastMode,
@@ -585,7 +639,7 @@ export class OrchestratorSchedulerService {
       summaryLines,
       detailLines,
       payload,
-      metadata
+      metadata: enrichedMetadata
     });
 
     const queue = Array.isArray(sessionState.queueByAgent.get(targetAgentId))
@@ -600,7 +654,7 @@ export class OrchestratorSchedulerService {
       broadcastMode,
       atomicStepId,
       message,
-      metadata
+      metadata: enrichedMetadata
     });
 
     if (targetAgent.atomicDepth === 0) {

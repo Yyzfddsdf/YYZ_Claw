@@ -156,15 +156,42 @@ function clearLocalQueueStateFromMeta(meta) {
   return nextMeta;
 }
 
+function resolveTimestampFromMessageId(messageId) {
+  const normalizedMessageId = String(messageId ?? "").trim();
+  if (!normalizedMessageId) {
+    return 0;
+  }
+
+  const fragments = normalizedMessageId.split("_");
+  if (fragments.length < 3) {
+    return 0;
+  }
+
+  const candidateTimestamp = Number(fragments[1] ?? 0);
+  return Number.isFinite(candidateTimestamp) && candidateTimestamp > 0
+    ? Math.trunc(candidateTimestamp)
+    : 0;
+}
+
+function normalizeMessageTimestamp(timestamp, messageId) {
+  const numericTimestamp = Number(timestamp ?? 0);
+  if (Number.isFinite(numericTimestamp) && numericTimestamp > 0) {
+    return Math.trunc(numericTimestamp);
+  }
+
+  return resolveTimestampFromMessageId(messageId);
+}
+
 function normalizeChatMessage(message) {
+  const normalizedMessageId = String(message?.id ?? "");
   const base = {
-    id: String(message?.id ?? ""),
+    id: normalizedMessageId,
     role: String(message?.role ?? "user"),
     content: String(message?.content ?? ""),
     reasoningContent: String(message?.reasoningContent ?? ""),
     reasoningStartedAt: Number(message?.reasoningStartedAt ?? 0),
     reasoningFinishedAt: Number(message?.reasoningFinishedAt ?? 0),
-    timestamp: Number(message?.timestamp ?? Date.now()),
+    timestamp: normalizeMessageTimestamp(message?.timestamp, normalizedMessageId),
     toolCallId: String(message?.toolCallId ?? "").trim(),
     toolName: String(message?.toolName ?? "").trim(),
     toolCalls: normalizeToolCalls(message?.toolCalls),
@@ -487,6 +514,49 @@ function normalizeLoadedMessages(messages) {
     : [];
 }
 
+function mergePersistedAndReplayMessages(persistedMessages, replayMessages) {
+  const normalizedPersistedMessages = normalizeLoadedMessages(persistedMessages);
+  const normalizedReplayMessages = normalizeLoadedMessages(replayMessages);
+
+  if (normalizedReplayMessages.length === 0) {
+    return normalizedPersistedMessages;
+  }
+
+  if (normalizedPersistedMessages.length === 0) {
+    return normalizedReplayMessages;
+  }
+
+  const mergedMessages = normalizedPersistedMessages.slice();
+  const indexByMessageId = new Map();
+
+  for (let index = 0; index < mergedMessages.length; index += 1) {
+    const messageId = String(mergedMessages[index]?.id ?? "").trim();
+    if (!messageId || indexByMessageId.has(messageId)) {
+      continue;
+    }
+    indexByMessageId.set(messageId, index);
+  }
+
+  for (const replayMessage of normalizedReplayMessages) {
+    const replayMessageId = String(replayMessage?.id ?? "").trim();
+    if (!replayMessageId) {
+      mergedMessages.push(replayMessage);
+      continue;
+    }
+
+    const existingIndex = indexByMessageId.get(replayMessageId);
+    if (typeof existingIndex === "number") {
+      mergedMessages[existingIndex] = replayMessage;
+      continue;
+    }
+
+    indexByMessageId.set(replayMessageId, mergedMessages.length);
+    mergedMessages.push(replayMessage);
+  }
+
+  return mergedMessages;
+}
+
 function getCompressionResultMessage(compression, trigger = "manual") {
   const reason = String(compression?.reason ?? "").trim();
   const normalizedTrigger = String(trigger ?? "").trim() === "auto" ? "auto" : "manual";
@@ -722,11 +792,14 @@ function toPersistableMessages(messages) {
       return null;
     }
 
+    const persistedTimestamp =
+      normalizeMessageTimestamp(normalized.timestamp, normalized.id) || Date.now();
+
     const payload = {
       id: normalized.id,
       role: normalized.role,
       content: normalized.content,
-      timestamp: normalized.timestamp
+      timestamp: persistedTimestamp
     };
 
     if (normalized.reasoningContent) {
@@ -808,7 +881,7 @@ export function useChatSession(maxContextWindow = 0) {
   const [activeConversationId, setActiveConversationId] = useState("");
   const [draftConversation, setDraftConversation] = useState(null);
   const [workplaceSelecting, setWorkplaceSelecting] = useState(false);
-  const [pendingApproval, setPendingApproval] = useState(null);
+  const [pendingApprovalsByConversation, setPendingApprovalsByConversation] = useState({});
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [retryNotice, setRetryNotice] = useState("");
@@ -832,7 +905,7 @@ export function useChatSession(maxContextWindow = 0) {
   const messagesRef = useRef([]);
   const activeConversationIdRef = useRef("");
   const queuedUserMessagesRef = useRef([]);
-  const pendingApprovalRef = useRef(null);
+  const pendingApprovalsByConversationRef = useRef({});
   const streamLoopActiveRef = useRef(false);
   const conversationListRef = useRef([]);
   const draftConversationRef = useRef(null);
@@ -842,6 +915,7 @@ export function useChatSession(maxContextWindow = 0) {
   const externalStreamStatesRef = useRef(new Map());
   const externalAgentEventHandlerRef = useRef(null);
   const activeAgentRunConversationIdsRef = useRef(new Set());
+  const processedRunEventSeqByRunIdRef = useRef(new Map());
 
   const isStreaming = status === "streaming";
   const isCompressing =
@@ -947,6 +1021,15 @@ export function useChatSession(maxContextWindow = 0) {
       ),
     [queuedUserMessages, activeConversationId]
   );
+  const pendingApproval = useMemo(() => {
+    const normalizedConversationId = String(activeConversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return null;
+    }
+
+    const approval = pendingApprovalsByConversation[normalizedConversationId];
+    return approval && typeof approval === "object" ? approval : null;
+  }, [pendingApprovalsByConversation, activeConversationId]);
 
   const activeConversationTokenUsage = useMemo(() => {
     const current = conversationList.find((item) => item.id === activeConversationId);
@@ -1048,7 +1131,7 @@ export function useChatSession(maxContextWindow = 0) {
           });
           setMessages([]);
           setTokenUsageRecords([]);
-          setPendingApprovalValue(null);
+          setPendingApprovalValue(null, { clearAll: true });
           return;
         }
 
@@ -1063,6 +1146,12 @@ export function useChatSession(maxContextWindow = 0) {
         const loadedMessages = Array.isArray(loadedHistory?.messages)
           ? loadedHistory.messages
           : [];
+        const normalizedLoadedMessages = normalizeLoadedMessages(loadedMessages);
+        const replayedCachedMessages = readConversationMessages(firstId);
+        const initialMessagesForView = mergePersistedAndReplayMessages(
+          normalizedLoadedMessages,
+          replayedCachedMessages
+        );
 
         const loadedSummary = toSummary(loadedHistory);
         const nextConversationList = upsertSummary(histories, loadedSummary);
@@ -1078,9 +1167,10 @@ export function useChatSession(maxContextWindow = 0) {
           ? loadedHistory.tokenUsageRecords.map(normalizeTokenUsageRecord)
           : [];
 
-        setMessages(normalizeLoadedMessages(loadedMessages));
+        writeConversationMessages(firstId, initialMessagesForView);
+        setMessages(initialMessagesForView);
         setTokenUsageRecords(loadedTokenUsageRecords);
-        setPendingApprovalValue(null);
+        setPendingApprovalValue(null, { clearAll: true });
       } catch (historyError) {
         if (mounted) {
           setError(historyError?.message || "加载历史失败");
@@ -1252,10 +1342,6 @@ export function useChatSession(maxContextWindow = 0) {
       : [];
   }, [queuedUserMessages]);
 
-  useEffect(() => {
-    pendingApprovalRef.current = pendingApproval;
-  }, [pendingApproval]);
-
   function updateConversationRuntimeReplyErrors(updater) {
     const currentValue =
       conversationRuntimeReplyErrorsRef.current &&
@@ -1399,6 +1485,35 @@ export function useChatSession(maxContextWindow = 0) {
     }
   }
 
+  function shouldProcessAgentEvent(event) {
+    const runId = String(event?.runId ?? "").trim();
+    const eventSeq = Number(event?.eventSeq ?? 0);
+    if (!runId || !Number.isFinite(eventSeq) || eventSeq <= 0) {
+      return true;
+    }
+
+    const seenMap = processedRunEventSeqByRunIdRef.current;
+    const lastProcessedSeq = Number(seenMap.get(runId) ?? 0);
+    if (eventSeq <= lastProcessedSeq) {
+      return false;
+    }
+
+    seenMap.set(runId, eventSeq);
+    if (seenMap.size > 2048) {
+      const overflowCount = seenMap.size - 1536;
+      let removed = 0;
+      for (const key of seenMap.keys()) {
+        seenMap.delete(key);
+        removed += 1;
+        if (removed >= overflowCount) {
+          break;
+        }
+      }
+    }
+
+    return true;
+  }
+
   function isConversationCompressionActive(conversationId) {
     const normalizedConversationId = String(conversationId ?? "").trim();
     if (!normalizedConversationId) {
@@ -1499,7 +1614,12 @@ export function useChatSession(maxContextWindow = 0) {
       return;
     }
 
-    if (isStreaming || streamLoopActiveRef.current || pendingApproval || activeConversationAgentBusy) {
+    if (
+      activeConversationIsRunning ||
+      streamLoopActiveRef.current ||
+      pendingApproval ||
+      activeConversationAgentBusy
+    ) {
       return;
     }
 
@@ -1570,7 +1690,7 @@ export function useChatSession(maxContextWindow = 0) {
     };
   }, [
     messages,
-    isStreaming,
+    activeConversationIsRunning,
     isCompressing,
     pendingApproval,
     activeConversationAgentBusy,
@@ -1642,7 +1762,7 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function createConversation() {
-    if (isStreaming || status === "loading" || !historyLoaded || pendingApproval) {
+    if (activeConversationIsRunning || status === "loading" || !historyLoaded || pendingApproval) {
       return;
     }
 
@@ -1671,7 +1791,7 @@ export function useChatSession(maxContextWindow = 0) {
 
     if (
       !normalizedConversationId ||
-      isStreaming ||
+      activeConversationIsRunning ||
       status === "loading" ||
       !historyLoaded ||
       pendingApproval
@@ -1717,7 +1837,7 @@ export function useChatSession(maxContextWindow = 0) {
     const normalizedConversationId = String(conversationId ?? "").trim();
     if (
       !normalizedConversationId ||
-      isStreaming ||
+      activeConversationIsRunning ||
       isCompressing ||
       !historyLoaded ||
       pendingApproval
@@ -1764,6 +1884,13 @@ export function useChatSession(maxContextWindow = 0) {
         activeAgentRunConversationIdsRef.current.delete(deletedConversationId);
         externalStreamStatesRef.current.delete(deletedConversationId);
       }
+      updatePendingApprovalsByConversation((prev) => {
+        const next = { ...prev };
+        for (const deletedConversationId of deletedConversationIdSet) {
+          delete next[String(deletedConversationId ?? "").trim()];
+        }
+        return next;
+      });
 
       if (!deletedConversationIdSet.has(String(activeConversationId ?? "").trim())) {
         return;
@@ -1787,7 +1914,7 @@ export function useChatSession(maxContextWindow = 0) {
       !normalizedMessageId ||
       !historyLoaded ||
       !activeConversationId ||
-      isStreaming ||
+      activeConversationIsRunning ||
       isCompressing ||
       pendingApproval
     ) {
@@ -1867,7 +1994,13 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function openWorkplaceBrowser() {
-    if (!historyLoaded || !activeConversationId || isStreaming || isCompressing || pendingApproval) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
       return;
     }
 
@@ -1905,7 +2038,13 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function setConversationWorkplace(workplacePath) {
-    if (!historyLoaded || !activeConversationId || isStreaming || isCompressing || pendingApproval) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
       return;
     }
 
@@ -1948,7 +2087,13 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function setConversationApprovalMode(approvalMode) {
-    if (!historyLoaded || !activeConversationId || isStreaming || isCompressing || pendingApproval) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
       return;
     }
 
@@ -1986,7 +2131,13 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function setConversationSkills(nextSkills) {
-    if (!historyLoaded || !activeConversationId || isStreaming || isCompressing || pendingApproval) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
       return;
     }
 
@@ -2043,7 +2194,13 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function setConversationDeveloperPrompt(nextDeveloperPrompt) {
-    if (!historyLoaded || !activeConversationId || isStreaming || isCompressing || pendingApproval) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
       return;
     }
 
@@ -2090,7 +2247,7 @@ export function useChatSession(maxContextWindow = 0) {
       return null;
     }
 
-    if (isStreaming) {
+    if (activeConversationIsRunning) {
       setError("当前会话正在回复，暂时不能手动压缩");
       return null;
     }
@@ -2189,10 +2346,132 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   function applyAgentEvent(event, streamState, targetConversationId) {
+    if (!shouldProcessAgentEvent(event)) {
+      return true;
+    }
+
     const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
     const isActiveTarget = normalizedTargetConversationId === activeConversationIdRef.current;
     const updateTargetMessages = (updater) =>
       updateConversationMessages(normalizedTargetConversationId, updater);
+    const ensureStreamBuffers = () => {
+      if (typeof streamState.pendingContentBuffer !== "string") {
+        streamState.pendingContentBuffer = "";
+      }
+      if (typeof streamState.pendingReasoningBuffer !== "string") {
+        streamState.pendingReasoningBuffer = "";
+      }
+      if (
+        !(
+          typeof streamState.flushFrameId === "number" ||
+          streamState.flushFrameId === null ||
+          typeof streamState.flushFrameId === "undefined"
+        )
+      ) {
+        streamState.flushFrameId = null;
+      }
+    };
+    const cancelBufferedAssistantFlush = () => {
+      ensureStreamBuffers();
+      if (typeof streamState.flushFrameId === "number") {
+        if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+          window.cancelAnimationFrame(streamState.flushFrameId);
+        } else {
+          clearTimeout(streamState.flushFrameId);
+        }
+      }
+      streamState.flushFrameId = null;
+    };
+    const flushBufferedAssistantTokens = () => {
+      ensureStreamBuffers();
+      const targetAssistantId = String(streamState.activeAssistantMessageId ?? "").trim();
+      const contentDelta = String(streamState.pendingContentBuffer ?? "");
+      const reasoningDelta = String(streamState.pendingReasoningBuffer ?? "");
+
+      streamState.pendingContentBuffer = "";
+      streamState.pendingReasoningBuffer = "";
+
+      if (!targetAssistantId || (!contentDelta && !reasoningDelta)) {
+        return;
+      }
+
+      const now = Date.now();
+      updateTargetMessages((prev) =>
+        prev.map((item) => {
+          if (String(item?.id ?? "").trim() !== targetAssistantId) {
+            return item;
+          }
+
+          const normalized = normalizeChatMessage(item);
+          const currentReasoningStartedAt = Number(normalized.reasoningStartedAt ?? 0);
+          const currentReasoningFinishedAt = Number(normalized.reasoningFinishedAt ?? 0);
+          const nextReasoningStartedAt =
+            reasoningDelta.length > 0
+              ? currentReasoningStartedAt > 0
+                ? currentReasoningStartedAt
+                : now
+              : currentReasoningStartedAt;
+          const nextReasoningFinishedAt =
+            reasoningDelta.length > 0
+              ? 0
+              : contentDelta.length > 0 &&
+                  currentReasoningStartedAt > 0 &&
+                  currentReasoningFinishedAt <= 0
+                ? now
+                : currentReasoningFinishedAt;
+
+          return {
+            ...normalized,
+            content: String(normalized.content ?? "") + contentDelta,
+            reasoningContent: String(normalized.reasoningContent ?? "") + reasoningDelta,
+            reasoningStartedAt: nextReasoningStartedAt,
+            reasoningFinishedAt: nextReasoningFinishedAt
+          };
+        })
+      );
+    };
+    const scheduleBufferedAssistantFlush = () => {
+      ensureStreamBuffers();
+      if (typeof streamState.flushFrameId === "number") {
+        return;
+      }
+
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        streamState.flushFrameId = window.requestAnimationFrame(() => {
+          streamState.flushFrameId = null;
+          flushBufferedAssistantTokens();
+        });
+        return;
+      }
+
+      streamState.flushFrameId = setTimeout(() => {
+        streamState.flushFrameId = null;
+        flushBufferedAssistantTokens();
+      }, 16);
+    };
+    const ensureActiveAssistantMessage = () => {
+      const currentAssistantId = String(streamState.activeAssistantMessageId ?? "").trim();
+      if (currentAssistantId) {
+        return currentAssistantId;
+      }
+
+      const nextAssistantId = createId("assistant");
+      streamState.activeAssistantMessageId = nextAssistantId;
+      updateTargetMessages((prev) => [
+        ...prev,
+        normalizeChatMessage({
+          id: nextAssistantId,
+          role: "assistant",
+          timestamp: Date.now(),
+          content: "",
+          reasoningContent: "",
+          reasoningStartedAt: 0,
+          reasoningFinishedAt: 0,
+          tokenUsage: null
+        })
+      ]);
+      return nextAssistantId;
+    };
 
     if (event?.type !== "retry") {
       setRetryNotice((prev) => (prev ? "" : prev));
@@ -2346,83 +2625,24 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (event?.type === "assistant_token") {
-      if (!streamState.activeAssistantMessageId) {
-        streamState.activeAssistantMessageId = createId("assistant");
-
-        updateTargetMessages((prev) => [
-          ...prev,
-          normalizeChatMessage({
-            id: streamState.activeAssistantMessageId,
-            role: "assistant",
-            timestamp: Date.now(),
-            content: event.token ?? "",
-            reasoningContent: "",
-            reasoningStartedAt: 0,
-            reasoningFinishedAt: 0,
-            tokenUsage: null
-          })
-        ]);
-
-        return true;
-      }
-
-      updateTargetMessages((prev) =>
-        prev.map((item) =>
-          item.id === streamState.activeAssistantMessageId
-            ? {
-                ...item,
-                content: item.content + (event.token ?? ""),
-                reasoningFinishedAt:
-                  Number(item.reasoningStartedAt ?? 0) > 0 && Number(item.reasoningFinishedAt ?? 0) <= 0
-                    ? Date.now()
-                    : Number(item.reasoningFinishedAt ?? 0)
-              }
-            : item
-        )
-      );
+      ensureActiveAssistantMessage();
+      ensureStreamBuffers();
+      streamState.pendingContentBuffer += String(event.token ?? "");
+      scheduleBufferedAssistantFlush();
       return true;
     }
 
     if (event?.type === "assistant_reasoning_token") {
-      const now = Date.now();
-
-      if (!streamState.activeAssistantMessageId) {
-        streamState.activeAssistantMessageId = createId("assistant");
-
-        updateTargetMessages((prev) => [
-          ...prev,
-          normalizeChatMessage({
-            id: streamState.activeAssistantMessageId,
-            role: "assistant",
-            timestamp: Date.now(),
-            content: "",
-            reasoningContent: event.token ?? "",
-            reasoningStartedAt: now,
-            reasoningFinishedAt: 0,
-            tokenUsage: null
-          })
-        ]);
-
-        return true;
-      }
-
-      updateTargetMessages((prev) =>
-        prev.map((item) =>
-          item.id === streamState.activeAssistantMessageId
-            ? {
-                ...item,
-                reasoningContent: String(item.reasoningContent ?? "") + String(event.token ?? ""),
-                reasoningStartedAt:
-                  Number(item.reasoningStartedAt ?? 0) > 0 ? Number(item.reasoningStartedAt) : now,
-                reasoningFinishedAt: 0
-              }
-            : item
-        )
-      );
+      ensureActiveAssistantMessage();
+      ensureStreamBuffers();
+      streamState.pendingReasoningBuffer += String(event.token ?? "");
+      scheduleBufferedAssistantFlush();
       return true;
     }
 
     if (event?.type === "assistant_message_end") {
+      cancelBufferedAssistantFlush();
+      flushBufferedAssistantTokens();
       const toolCalls = normalizeToolCalls(event?.toolCalls);
       const messageContent = typeof event?.content === "string" ? event.content : "";
       const reasoningContent =
@@ -2487,6 +2707,8 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (event?.type === "tool_call") {
+      cancelBufferedAssistantFlush();
+      flushBufferedAssistantTokens();
       const toolPayload = createToolMessagePayloadFromCall(event);
       const toolMessage = normalizeChatMessage({
         id: createId("tool-call"),
@@ -2588,6 +2810,17 @@ export function useChatSession(maxContextWindow = 0) {
 
         return nextList;
       });
+      const pendingApprovalForConversation = readPendingApprovalValue(normalizedTargetConversationId);
+      const pendingToolCallId = String(pendingApprovalForConversation?.toolCallId ?? "").trim();
+      const resultToolCallId = String(event?.toolCallId ?? "").trim();
+      if (
+        pendingApprovalForConversation &&
+        pendingToolCallId &&
+        resultToolCallId &&
+        pendingToolCallId === resultToolCallId
+      ) {
+        setPendingApprovalValue(null, { conversationId: normalizedTargetConversationId });
+      }
 
       return true;
     }
@@ -2711,6 +2944,8 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (event?.type === "session_pause") {
+      cancelBufferedAssistantFlush();
+      flushBufferedAssistantTokens();
       if (event?.history && Array.isArray(event.history.messages)) {
         applyPersistedHistorySnapshot(normalizedTargetConversationId, event.history);
       }
@@ -2720,13 +2955,19 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (event?.type === "session_end") {
+      cancelBufferedAssistantFlush();
+      flushBufferedAssistantTokens();
       if (event?.history && Array.isArray(event.history.messages)) {
         applyPersistedHistorySnapshot(normalizedTargetConversationId, event.history);
       }
+      const runStatus = String(event?.status ?? "").trim() || "idle";
       markConversationRunEndedLocally(
         normalizedTargetConversationId,
-        String(event?.status ?? "").trim() || "idle"
+        runStatus
       );
+      if (runStatus !== "waiting_approval") {
+        setPendingApprovalValue(null, { conversationId: normalizedTargetConversationId });
+      }
       streamState.activeAssistantMessageId = null;
       if (!streamLoopActiveRef.current && status !== "streaming") {
         const nextQueued = queuedUserMessagesRef.current.find(
@@ -2741,7 +2982,10 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (event?.type === "error") {
+      cancelBufferedAssistantFlush();
+      flushBufferedAssistantTokens();
       markConversationRunEndedLocally(normalizedTargetConversationId, "error");
+      setPendingApprovalValue(null, { conversationId: normalizedTargetConversationId });
       attachConversationRuntimeReplyError(
         normalizedTargetConversationId,
         streamState,
@@ -2782,9 +3026,86 @@ export function useChatSession(maxContextWindow = 0) {
     return normalizedList;
   }
 
-  function setPendingApprovalValue(nextValue) {
-    pendingApprovalRef.current = nextValue;
-    setPendingApproval(nextValue);
+  function updatePendingApprovalsByConversation(updater) {
+    const currentValue =
+      pendingApprovalsByConversationRef.current &&
+      typeof pendingApprovalsByConversationRef.current === "object" &&
+      !Array.isArray(pendingApprovalsByConversationRef.current)
+        ? pendingApprovalsByConversationRef.current
+        : {};
+    const nextValue =
+      typeof updater === "function"
+        ? updater(currentValue)
+        : updater && typeof updater === "object" && !Array.isArray(updater)
+          ? updater
+          : {};
+    const normalized = {};
+
+    for (const [conversationId, approval] of Object.entries(nextValue)) {
+      const normalizedConversationId = String(conversationId ?? "").trim();
+      if (!normalizedConversationId || !approval || typeof approval !== "object") {
+        continue;
+      }
+
+      normalized[normalizedConversationId] = {
+        ...approval,
+        conversationId: normalizedConversationId
+      };
+    }
+
+    pendingApprovalsByConversationRef.current = normalized;
+    setPendingApprovalsByConversation(normalized);
+    return normalized;
+  }
+
+  function readPendingApprovalValue(conversationId) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return null;
+    }
+
+    const approval = pendingApprovalsByConversationRef.current?.[normalizedConversationId];
+    return approval && typeof approval === "object" ? approval : null;
+  }
+
+  function hasPendingApprovalValue(conversationId) {
+    return Boolean(readPendingApprovalValue(conversationId));
+  }
+
+  function setPendingApprovalValue(nextValue, options = {}) {
+    const clearAll = options?.clearAll === true;
+    if (clearAll && (!nextValue || typeof nextValue !== "object")) {
+      updatePendingApprovalsByConversation({});
+      return;
+    }
+
+    const resolvedConversationId = String(
+      options?.conversationId
+      ?? nextValue?.conversationId
+      ?? activeConversationIdRef.current
+      ?? ""
+    ).trim();
+
+    if (!resolvedConversationId) {
+      if (!nextValue || typeof nextValue !== "object") {
+        updatePendingApprovalsByConversation({});
+      }
+      return;
+    }
+
+    updatePendingApprovalsByConversation((prev) => {
+      const next = { ...prev };
+      if (!nextValue || typeof nextValue !== "object") {
+        delete next[resolvedConversationId];
+        return next;
+      }
+
+      next[resolvedConversationId] = {
+        ...nextValue,
+        conversationId: resolvedConversationId
+      };
+      return next;
+    });
   }
 
   function removeQueuedUserMessage(messageId) {
@@ -2963,7 +3284,7 @@ export function useChatSession(maxContextWindow = 0) {
     if (
       streamLoopActiveRef.current ||
       isStreaming ||
-      pendingApprovalRef.current ||
+      hasPendingApprovalValue(normalizedConversationId) ||
       activeAgentRunConversationIdsRef.current.has(normalizedConversationId) ||
       (!ignoreCompressionGate && isConversationCompressionActive(normalizedConversationId))
     ) {
@@ -3038,7 +3359,12 @@ export function useChatSession(maxContextWindow = 0) {
       while (nextPlan) {
         const currentPlan = nextPlan;
         const controller = new AbortController();
-        const streamState = { activeAssistantMessageId: null };
+        const streamState = {
+          activeAssistantMessageId: null,
+          pendingContentBuffer: "",
+          pendingReasoningBuffer: "",
+          flushFrameId: null
+        };
         abortRef.current = controller;
         streamingConversationIdRef.current = String(currentPlan.conversationId ?? "").trim();
 
@@ -3057,6 +3383,10 @@ export function useChatSession(maxContextWindow = 0) {
         } catch (streamError) {
           if (streamError?.name !== "AbortError") {
             setRetryNotice("");
+            markConversationRunEndedLocally(currentPlan.conversationId, "error");
+            setPendingApprovalValue(null, {
+              conversationId: String(currentPlan.conversationId ?? "").trim()
+            });
             attachConversationRuntimeReplyError(
               currentPlan.conversationId,
               streamState,
@@ -3070,7 +3400,7 @@ export function useChatSession(maxContextWindow = 0) {
 
         await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-        if (pendingApprovalRef.current) {
+        if (hasPendingApprovalValue(currentPlan.conversationId)) {
           break;
         }
 
@@ -3216,18 +3546,31 @@ export function useChatSession(maxContextWindow = 0) {
   async function confirmPendingApproval() {
     const approvalId = String(pendingApproval?.approvalId ?? "").trim();
     const targetConversationId = String(pendingApproval?.conversationId ?? "").trim();
+    const foregroundConversationId = String(streamingConversationIdRef.current ?? "").trim();
+    const targetHasForegroundStream =
+      Boolean(foregroundConversationId) && foregroundConversationId === targetConversationId;
+    const canBindForegroundStream = !foregroundConversationId || targetHasForegroundStream;
 
-    if (!approvalId || isStreaming || isCompressing) {
+    if (!approvalId || !targetConversationId || isCompressing || targetHasForegroundStream) {
       return;
     }
 
-    setStatus("streaming");
-    setPendingApprovalValue(null);
-    streamingConversationIdRef.current = targetConversationId;
+    if (canBindForegroundStream) {
+      setStatus("streaming");
+      streamingConversationIdRef.current = targetConversationId;
+    }
+    setPendingApprovalValue(null, { conversationId: targetConversationId });
 
     const controller = new AbortController();
-    abortRef.current = controller;
-    const streamState = { activeAssistantMessageId: null };
+    if (canBindForegroundStream) {
+      abortRef.current = controller;
+    }
+    const streamState = {
+      activeAssistantMessageId: null,
+      pendingContentBuffer: "",
+      pendingReasoningBuffer: "",
+      flushFrameId: null
+    };
 
     try {
       await confirmToolApprovalById(approvalId, controller.signal, (event) => {
@@ -3235,6 +3578,8 @@ export function useChatSession(maxContextWindow = 0) {
       });
     } catch (approvalError) {
       if (approvalError?.name !== "AbortError") {
+        markConversationRunEndedLocally(targetConversationId, "error");
+        setPendingApprovalValue(null, { conversationId: targetConversationId });
         attachConversationRuntimeReplyError(
           targetConversationId,
           streamState,
@@ -3242,11 +3587,19 @@ export function useChatSession(maxContextWindow = 0) {
         );
       }
     } finally {
-      streamingConversationIdRef.current = "";
-      setStatus("idle");
-      abortRef.current = null;
+      if (canBindForegroundStream) {
+        if (String(streamingConversationIdRef.current ?? "").trim() === targetConversationId) {
+          streamingConversationIdRef.current = "";
+        }
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
+        if (!streamLoopActiveRef.current) {
+          setStatus("idle");
+        }
+      }
 
-      if (!pendingApprovalRef.current) {
+      if (!hasPendingApprovalValue(targetConversationId)) {
         const nextQueued = queuedUserMessagesRef.current[0];
         const nextQueuedConversationId = String(nextQueued?.conversationId ?? "").trim();
         const nextPlan = nextQueued ? buildQueuedRunPlan(nextQueued.messageId) : null;
@@ -3266,13 +3619,15 @@ export function useChatSession(maxContextWindow = 0) {
   async function rejectPendingApproval() {
     const approvalId = String(pendingApproval?.approvalId ?? "").trim();
 
-    if (!approvalId || isStreaming || isCompressing) {
+    if (!approvalId || isCompressing) {
       return;
     }
 
     try {
       await rejectToolApprovalById(approvalId);
-      setPendingApprovalValue(null);
+      setPendingApprovalValue(null, {
+        conversationId: String(pendingApproval?.conversationId ?? "").trim()
+      });
       setError("已拒绝该工具操作");
     } catch (rejectError) {
       setError(rejectError?.message || "拒绝执行失败");
@@ -3311,7 +3666,13 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function clearChat() {
-    if (isStreaming || isCompressing || !historyLoaded || !activeConversationId || pendingApproval) {
+    if (
+      activeConversationIsRunning ||
+      isCompressing ||
+      !historyLoaded ||
+      !activeConversationId ||
+      pendingApproval
+    ) {
       return;
     }
 

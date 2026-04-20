@@ -25,7 +25,16 @@ function clipText(value, maxLength = 240) {
   return `${text.slice(0, maxLength)}...`;
 }
 
-function resolveAgentLabel(agentId) {
+function normalizeDisplayName(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function resolveAgentLabel(agentDisplayName, agentId) {
+  const normalizedDisplayName = normalizeDisplayName(agentDisplayName);
+  if (normalizedDisplayName) {
+    return clipText(normalizedDisplayName, 40);
+  }
+
   const normalized = String(agentId ?? "").trim();
   if (!normalized) {
     return "";
@@ -115,7 +124,7 @@ export function buildOrchestratorStructuredContent(options = {}) {
   const title = clipText(String(options.title ?? "").trim(), 120);
   const summaryLines = normalizeLineList(options.summaryLines);
   const detailLines = normalizeLineList(options.detailLines);
-  const sourceLabel = resolveAgentLabel(options.sourceAgentId);
+  const sourceLabel = resolveAgentLabel(options.sourceAgentDisplayName, options.sourceAgentId);
   const headerLabel = resolveHeaderLabel(subtype, broadcastMode);
   const subtypeSuffix =
     headerLabel === "调度器" && subtype !== "generic" ? `|${clipText(subtype, 40)}` : "";
@@ -167,6 +176,8 @@ export function buildOrchestratorMessage(options = {}) {
       orchestrator: {
         sourceAgentId: String(options.sourceAgentId ?? "").trim(),
         targetAgentId: String(options.targetAgentId ?? "").trim(),
+        sourceAgentDisplayName: normalizeDisplayName(options.sourceAgentDisplayName),
+        targetAgentDisplayName: normalizeDisplayName(options.targetAgentDisplayName),
         deliveryMode: String(options.deliveryMode ?? "queued_after_atomic").trim()
           || "queued_after_atomic",
         broadcastMode: String(options.broadcastMode ?? "direct").trim() || "direct",

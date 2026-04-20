@@ -2160,6 +2160,86 @@
   border-top: 1px solid var(--border-light);
 }
 
+.composer-approval-card {
+  border: 1px solid rgba(251, 146, 60, 0.45);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.composer-approval-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.composer-approval-head strong {
+  color: #9a3412;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.composer-approval-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #c2410c;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(251, 146, 60, 0.5);
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  white-space: nowrap;
+}
+
+.composer-approval-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.5rem;
+}
+
+.composer-approval-body div {
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.55rem;
+}
+
+.composer-approval-body span {
+  display: block;
+  font-size: 0.7rem;
+  color: #9a3412;
+  margin-bottom: 0.25rem;
+}
+
+.composer-approval-body strong {
+  display: block;
+  color: #7c2d12;
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+
+.composer-approval-json {
+  margin: 0;
+  padding: 0.65rem 0.7rem;
+  border-radius: var(--radius-md);
+  background: #111827;
+  color: #e5e7eb;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.composer-approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
 /* From Uiverse.io by Cobp */ 
 .container-ia-chat {
   position: relative;

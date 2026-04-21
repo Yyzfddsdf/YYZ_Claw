@@ -67,6 +67,44 @@ function injectSystemBlocks(conversation = [], systemBlocks = []) {
   ];
 }
 
+function isRuntimeHookUserMessageBlock(block) {
+  const type = String(block?.type ?? "").trim().toLowerCase();
+  return type === "runtime_hooks" || type === "remote_runtime_hooks";
+}
+
+function buildRuntimeHookUserMessages(blocks = []) {
+  return blocks
+    .map((block) => {
+      const content = String(block?.content ?? "").trim();
+      if (!content) {
+        return null;
+      }
+
+      return {
+        role: "user",
+        content
+      };
+    })
+    .filter(Boolean);
+}
+
+function injectUserMessagesAfterTurn(conversation = [], currentTurnUserIndex = -1, userMessages = []) {
+  if (!Array.isArray(userMessages) || userMessages.length === 0) {
+    return conversation;
+  }
+
+  if (!Number.isInteger(currentTurnUserIndex) || currentTurnUserIndex < 0) {
+    return [...conversation, ...userMessages];
+  }
+
+  const insertIndex = Math.min(conversation.length, currentTurnUserIndex + 1);
+  return [
+    ...conversation.slice(0, insertIndex),
+    ...userMessages,
+    ...conversation.slice(insertIndex)
+  ];
+}
+
 export class RuntimeInjectionComposer {
   compose(conversation = [], options = {}) {
     const currentTurnUserIndex = Number.isInteger(options.currentTurnUserIndex)
@@ -77,10 +115,14 @@ export class RuntimeInjectionComposer {
     const currentUserBlocks = Array.isArray(runtimeBlocks?.current_user)
       ? runtimeBlocks.current_user
       : [];
+    const currentUserMessageBlocks = currentUserBlocks.filter(isRuntimeHookUserMessageBlock);
+    const currentUserInlineBlocks = currentUserBlocks.filter(
+      (block) => !isRuntimeHookUserMessageBlock(block)
+    );
 
     let apiConversation = conversation.map((message, index) => {
       if (
-        currentUserBlocks.length === 0 ||
+        currentUserInlineBlocks.length === 0 ||
         index !== currentTurnUserIndex ||
         String(message?.role ?? "").trim() !== "user"
       ) {
@@ -88,7 +130,7 @@ export class RuntimeInjectionComposer {
       }
 
       const apiMessage = cloneValueForApi(message);
-      const injectedText = currentUserBlocks
+      const injectedText = currentUserInlineBlocks
         .map((block) => String(block?.content ?? "").trim())
         .filter((content) => content.length > 0)
         .join("\n\n");
@@ -96,6 +138,12 @@ export class RuntimeInjectionComposer {
       return apiMessage;
     });
 
+    const injectedUserMessages = buildRuntimeHookUserMessages(currentUserMessageBlocks);
+    apiConversation = injectUserMessagesAfterTurn(
+      apiConversation,
+      currentTurnUserIndex,
+      injectedUserMessages
+    );
     apiConversation = injectSystemBlocks(apiConversation, systemBlocks);
     return apiConversation;
   }

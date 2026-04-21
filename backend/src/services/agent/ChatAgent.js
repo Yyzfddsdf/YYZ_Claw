@@ -562,6 +562,62 @@ export class ChatAgent {
     return runtimeInjectionComposer.compose(conversation, options);
   }
 
+  emitRuntimeHookInjectedEvents(runtimeBlocks, executionContext = {}, onEvent, assembler) {
+    const currentUserBlocks = Array.isArray(runtimeBlocks?.blocksByChannel?.current_user)
+      ? runtimeBlocks.blocksByChannel.current_user
+      : [];
+    if (currentUserBlocks.length === 0) {
+      return;
+    }
+
+    const runtimeHookBlocks = currentUserBlocks.filter((block) => {
+      const type = String(block?.type ?? "").trim().toLowerCase();
+      return type === "runtime_hooks" || type === "remote_runtime_hooks";
+    });
+    if (runtimeHookBlocks.length === 0) {
+      return;
+    }
+
+    const turnRuntime =
+      executionContext?.turnRuntime && typeof executionContext.turnRuntime === "object"
+        ? executionContext.turnRuntime
+        : {};
+    executionContext.turnRuntime = turnRuntime;
+
+    const emittedKeys = new Set(
+      Array.isArray(turnRuntime.runtimeHookEmittedKeys) ? turnRuntime.runtimeHookEmittedKeys : []
+    );
+
+    for (const block of runtimeHookBlocks) {
+      const content = String(block?.content ?? "").trim();
+      if (!content) {
+        continue;
+      }
+
+      const dedupeKey = `${String(block?.type ?? "").trim().toLowerCase()}|${content}`;
+      if (emittedKeys.has(dedupeKey)) {
+        continue;
+      }
+
+      emittedKeys.add(dedupeKey);
+      onEvent?.({
+        type: "runtime_hook_injected",
+        blockId: String(block?.id ?? "").trim(),
+        hookType: String(block?.type ?? "").trim() || "runtime_hooks",
+        source: String(block?.source ?? "").trim() || "hook",
+        level: String(block?.level ?? "").trim() || "info",
+        content,
+        metadata:
+          block?.metadata && typeof block.metadata === "object" && !Array.isArray(block.metadata)
+            ? block.metadata
+            : {},
+        mergedText: assembler?.getMergedText?.() ?? ""
+      });
+    }
+
+    turnRuntime.runtimeHookEmittedKeys = Array.from(emittedKeys).slice(-48);
+  }
+
   createPendingApprovalPayload({
     approvalStore,
     conversationId,
@@ -653,6 +709,7 @@ export class ChatAgent {
     while (true) {
       throwIfAborted(abortSignal);
       const runtimeBlocks = this.resolveRuntimeBlocks(conversation, executionContext);
+      this.emitRuntimeHookInjectedEvents(runtimeBlocks, executionContext, onEvent, assembler);
       const apiConversation = this.buildApiConversation(conversation, {
         currentTurnUserIndex,
         runtimeBlocks: runtimeBlocks?.blocksByChannel ?? null
@@ -828,6 +885,7 @@ export class ChatAgent {
     while (true) {
       throwIfAborted(abortSignal);
       const runtimeBlocks = this.resolveRuntimeBlocks(conversation, executionContext);
+      this.emitRuntimeHookInjectedEvents(runtimeBlocks, executionContext, onEvent, assembler);
       const apiConversation = this.buildApiConversation(conversation, {
         currentTurnUserIndex,
         runtimeBlocks: runtimeBlocks?.blocksByChannel ?? null

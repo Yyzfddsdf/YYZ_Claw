@@ -192,7 +192,8 @@ function matchCommandRules(parsedRules, command, approvalMode) {
     return null;
   }
 
-  for (const rule of parsedRules.commandRules) {
+  const commandRules = Array.isArray(parsedRules?.commandRules) ? parsedRules.commandRules : [];
+  for (const rule of commandRules) {
     if (approvalMode === "auto" && rule.section !== "always_review") {
       continue;
     }

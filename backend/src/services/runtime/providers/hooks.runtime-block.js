@@ -1,7 +1,7 @@
 export default {
   name: "runtime_hooks_block",
   description:
-    "Build a hidden runtime hook block from registered runtime hooks and inject it as a system block.",
+    "Build runtime hook block from registered runtime hooks and inject it into the current turn.",
   priority: 180,
   resolve(scope, context = {}) {
     const hookBlockBuilder = context?.services?.hookBlockBuilder ?? null;
@@ -17,7 +17,7 @@ export default {
     return {
       type: "runtime_hooks",
       source: "hook",
-      channel: "system",
+      channel: "current_user",
       priority: 180,
       level: result.level,
       wrapper: result.wrapper,

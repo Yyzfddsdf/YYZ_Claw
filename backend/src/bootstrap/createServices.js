@@ -3,10 +3,15 @@ import path from "node:path";
 import {
   APPROVAL_RULES_FILE,
   CONFIG_FILE,
+  FEISHU_CONFIG_FILE,
   GLOBAL_AGENTS_FILE,
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
   MCP_CONFIG_FILE,
+  REMOTE_CONTROL_CONFIG_FILE,
+  REMOTE_CONTROL_HOOKS_DIR,
+  REMOTE_CONTROL_HISTORY_DB_FILE,
+  REMOTE_CONTROL_TOOLS_DIR,
   MEMORY_SUMMARY_FILE,
   HISTORY_DB_FILE,
   HISTORY_DIR,
@@ -19,6 +24,7 @@ import {
 } from "../config/paths.js";
 import { ChatAgent } from "../services/agent/ChatAgent.js";
 import { ConfigStore } from "../services/config/ConfigStore.js";
+import { FeishuConfigStore } from "../im/feishu/config/FeishuConfigStore.js";
 import { ApprovalRulesStore } from "../services/config/ApprovalRulesStore.js";
 import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
 import { MemorySummaryStore } from "../services/config/MemorySummaryStore.js";
@@ -26,6 +32,16 @@ import { McpConfigStore } from "../services/config/McpConfigStore.js";
 import { ConversationCompressionService } from "../services/context/ConversationCompressionService.js";
 import { AttachmentParserService } from "../services/files/AttachmentParserService.js";
 import { SqliteChatHistoryStore } from "../services/history/SqliteChatHistoryStore.js";
+import { FeishuLongConnectionService } from "../im/feishu/runtime/FeishuLongConnectionService.js";
+import { FeishuRuntimeService } from "../im/feishu/runtime/FeishuRuntimeService.js";
+import { FeishuWebhookIngestService } from "../im/feishu/ingest/FeishuWebhookIngestService.js";
+import { FeishuOpenApiClient } from "../im/feishu/transport/FeishuOpenApiClient.js";
+import { RemoteControlConfigStore } from "../integrations/remote-control/config/RemoteControlConfigStore.js";
+import { RemoteControlHistoryStore } from "../integrations/remote-control/history/RemoteControlHistoryStore.js";
+import { RemoteHookBlockBuilder } from "../integrations/remote-control/hooks/RemoteHookBlockBuilder.js";
+import { RemoteHookRegistry } from "../integrations/remote-control/hooks/RemoteHookRegistry.js";
+import { RemoteControlProviderAdapter } from "../integrations/remote-control/providers/RemoteControlProviderAdapter.js";
+import { RemoteControlProviderRegistry } from "../integrations/remote-control/providers/RemoteControlProviderRegistry.js";
 import { HookBlockBuilder } from "../services/hooks/HookBlockBuilder.js";
 import { HookRegistry } from "../services/hooks/HookRegistry.js";
 import { LongTermMemoryRecallService } from "../services/memory/LongTermMemoryRecallService.js";
@@ -55,13 +71,21 @@ import { UnifiedToolRegistry } from "../services/tools/UnifiedToolRegistry.js";
 export async function createServices() {
   const localToolRegistry = new ToolRegistry();
   await localToolRegistry.autoRegisterFromDir(TOOLS_DIR);
+  const remoteControlToolRegistry = new ToolRegistry();
+  await remoteControlToolRegistry.autoRegisterFromDir(REMOTE_CONTROL_TOOLS_DIR);
   const hookRegistry = new HookRegistry();
   await hookRegistry.autoRegisterFromDir(HOOKS_DIR);
+  const remoteHookRegistry = new RemoteHookRegistry();
+  await remoteHookRegistry.autoRegisterFromDir(REMOTE_CONTROL_HOOKS_DIR);
   const runtimeBlockRegistry = new RuntimeBlockRegistry();
   await runtimeBlockRegistry.autoRegisterFromDir(RUNTIME_BLOCKS_DIR);
 
   const configStore = new ConfigStore(CONFIG_FILE);
   await configStore.ensureFile();
+  const feishuConfigStore = new FeishuConfigStore(FEISHU_CONFIG_FILE);
+  await feishuConfigStore.ensureFile();
+  const remoteControlConfigStore = new RemoteControlConfigStore(REMOTE_CONTROL_CONFIG_FILE);
+  await remoteControlConfigStore.ensureFile();
 
   const mcpConfigStore = new McpConfigStore(MCP_CONFIG_FILE);
   await mcpConfigStore.ensureFile();
@@ -101,6 +125,11 @@ export async function createServices() {
     defaultWorkplacePath: PROJECT_ROOT
   });
   await historyStore.initialize();
+  const remoteControlHistoryStore = new RemoteControlHistoryStore({
+    dbFilePath: REMOTE_CONTROL_HISTORY_DB_FILE,
+    dirPath: HISTORY_DIR
+  });
+  await remoteControlHistoryStore.initialize();
   const orchestratorStore = new SqliteOrchestratorStore({
     dbFilePath: HISTORY_DB_FILE,
     dirPath: HISTORY_DIR
@@ -127,6 +156,11 @@ export async function createServices() {
   });
   const hookBlockBuilder = new HookBlockBuilder({
     hookRegistry,
+    maxHooks: 3,
+    maxBlockChars: 1800
+  });
+  const remoteHookBlockBuilder = new RemoteHookBlockBuilder({
+    hookRegistry: remoteHookRegistry,
     maxHooks: 3,
     maxBlockChars: 1800
   });
@@ -172,6 +206,56 @@ export async function createServices() {
     maxDelayMs: 5000
   });
   const attachmentParserService = new AttachmentParserService();
+  const feishuOpenApiClient = new FeishuOpenApiClient({
+    configStore: feishuConfigStore
+  });
+  const feishuRuntimeService = new FeishuRuntimeService({
+    configStore,
+    remoteControlConfigStore,
+    remoteControlHistoryStore,
+    sharedToolRegistry: remoteControlToolRegistry,
+    feishuOpenApiClient,
+    agentsPromptStore,
+    memorySummaryStore,
+    skillPromptBuilder,
+    memoryStore,
+    longTermMemoryRecallService,
+    remoteHookRegistry,
+    remoteHookBlockBuilder,
+    defaultWorkplacePath: PROJECT_ROOT,
+    queueFlushDelayMs: 1200
+  });
+  const feishuWebhookIngestService = new FeishuWebhookIngestService({
+    runtimeService: feishuRuntimeService,
+    openApiClient: feishuOpenApiClient,
+    attachmentParserService
+  });
+  const feishuLongConnectionService = new FeishuLongConnectionService({
+    configStore: feishuConfigStore,
+    eventIngestService: feishuWebhookIngestService
+  });
+  const remoteControlProviderRegistry = new RemoteControlProviderRegistry();
+  const feishuProviderAdapter = new RemoteControlProviderAdapter({
+    providerKey: "feishu",
+    configStore: feishuConfigStore,
+    runtimeService: feishuRuntimeService,
+    eventIngestService: feishuWebhookIngestService,
+    connectionService: feishuLongConnectionService,
+    toolRegistry: remoteControlToolRegistry,
+    historyStore: remoteControlHistoryStore
+  });
+  remoteControlProviderRegistry.register({
+    key: "feishu",
+    label: "飞书",
+    adapter: feishuProviderAdapter
+  });
+  const initialRemoteControlConfig = await remoteControlConfigStore.read();
+  await feishuProviderAdapter.setActive(
+    String(initialRemoteControlConfig.activeProviderKey ?? "").trim().toLowerCase() === "feishu",
+    {
+      forceRefresh: true
+    }
+  );
   const conversationAgentRuntimeService = new ConversationAgentRuntimeService({
     chatAgent: null,
     agentRuntimeFactory,
@@ -224,8 +308,11 @@ export async function createServices() {
   return {
     toolRegistry,
     localToolRegistry,
+    remoteControlToolRegistry,
     hookRegistry,
     hookBlockBuilder,
+    remoteHookRegistry,
+    remoteHookBlockBuilder,
     runtimeBlockRegistry,
     runtimeScopeBuilder,
     runtimeBlockRuntime,
@@ -240,6 +327,9 @@ export async function createServices() {
     conversationRunCoordinator,
     orchestratorSupervisorService,
     configStore,
+    remoteControlConfigStore,
+    remoteControlProviderRegistry,
+    feishuConfigStore,
     mcpConfigStore,
     approvalRulesStore,
     agentsPromptStore,
@@ -250,10 +340,16 @@ export async function createServices() {
     skillValidator,
     mcpManager,
     historyStore,
+    remoteControlHistoryStore,
     memoryStore,
     longTermMemoryRecallService,
     compressionService,
     attachmentParserService,
+    feishuOpenApiClient,
+    feishuWebhookIngestService,
+    feishuLongConnectionService,
+    feishuRuntimeService,
+    feishuProviderAdapter,
     chatAgent
   };
 }

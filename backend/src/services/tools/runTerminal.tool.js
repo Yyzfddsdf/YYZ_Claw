@@ -5,6 +5,78 @@ import path from "node:path";
 const MAX_CAPTURED_OUTPUT = 12000;
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_TIMEOUT_MS = 300000;
+const COMMAND_SEGMENT_PREFIX = "(?:^|[;&|\\n])\\s*";
+
+const DESTRUCTIVE_COMMAND_RULES = [
+  {
+    pattern: new RegExp(`${COMMAND_SEGMENT_PREFIX}format(?:\\.com|\\.exe)?\\b`, "i"),
+    reason: "format 可能会格式化磁盘。"
+  },
+  {
+    pattern: new RegExp(`${COMMAND_SEGMENT_PREFIX}diskpart\\b`, "i"),
+    reason: "diskpart 可直接修改/清空磁盘分区。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}(?:clear-disk|format-volume|remove-partition|initialize-disk)\\b`,
+      "i"
+    ),
+    reason: "检测到 PowerShell 磁盘管理破坏性命令。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}(?:mkfs(?:\\.[a-z0-9_+.-]+)?|fdisk|parted|sgdisk|gdisk|cfdisk|wipefs)\\b`,
+      "i"
+    ),
+    reason: "检测到磁盘分区/文件系统重建命令。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}dd\\b[^|;&\\n]*\\bof\\s*=\\s*(?:\\\\\\\\\\.\\\\physicaldrive\\d+|\\/dev\\/[a-z0-9]+)`,
+      "i"
+    ),
+    reason: "dd 正在向物理磁盘设备写入数据。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}rm\\b[^|;&\\n]*\\s-rf?\\b[^|;&\\n]*\\s(?:--no-preserve-root\\s+)?\\/(?:\\s|$)`,
+      "i"
+    ),
+    reason: "检测到删除根目录命令。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}rm\\b[^|;&\\n]*\\s-rf?\\b[^|;&\\n]*(?:\\/etc|\\/usr|\\/bin|\\/sbin|\\/boot)(?:\\s|$)`,
+      "i"
+    ),
+    reason: "检测到删除关键系统目录命令。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}(?:rd|rmdir|del|erase)\\b[^|;&\\n]*(?:[a-z]:\\\\windows|[a-z]:\\\\program files|[a-z]:\\\\programdata)(?:\\s|$)`,
+      "i"
+    ),
+    reason: "检测到删除 Windows 关键系统目录命令。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}(?:remove-item|rm)\\b[^|;&\\n]*(?:[a-z]:\\\\windows|[a-z]:\\\\program files|[a-z]:\\\\programdata)(?:\\s|$)`,
+      "i"
+    ),
+    reason: "检测到 PowerShell 删除 Windows 关键目录命令。"
+  },
+  {
+    pattern: new RegExp(`${COMMAND_SEGMENT_PREFIX}(?:bcdedit|bootrec)\\b`, "i"),
+    reason: "检测到引导配置修改命令。"
+  },
+  {
+    pattern: new RegExp(
+      `${COMMAND_SEGMENT_PREFIX}reg(?:\\.exe)?\\s+delete\\s+(?:hklm|hkey_local_machine)\\\\`,
+      "i"
+    ),
+    reason: "检测到删除系统级注册表键命令。"
+  }
+];
 
 function resolveContextWorkingDirectory(executionContext = {}) {
   const candidate =
@@ -80,6 +152,21 @@ function normalizeTimeoutMs(value) {
   }
 
   return Math.min(normalized, MAX_TIMEOUT_MS);
+}
+
+function detectDestructiveCommand(command) {
+  const normalized = String(command ?? "").replace(/\r/g, "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  for (const rule of DESTRUCTIVE_COMMAND_RULES) {
+    if (rule.pattern.test(normalized)) {
+      return String(rule.reason ?? "").trim() || "命中系统安全拦截规则。";
+    }
+  }
+
+  return "";
 }
 
 function runCommand({ command, cwd, timeoutMs }) {
@@ -165,6 +252,11 @@ export default {
 
     if (!command) {
       throw new Error("command is required");
+    }
+
+    const destructiveReason = detectDestructiveCommand(command);
+    if (destructiveReason) {
+      throw new Error(`Command blocked by system safety guard: ${destructiveReason}`);
     }
 
     const cwdInput = typeof args.cwd === "string" ? args.cwd.trim() : "";

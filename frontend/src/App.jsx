@@ -6,6 +6,7 @@ import { ChatPanel } from "./modules/chat/ChatPanel";
 import { useChatSession } from "./modules/chat/useChatSession";
 import { ConfigPanel } from "./modules/config/ConfigPanel";
 import { MemoryPanel } from "./modules/memory/MemoryPanel";
+import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
 
 function createEmptyConfig() {
@@ -201,6 +202,20 @@ export default function App() {
             </svg>
             配置中心
           </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeWorkspace === "remote-control"}
+            className={`nav-item ${activeWorkspace === "remote-control" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("remote-control")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M12 3a9 9 0 0 1 9 9c0 4.97-4.03 9-9 9H6a3 3 0 0 1-3-3v-6a9 9 0 0 1 9-9z" />
+              <path d="M8 10h8M8 14h5" />
+            </svg>
+            远程控制
+          </button>
         </nav>
       </aside>
 
@@ -247,6 +262,12 @@ export default function App() {
               error={configError}
               mcpError={mcpError}
             />
+          </section>
+        )}
+
+        {activeWorkspace === "remote-control" && (
+          <section className="panel panel-remote-control" role="tabpanel" aria-label="remote control workspace">
+            <RemoteControlPanel />
           </section>
         )}
       </main>

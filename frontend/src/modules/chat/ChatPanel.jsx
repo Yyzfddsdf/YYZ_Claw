@@ -200,6 +200,17 @@ function getMessageMetaKind(message) {
   return String(message?.meta?.kind ?? message?.meta?.kimd ?? "").trim();
 }
 
+function getRuntimeHookStripText(message) {
+  const level = String(message?.meta?.level ?? "info").trim().toLowerCase();
+  if (level === "warning") {
+    return "运行时提醒（warning）";
+  }
+  if (level === "strong") {
+    return "运行时提醒（strong）";
+  }
+  return "运行时提醒";
+}
+
 function clipOrchestratorText(value, maxLength = 96) {
   const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
   if (!normalized || normalized.length <= maxLength) {
@@ -1442,6 +1453,7 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
               const isStreamingThisMessage = isLastMessage && chat.isStreaming && message.role === "assistant";
               const messageMetaKind = getMessageMetaKind(message);
               const isInternalToolImageMessage = messageMetaKind === "tool_image_input";
+              const isRuntimeHookInjectedMessage = messageMetaKind === "runtime_hook_injected";
               const isOrchestratorMessage = messageMetaKind === "orchestrator_message";
               const imageAttachments = getImageAttachments(message);
               const parsedFileAttachments = getParsedFileAttachments(message);
@@ -1520,6 +1532,8 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                   } ${isAttachmentOnlyUserMessage ? "bubble-user-attachment-only" : ""} ${
                     isAttachmentOnlyUserMessage ? "bubble-attachment-only" : ""
                   } ${isInternalToolImageMessage ? "bubble-tool-image-input" : ""} ${
+                    isRuntimeHookInjectedMessage ? "bubble-runtime-hook-injected" : ""
+                  } ${
                     isStreamingThisMessage ? "is-streaming" : ""
                   }`}
                 >
@@ -1527,7 +1541,9 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                     <header>
                       <strong>
                         {isInternalToolImageMessage && "Tool Image Input"}
-                        {message.role === "user" && !isInternalToolImageMessage && "User"}
+                        {message.role === "user" &&
+                          !isInternalToolImageMessage &&
+                          "User"}
                         {message.role === "assistant" && (isCompressionSummary ? "Compression" : "Assistant")}
                         {message.role === "tool" && "Tool"}
                         {message.role === "system" && "System"}
@@ -1542,7 +1558,11 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
                     </header>
                   )}
 
-                  {isCompressionSummary ? (
+                  {isRuntimeHookInjectedMessage ? (
+                    <div className="runtime-hook-strip">
+                      <span className="runtime-hook-strip-label">{getRuntimeHookStripText(message)}</span>
+                    </div>
+                  ) : isCompressionSummary ? (
                     <div className="compression-card-content">
                       <p className="compression-card-title">上下文压缩节点</p>
                       <MarkdownMessage content={message.content || ""} className="bubble-content" />

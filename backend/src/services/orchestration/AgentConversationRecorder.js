@@ -316,6 +316,34 @@ export class AgentConversationRecorder {
       return;
     }
 
+    if (event?.type === "runtime_hook_injected") {
+      const content = String(event?.content ?? "").trim();
+      if (!content) {
+        return;
+      }
+
+      this.messages.push(
+        normalizeMessage({
+          id: createId("runtime-hook"),
+          role: "user",
+          timestamp: Date.now(),
+          content,
+          meta: {
+            kind: "runtime_hook_injected",
+            hookType: String(event?.hookType ?? "").trim() || "runtime_hooks",
+            level: String(event?.level ?? "").trim() || "info",
+            source: String(event?.source ?? "").trim() || "hook",
+            blockId: String(event?.blockId ?? "").trim(),
+            metadata:
+              event?.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+                ? event.metadata
+                : {}
+          }
+        })
+      );
+      return;
+    }
+
     if (event?.type === "usage") {
       const normalizedUsage = event?.usage && typeof event.usage === "object" ? { ...event.usage } : null;
       if (!normalizedUsage || !this.activeAssistantMessageId) {

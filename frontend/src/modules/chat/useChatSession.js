@@ -2852,6 +2852,36 @@ export function useChatSession(maxContextWindow = 0) {
       return true;
     }
 
+    if (event?.type === "runtime_hook_injected") {
+      const content = String(event?.content ?? "").trim();
+      if (!content) {
+        return true;
+      }
+
+      updateTargetMessages((prev) => [
+        ...prev,
+        normalizeChatMessage({
+          id: createId("runtime-hook"),
+          role: "user",
+          timestamp: Date.now(),
+          content,
+          meta: {
+            kind: "runtime_hook_injected",
+            hookType: String(event?.hookType ?? "").trim() || "runtime_hooks",
+            level: String(event?.level ?? "").trim() || "info",
+            source: String(event?.source ?? "").trim() || "hook",
+            blockId: String(event?.blockId ?? "").trim(),
+            metadata:
+              event?.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+                ? event.metadata
+                : {}
+          }
+        })
+      ]);
+
+      return true;
+    }
+
     if (event?.type === "usage") {
       const usage = normalizeTokenUsage(event.usage);
       if (usage.totalTokens <= 0) {

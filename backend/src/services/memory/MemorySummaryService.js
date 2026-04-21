@@ -6,14 +6,15 @@ import {
   createEmptyMemorySummary,
   hasAnyWorkspaceSummary,
   normalizeGlobalSummary,
-  normalizeMemorySummaryPayload,
   normalizeWorkspaceSummary
 } from "../config/MemorySummaryStore.js";
 
 const DEFAULT_MEMORY_SUMMARY_MAX_OUTPUT_TOKENS = 1200;
 const DEFAULT_EFFECTIVE_CONTEXT_MAX_CHARS = 24000;
 const DEFAULT_EFFECTIVE_CONTEXT_MESSAGE_MAX_CHARS = 8000;
-const MEMORY_SUMMARY_TOOL_NAME = "submit_memory_summary";
+const MEMORY_EVIDENCE_TOOL_NAME = "submit_memory_evidence";
+const GLOBAL_SUMMARY_TOOL_NAME = "submit_global_memory";
+const WORKSPACE_SUMMARY_TOOL_NAME = "submit_workspace_memory";
 const SUMMARY_PREFIX = "[CONTEXT COMPACTION]";
 const PHASE_SIGNAL_COOLDOWN_MS = 15 * 60 * 1000;
 const EXPLICIT_REFRESH_PATTERNS = [
@@ -152,89 +153,135 @@ function buildPromptPayloadString(value) {
   return JSON.stringify(value, null, 2);
 }
 
-function createMemorySummaryToolDefinition() {
+function createMemoryEvidenceToolDefinition() {
   return {
     type: "function",
     function: {
-      name: MEMORY_SUMMARY_TOOL_NAME,
+      name: MEMORY_EVIDENCE_TOOL_NAME,
       description:
-        "Submit the final compact memory summary. Keep global entries cross-workspace and durable. Keep workspace entries specific to the current repository and rewrite evidence into stable repo memory instead of copying a session recap.",
+        "Submit compact memory evidence extracted from the conversation. Keep each field short and concrete.",
       parameters: {
         type: "object",
         properties: {
-          global: {
-            type: "object",
-            properties: {
-              userProfile: {
-                type: "array",
-                description:
-                  "Stable cross-workspace user facts such as long-term environment, working setup, or durable role/context facts.",
-                items: { type: "string" }
-              },
-              userPreferences: {
-                type: "array",
-                description:
-                  "Stable cross-workspace preferences such as communication style, execution style, or preferred output shape.",
-                items: { type: "string" }
-              },
-              generalTips: {
-                type: "array",
-                description:
-                  "Stable cross-workspace tips such as environment caveats, terminal encoding reminders, or reusable workflow hints.",
-                items: { type: "string" }
-              }
-            },
-            required: ["userProfile", "userPreferences", "generalTips"],
-            additionalProperties: false
+          userSignals: {
+            type: "array",
+            items: { type: "string" }
           },
-          workspace: {
-            type: "object",
-            properties: {
-              purpose: {
-                type: "string",
-                description:
-                  "One sentence: what this repository is for in the long run."
-              },
-              surfaces: {
-                type: "array",
-                description:
-                  "The most important modules, directories, subsystems, flows, or technical surfaces in this repository.",
-                items: { type: "string" }
-              },
-              invariants: {
-                type: "array",
-                description:
-                  "Durable boundaries, rules, constraints, or behaviors that should stay true in this repository.",
-                items: { type: "string" }
-              },
-              entrypoints: {
-                type: "array",
-                description:
-                  "High-value starting points such as key files, commands, boot paths, or important ownership notes.",
-                items: { type: "string" }
-              },
-              gotchas: {
-                type: "array",
-                description:
-                  "Real recurring pitfalls or failure modes. Return an empty array if there are none.",
-                items: { type: "string" }
-              }
-            },
-            required: [
-              "purpose",
-              "surfaces",
-              "invariants",
-              "entrypoints",
-              "gotchas"
-            ],
-            additionalProperties: false
+          repoSignals: {
+            type: "array",
+            items: { type: "string" }
+          },
+          stableRules: {
+            type: "array",
+            items: { type: "string" }
+          },
+          decisions: {
+            type: "array",
+            items: { type: "string" }
+          },
+          risks: {
+            type: "array",
+            items: { type: "string" }
+          },
+          nextSignals: {
+            type: "array",
+            items: { type: "string" }
           }
         },
-        required: ["global", "workspace"],
+        required: ["userSignals", "repoSignals", "stableRules", "decisions", "risks", "nextSignals"],
         additionalProperties: false
       }
     }
   };
+}
+
+function createGlobalSummaryToolDefinition() {
+  return {
+    type: "function",
+    function: {
+      name: GLOBAL_SUMMARY_TOOL_NAME,
+      description:
+        "Submit global long-term memory fields only. Exclude workspace-specific implementation details.",
+      parameters: {
+        type: "object",
+        properties: {
+          userProfile: {
+            type: "array",
+            items: { type: "string" }
+          },
+          userPreferences: {
+            type: "array",
+            items: { type: "string" }
+          },
+          generalTips: {
+            type: "array",
+            items: { type: "string" }
+          }
+        },
+        required: ["userProfile", "userPreferences", "generalTips"],
+        additionalProperties: false
+      }
+    }
+  };
+}
+
+function createWorkspaceSummaryToolDefinition() {
+  return {
+    type: "function",
+    function: {
+      name: WORKSPACE_SUMMARY_TOOL_NAME,
+      description:
+        "Submit repository-specific workspace memory fields only. Keep entries durable and non-transient.",
+      parameters: {
+        type: "object",
+        properties: {
+          purpose: {
+            type: "string",
+            minLength: 1
+          },
+          surfaces: {
+            type: "array",
+            items: { type: "string" }
+          },
+          invariants: {
+            type: "array",
+            items: { type: "string" }
+          },
+          entrypoints: {
+            type: "array",
+            items: { type: "string" }
+          },
+          gotchas: {
+            type: "array",
+            items: { type: "string" }
+          }
+        },
+        required: ["purpose", "surfaces", "invariants", "entrypoints", "gotchas"],
+        additionalProperties: false
+      }
+    }
+  };
+}
+
+function resolveStageMaxTokens(runtimeConfig = {}, stage = "evidence") {
+  const configured = Number(runtimeConfig?.maxOutputTokens ?? 0);
+  const fallbackByStage = {
+    evidence: 360,
+    global: 420,
+    workspace: 460
+  };
+  const capByStage = {
+    evidence: 520,
+    global: 620,
+    workspace: 680
+  };
+  const fallback = Number(fallbackByStage[stage] ?? 420);
+  const cap = Number(capByStage[stage] ?? 680);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return fallback;
+  }
+
+  return Math.max(160, Math.min(Math.trunc(configured), cap));
 }
 
 function resolveSummaryRuntimeConfig(runtimeConfig = {}) {
@@ -451,7 +498,6 @@ function buildSanitizedWorkspaceSummary({
 }) {
   const normalizedCandidate = sanitizeWorkspaceSummaryFields(candidateWorkspace);
   const fallback = sanitizeWorkspaceSummaryFields(previousWorkspace);
-
   return sanitizeWorkspaceSummaryFields({
     purpose: normalizedCandidate.purpose || fallback.purpose,
     surfaces: mergePriorityItems(normalizedCandidate.surfaces, fallback.surfaces),
@@ -461,97 +507,70 @@ function buildSanitizedWorkspaceSummary({
   });
 }
 
-function createWorkspaceSummaryPrompt({
+function createMemoryEvidencePrompt({
   workspacePath,
   previousGlobal,
   previousWorkspace,
   conversationContextText
 }) {
   return [
-    "You are updating a compact durable memory summary for a coding agent.",
-    `Do not return normal prose. Call ${MEMORY_SUMMARY_TOOL_NAME} exactly once with the final payload.`,
+    "Compress the conversation evidence for downstream memory extraction.",
+    `Do not return prose. Call ${MEMORY_EVIDENCE_TOOL_NAME} exactly once.`,
+    "Keep every array concise and durable. Avoid session-noise.",
+    `Workspace path context (do not output as a field): ${workspacePath}`,
     "",
-    "Write the memory in concise English. Keep file paths, code identifiers, and user-authored literals unchanged when needed.",
-    "Treat the conversation context as evidence. Rewrite it into durable memory instead of copying a session review or exploration report.",
-    "Do not include markdown headings, numbering, bold markers, or long paragraphs.",
-    "Each array item should be a short standalone line.",
-    "",
-    "Use this exact JSON shape:",
-    "{\"global\":{\"userProfile\":[],\"userPreferences\":[],\"generalTips\":[]},\"workspace\":{\"purpose\":\"\",\"surfaces\":[],\"invariants\":[],\"entrypoints\":[],\"gotchas\":[]}}",
-    "",
-    "Global section:",
-    "- Only include durable facts that remain useful across workspaces.",
-    "- Do not copy repo-specific implementation details into global.",
-    "- Avoid near-duplicate phrasing.",
-    "",
-    "Workspace section:",
-    "- This is a durable repository memory card, not a status update.",
-    "- Focus on long-lived repo understanding: what the repo is for, where the important surfaces are, what must stay true, where to start, and what repeatedly goes wrong.",
-    "- Exclude transient items such as: 'this session', 'reviewed', 'explored', 'not yet analyzed', 'next step', 'no current blockers', or temporary investigative gaps.",
-    "- If a field is uncertain, leave it empty instead of inventing content.",
-    "",
-    "Field contract:",
-    "1. global.userProfile",
-    "   Question: what stable user facts remain true across workspaces?",
-    "   Good: ['Works mainly in Windows / PowerShell environments']",
-    "2. global.userPreferences",
-    "   Question: what stable execution or communication preferences keep showing up?",
-    "   Good: ['Prefers structured code-quality reviews']",
-    "3. global.generalTips",
-    "   Question: what reusable environment or workflow tips repeatedly matter?",
-    "   Good: ['Use explicit UTF-8 encoding for terminal file reads and writes on Windows']",
-    "4. workspace.purpose",
-    "   Question: what is this repository for, in one sentence?",
-    "   Good: 'Implements the anti-fraud assistant backend, orchestration, and supporting interfaces.'",
-    "5. workspace.surfaces",
-    "   Question: what major subsystems, directories, or flows matter most here?",
-    "   Good: ['cmd/api/main.go', 'internal/bootstrap/server', 'case retrieval flow']",
-    "6. workspace.invariants",
-    "   Question: what durable boundaries, rules, or must-stay-true behaviors matter here?",
-    "   Good: ['Keep memory-summary injection separate from user input']",
-    "   Bad: ['Go', 'Gin', 'Uses GORM']",
-    "7. workspace.entrypoints",
-    "   Question: where should an agent start reading or executing to orient quickly?",
-    "   Good: ['cmd/api/main.go starts the service and delegates bootstrapping to server.Run()']",
-    "8. workspace.gotchas",
-    "   Question: what real recurring pitfalls or failure modes matter here?",
-    "   Good: ['Manual compression can no-op when the retained head/tail window is too large']",
-    "",
-    "Length limits:",
-    "  global.userProfile: at most 8 items, each at most 180 characters",
-    "  global.userPreferences: at most 8 items, each at most 180 characters",
-    "  global.generalTips: at most 8 items, each at most 180 characters",
-    "  workspace.purpose: at most 220 characters",
-    "  workspace.surfaces: at most 5 items, each at most 120 characters",
-    "  workspace.invariants: at most 5 items, each at most 180 characters",
-    "  workspace.entrypoints: at most 5 items, each at most 200 characters",
-    "  workspace.gotchas: at most 4 items, each at most 180 characters",
-    "",
-    "Do not copy prompt wording, section labels, or meta commentary into the result.",
-    "",
-    `Current workspace: ${workspacePath}`,
-    "",
-    "Previous global summary:",
+    "Previous global memory:",
     buildPromptPayloadString(previousGlobal),
     "",
-    "Previous workspace summary:",
+    "Previous workspace memory:",
     buildPromptPayloadString(previousWorkspace),
     "",
-    "Conversation evidence for this update:",
-    conversationContextText || "(none)",
-    "",
-    "Now produce the final tool payload."
+    "Conversation evidence:",
+    conversationContextText || "(none)"
   ].join("\n");
 }
 
-function extractMemorySummaryToolPayload(completion) {
+function createGlobalSummaryPrompt({ compactEvidence, previousGlobal }) {
+  return [
+    "Generate global cross-workspace memory only.",
+    `Do not return prose. Call ${GLOBAL_SUMMARY_TOOL_NAME} exactly once.`,
+    "Never include repository-specific implementation details in global memory.",
+    "",
+    "Compact evidence:",
+    buildPromptPayloadString(compactEvidence),
+    "",
+    "Previous global memory:",
+    buildPromptPayloadString(previousGlobal)
+  ].join("\n");
+}
+
+function createWorkspaceSummaryPrompt({
+  workspacePath,
+  compactEvidence,
+  previousWorkspace
+}) {
+  return [
+    "Generate workspace repository memory only.",
+    `Do not return prose. Call ${WORKSPACE_SUMMARY_TOOL_NAME} exactly once.`,
+    "Focus on durable repository understanding. Exclude transient session status.",
+    `Current workspace path context (do not output as a field): ${workspacePath}`,
+    "",
+    "Compact evidence:",
+    buildPromptPayloadString(compactEvidence),
+    "",
+    "Previous workspace memory:",
+    buildPromptPayloadString(previousWorkspace)
+  ].join("\n");
+}
+
+function extractToolPayload(completion, toolName) {
   const toolCalls = Array.isArray(completion?.choices?.[0]?.message?.tool_calls)
     ? completion.choices[0].message.tool_calls
     : [];
 
   for (const toolCall of toolCalls) {
-    const toolName = normalizeText(toolCall?.function?.name);
-    if (toolName !== MEMORY_SUMMARY_TOOL_NAME) {
+    const calledToolName = normalizeText(toolCall?.function?.name);
+    if (calledToolName !== normalizeText(toolName)) {
       continue;
     }
 
@@ -564,43 +583,65 @@ function extractMemorySummaryToolPayload(completion) {
   return null;
 }
 
-function normalizeCandidatePayload(candidate) {
-  const normalized = normalizeMemorySummaryPayload({
-    schemaVersion: 1,
-    global: candidate?.global,
-    workspaces: {
-      __workspace__: {
-        summary: candidate?.workspace,
-        updatedAt: ""
+function normalizeCompactEvidence(input = {}) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const toList = (value = []) =>
+    mergePriorityItems(
+      (Array.isArray(value) ? value : [])
+        .map((item) => normalizeWorkspaceFieldText(item))
+        .filter(Boolean)
+    ).slice(0, 8);
+
+  return {
+    userSignals: toList(source.userSignals),
+    repoSignals: toList(source.repoSignals),
+    stableRules: toList(source.stableRules),
+    decisions: toList(source.decisions),
+    risks: toList(source.risks),
+    nextSignals: toList(source.nextSignals)
+  };
+}
+
+async function runToolCompletion({
+  client,
+  runtimeConfig,
+  toolDefinition,
+  toolName,
+  prompt,
+  stage
+}) {
+  const completion = await client.chat.completions.create({
+    model: runtimeConfig.model,
+    temperature: 0,
+    max_tokens: resolveStageMaxTokens(runtimeConfig, stage),
+    tools: [toolDefinition],
+    messages: [
+      {
+        role: "user",
+        content: prompt
       }
+    ],
+    extra_body: {
+      enable_thinking: Boolean(runtimeConfig.enableDeepThinking)
     }
   });
 
-  return {
-    global: normalizeGlobalSummary(normalized.global),
-    workspace: normalizeWorkspaceSummary(normalized.workspaces.__workspace__?.summary)
-  };
+  return extractToolPayload(completion, toolName);
 }
 
 function sanitizeCandidatePayload({
   candidate,
   previousGlobal,
-  previousWorkspace,
-  messages,
-  workspacePath
+  previousWorkspace
 }) {
   return {
     global: buildSanitizedGlobalSummary({
       candidateGlobal: candidate?.global,
-      previousGlobal,
-      messages,
-      workspacePath
+      previousGlobal
     }),
     workspace: buildSanitizedWorkspaceSummary({
       candidateWorkspace: candidate?.workspace,
-      previousWorkspace,
-      messages,
-      workspacePath
+      previousWorkspace
     })
   };
 }
@@ -684,7 +725,7 @@ export class MemorySummaryService {
         maxTotalChars: DEFAULT_EFFECTIVE_CONTEXT_MAX_CHARS
       }
     );
-    const prompt = createWorkspaceSummaryPrompt({
+    const evidencePrompt = createMemoryEvidencePrompt({
       workspacePath,
       previousGlobal: currentSummary.global,
       previousWorkspace: previousWorkspaceSummary,
@@ -692,34 +733,53 @@ export class MemorySummaryService {
     });
 
     const client = createOpenAIClient(runtimeConfig);
-    const completion = await client.chat.completions.create({
-      model: runtimeConfig.model,
-      temperature: 0,
-      max_tokens: runtimeConfig.maxOutputTokens,
-      tools: [createMemorySummaryToolDefinition()],
-      messages: [
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      extra_body: {
-        enable_thinking: Boolean(runtimeConfig.enableDeepThinking)
-      }
+    const compactEvidence = normalizeCompactEvidence(
+      (await runToolCompletion({
+        client,
+        runtimeConfig,
+        toolDefinition: createMemoryEvidenceToolDefinition(),
+        toolName: MEMORY_EVIDENCE_TOOL_NAME,
+        prompt: evidencePrompt,
+        stage: "evidence"
+      })) ?? {}
+    );
+
+    const globalPrompt = createGlobalSummaryPrompt({
+      compactEvidence,
+      previousGlobal: currentSummary.global
     });
+    const workspacePrompt = createWorkspaceSummaryPrompt({
+      workspacePath,
+      compactEvidence,
+      previousWorkspace: previousWorkspaceSummary
+    });
+    const globalPayload =
+      (await runToolCompletion({
+        client,
+        runtimeConfig,
+        toolDefinition: createGlobalSummaryToolDefinition(),
+        toolName: GLOBAL_SUMMARY_TOOL_NAME,
+        prompt: globalPrompt,
+        stage: "global"
+      })) ?? {};
+    const workspacePayload =
+      (await runToolCompletion({
+        client,
+        runtimeConfig,
+        toolDefinition: createWorkspaceSummaryToolDefinition(),
+        toolName: WORKSPACE_SUMMARY_TOOL_NAME,
+        prompt: workspacePrompt,
+        stage: "workspace"
+      })) ?? {};
 
-    const parsed = extractMemorySummaryToolPayload(completion);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
-    }
-
-    const normalizedCandidate = normalizeCandidatePayload(parsed);
+    const normalizedCandidate = {
+      global: normalizeGlobalSummary(globalPayload),
+      workspace: normalizeWorkspaceSummary(workspacePayload)
+    };
     const candidate = sanitizeCandidatePayload({
       candidate: normalizedCandidate,
       previousGlobal: currentSummary.global,
-      previousWorkspace: previousWorkspaceSummary,
-      messages,
-      workspacePath
+      previousWorkspace: previousWorkspaceSummary
     });
     const previousComparable = {
       global: normalizeGlobalSummary(currentSummary.global),
@@ -746,19 +806,8 @@ export class MemorySummaryService {
       delete nextPayload.workspaces[workspacePath];
     }
 
-    if (previousHash === nextHash && !shouldPersistWorkspaceEntry) {
+    if (previousHash === nextHash) {
       return null;
-    }
-
-    if (previousHash === nextHash && shouldPersistWorkspaceEntry) {
-      const previousEntry = currentSummary.workspaces[workspacePath] ?? null;
-      if (
-        previousEntry &&
-        normalizeText(previousEntry.updatedAt) ===
-          normalizeText(nextPayload.workspaces[workspacePath]?.updatedAt)
-      ) {
-        return null;
-      }
     }
 
     const saved = await this.store.save(nextPayload);

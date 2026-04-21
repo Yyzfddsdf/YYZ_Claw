@@ -114,6 +114,13 @@ export class RemoteControlProviderAdapter {
     return this.runtimeService.flushQueue();
   }
 
+  sendFile(payload = {}) {
+    if (!this.runtimeService || typeof this.runtimeService.sendFileToChannel !== "function") {
+      throw new Error("provider runtime service does not support file delivery");
+    }
+    return this.runtimeService.sendFileToChannel(payload);
+  }
+
   handleEvent(payload = {}) {
     if (!this.eventIngestService || typeof this.eventIngestService.handleCallback !== "function") {
       return {

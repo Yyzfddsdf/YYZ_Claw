@@ -431,6 +431,64 @@ export class RemoteControlHistoryStore {
     }));
   }
 
+  updateMessage(turnId, message = {}) {
+    const db = this.ensureDb();
+    const numericTurnId = Number(turnId ?? 0);
+    if (!Number.isInteger(numericTurnId) || numericTurnId <= 0) {
+      throw new Error("turnId is required");
+    }
+
+    const messageId = String(message.id ?? "").trim();
+    if (!messageId) {
+      throw new Error("message.id is required");
+    }
+
+    const normalized = normalizeMessageInput(message);
+    const now = Date.now();
+    const result = db
+      .prepare(
+        `
+          UPDATE remote_control_messages
+          SET
+            content = ?,
+            reasoning_content = ?,
+            tool_call_id = ?,
+            tool_name = ?,
+            tool_calls_json = ?,
+            meta_json = ?,
+            timestamp = ?,
+            created_at = ?
+          WHERE turn_id = ?
+            AND id = ?
+        `
+      )
+      .run(
+        normalized.content,
+        normalized.reasoningContent,
+        normalized.toolCallId,
+        normalized.toolName,
+        normalized.toolCalls.length > 0 ? JSON.stringify(normalized.toolCalls) : "",
+        Object.keys(normalized.meta).length > 0 ? JSON.stringify(normalized.meta) : "",
+        normalized.timestamp,
+        now,
+        numericTurnId,
+        messageId
+      );
+
+    if (Number(result?.changes ?? 0) > 0) {
+      db.prepare(
+        `
+          UPDATE remote_control_turns
+          SET updated_at = ?
+          WHERE id = ?
+        `
+      ).run(now, numericTurnId);
+      return true;
+    }
+
+    return false;
+  }
+
   closeTurn(turnId, options = {}) {
     const db = this.ensureDb();
     const numericTurnId = Number(turnId ?? 0);
@@ -773,6 +831,72 @@ export class RemoteControlHistoryStore {
     return {
       records,
       nextCursor: nextCursor && nextCursor > 0 ? nextCursor : null
+    };
+  }
+
+  clearRecords(options = {}) {
+    const db = this.ensureDb();
+    const providerKey = normalizeProviderKey(options.providerKey);
+    let deletedTurns = 0;
+    let deletedMessages = 0;
+
+    if (providerKey) {
+      const messageRow = db
+        .prepare(
+          `
+            SELECT COUNT(*) AS total
+            FROM remote_control_messages
+            WHERE provider_key = ?
+          `
+        )
+        .get(providerKey);
+      const turnRow = db
+        .prepare(
+          `
+            SELECT COUNT(*) AS total
+            FROM remote_control_turns
+            WHERE provider_key = ?
+          `
+        )
+        .get(providerKey);
+
+      deletedMessages = Number(messageRow?.total ?? 0);
+      deletedTurns = Number(turnRow?.total ?? 0);
+
+      db.prepare(
+        `
+          DELETE FROM remote_control_turns
+          WHERE provider_key = ?
+        `
+      ).run(providerKey);
+    } else {
+      const messageRow = db
+        .prepare(
+          `
+            SELECT COUNT(*) AS total
+            FROM remote_control_messages
+          `
+        )
+        .get();
+      const turnRow = db
+        .prepare(
+          `
+            SELECT COUNT(*) AS total
+            FROM remote_control_turns
+          `
+        )
+        .get();
+
+      deletedMessages = Number(messageRow?.total ?? 0);
+      deletedTurns = Number(turnRow?.total ?? 0);
+
+      db.exec("DELETE FROM remote_control_turns;");
+    }
+
+    return {
+      providerKey,
+      deletedTurns: Number.isFinite(deletedTurns) ? deletedTurns : 0,
+      deletedMessages: Number.isFinite(deletedMessages) ? deletedMessages : 0
     };
   }
 }

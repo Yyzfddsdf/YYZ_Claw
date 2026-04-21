@@ -1,4 +1,5 @@
 import {
+  remoteControlClearRecordsQuerySchema,
   remoteControlConfigUpdateSchema,
   remoteControlInboundPayloadSchema,
   remoteControlRecordsQuerySchema
@@ -246,6 +247,27 @@ export function createRemoteControlController({
         nextCursor: Number.isFinite(Number(result?.nextCursor)) ? Number(result.nextCursor) : null,
         status: await getProviderStatus(context.provider),
         activeProviderKey: context.activeProviderKey
+      });
+    },
+
+    clearRecords: async (req, res) => {
+      const validation = remoteControlClearRecordsQuerySchema.safeParse(req.query ?? {});
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const context = await getActiveProviderContext();
+      const result = remoteControlHistoryStore.clearRecords({
+        providerKey: validation.data.providerKey
+      });
+
+      res.json({
+        cleared: true,
+        providerKey: String(result?.providerKey ?? "").trim(),
+        deletedTurns: Number(result?.deletedTurns ?? 0),
+        deletedMessages: Number(result?.deletedMessages ?? 0),
+        activeProviderKey: context.activeProviderKey,
+        status: await getProviderStatus(context.provider)
       });
     },
 

@@ -19,6 +19,81 @@ function normalizeText(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeToolCalls(toolCalls) {
+  return Array.isArray(toolCalls)
+    ? toolCalls
+        .map((toolCall) => {
+          const id = String(toolCall?.id ?? "").trim();
+          const functionName = String(toolCall?.function?.name ?? "").trim();
+          if (!id || !functionName) {
+            return null;
+          }
+
+          return {
+            id,
+            type: "function",
+            function: {
+              name: functionName,
+              arguments: String(toolCall?.function?.arguments ?? "{}")
+            }
+          };
+        })
+        .filter(Boolean)
+    : [];
+}
+
+function normalizeMessageMeta(meta) {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return {};
+  }
+
+  return { ...meta };
+}
+
+function normalizeRecorderMessageForStorage(message = {}) {
+  return {
+    id: String(message.id ?? "").trim(),
+    role: String(message.role ?? "assistant").trim() || "assistant",
+    content: String(message.content ?? ""),
+    reasoningContent: String(message.reasoningContent ?? ""),
+    timestamp: Number(message.timestamp ?? Date.now()),
+    toolCallId: String(message.toolCallId ?? "").trim(),
+    toolName: String(message.toolName ?? "").trim(),
+    toolCalls: normalizeToolCalls(message.toolCalls),
+    meta: normalizeMessageMeta(message.meta),
+    tokenUsage:
+      message.tokenUsage && typeof message.tokenUsage === "object" ? { ...message.tokenUsage } : null
+  };
+}
+
+function buildStorageMessageSignature(message = {}) {
+  return JSON.stringify({
+    role: String(message.role ?? "assistant").trim() || "assistant",
+    content: String(message.content ?? ""),
+    reasoningContent: String(message.reasoningContent ?? ""),
+    toolCallId: String(message.toolCallId ?? "").trim(),
+    toolName: String(message.toolName ?? "").trim(),
+    toolCalls: normalizeToolCalls(message.toolCalls),
+    meta: normalizeMessageMeta(message.meta),
+    tokenUsage:
+      message.tokenUsage && typeof message.tokenUsage === "object" ? message.tokenUsage : null,
+    timestamp: Number(message.timestamp ?? 0)
+  });
+}
+
+function shouldSyncRecorderOnEvent(event = {}) {
+  const type = String(event?.type ?? "").trim();
+  return (
+    type === "assistant_message_end"
+    || type === "tool_call"
+    || type === "tool_result"
+    || type === "tool_pending_approval"
+    || type === "tool_image_input"
+    || type === "runtime_hook_injected"
+    || type === "usage"
+  );
+}
+
 export class ConversationAgentRuntimeService {
   constructor(options = {}) {
     this.chatAgent = options.chatAgent ?? null;
@@ -216,6 +291,40 @@ export class ConversationAgentRuntimeService {
     const recorder = new AgentConversationRecorder({
       initialMessages: effectiveMessages
     });
+    const storedMessageSignatures = new Map();
+    for (const message of effectiveMessages) {
+      const id = String(message?.id ?? "").trim();
+      if (!id) {
+        continue;
+      }
+      storedMessageSignatures.set(id, buildStorageMessageSignature(message));
+    }
+
+    const syncRecorderToHistory = () => {
+      const messages = recorder
+        .getMessages()
+        .map((item) => normalizeRecorderMessageForStorage(item));
+
+      for (const message of messages) {
+        const messageId = String(message.id ?? "").trim();
+        if (!messageId) {
+          continue;
+        }
+
+        const nextSignature = buildStorageMessageSignature(message);
+        const previousSignature = storedMessageSignatures.get(messageId);
+        if (previousSignature === nextSignature) {
+          continue;
+        }
+
+        this.historyStore.upsertConversationMessage(conversationId, message, {
+          updatedAt: Number(message.timestamp ?? Date.now())
+        });
+        storedMessageSignatures.set(messageId, nextSignature);
+      }
+
+      return messages;
+    };
     const firstUserMessage = effectiveMessages.find(
       (message) => normalizeText(message?.role) === "user" && normalizeText(message?.content)
     );
@@ -270,23 +379,16 @@ export class ConversationAgentRuntimeService {
           recorder.applyEvent(payload);
         }
 
+        if (shouldSyncRecorderOnEvent(payload)) {
+          syncRecorderToHistory();
+        }
+
         options.onEvent?.(payload);
       }
     });
 
-    const nextMessages = recorder.getMessages();
-    const updatedHistory = this.historyStore.mergeConversation({
-      conversationId,
-      title: existingConversation?.title,
-      workplacePath: existingConversation?.workplacePath,
-      parentConversationId: existingConversation?.parentConversationId,
-      source: existingConversation?.source,
-      model: runtimeConfig.model,
-      approvalMode: existingConversation?.approvalMode,
-      skills: existingConversation?.skills,
-      developerPrompt: existingConversation?.developerPrompt,
-      messages: nextMessages
-    });
+    syncRecorderToHistory();
+    const updatedHistory = this.historyStore.getConversation(conversationId);
 
     if (firstSentence && isAutoTitleCandidate(updatedHistory?.title)) {
       scheduleAsyncTitleGeneration({

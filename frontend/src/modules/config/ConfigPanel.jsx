@@ -5,6 +5,7 @@ function normalizeConfig(config) {
     model: config?.model ?? "",
     baseURL: config?.baseURL ?? "",
     apiKey: config?.apiKey ?? "",
+    tavilyApiKey: config?.tavilyApiKey ?? "",
     subagentModel: config?.subagentModel ?? "",
     subagentBaseURL: config?.subagentBaseURL ?? "",
     subagentApiKey: config?.subagentApiKey ?? "",
@@ -70,6 +71,8 @@ export function ConfigPanel({
       model: form.model.trim(),
       baseURL: form.baseURL.trim(),
       apiKey: form.apiKey.trim(),
+      webProvider: "tavily",
+      tavilyApiKey: form.tavilyApiKey.trim(),
       subagentModel: form.subagentModel.trim(),
       subagentBaseURL: form.subagentBaseURL.trim(),
       subagentApiKey: form.subagentApiKey.trim(),
@@ -168,6 +171,17 @@ export function ConfigPanel({
             value={form.apiKey}
             onChange={(e) => updateField("apiKey", e.target.value)}
             placeholder="sk-..."
+            disabled={loading || saving}
+          />
+        </label>
+
+        <label>
+          <span>Tavily API Key</span>
+          <input
+            type="password"
+            value={form.tavilyApiKey}
+            onChange={(e) => updateField("tavilyApiKey", e.target.value)}
+            placeholder="tvly-..."
             disabled={loading || saving}
           />
         </label>

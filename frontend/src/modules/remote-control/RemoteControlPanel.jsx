@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  clearRemoteControlRecords,
   fetchRemoteControlConfig,
   fetchRemoteControlRecords,
   saveRemoteControlConfig
@@ -360,6 +361,7 @@ export function RemoteControlPanel() {
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [clearingRecords, setClearingRecords] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
@@ -614,6 +616,33 @@ export function RemoteControlPanel() {
       await loadRecords();
     } catch (refreshError) {
       setError(String(refreshError?.message ?? "刷新失败"));
+    }
+  }
+
+  async function handleClearRecords() {
+    if (clearingRecords) {
+      return;
+    }
+
+    const confirmed = window.confirm("确认清空远程控制历史记录吗？此操作不可恢复。");
+    if (!confirmed) {
+      return;
+    }
+
+    setClearingRecords(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const result = await clearRemoteControlRecords();
+      const deletedMessages = Number(result?.deletedMessages ?? 0);
+      const deletedTurns = Number(result?.deletedTurns ?? 0);
+      await loadRecords();
+      setMessage(`已清空远程历史：${deletedMessages} 条消息，${deletedTurns} 个回合`);
+    } catch (clearError) {
+      setError(String(clearError?.message ?? "清空历史失败"));
+    } finally {
+      setClearingRecords(false);
     }
   }
 
@@ -960,9 +989,19 @@ export function RemoteControlPanel() {
             <h3>统一运行记录</h3>
             <p>跨 Provider 合并展示，按序号回放完整过程。</p>
           </div>
-          <button type="button" onClick={() => loadRecords({ append: true })} disabled={!nextCursor || loading}>
-            {nextCursor ? "加载更早记录" : "没有更多记录"}
-          </button>
+          <div className="rc-records-actions">
+            <button
+              type="button"
+              className="is-danger"
+              onClick={handleClearRecords}
+              disabled={loading || saving || clearingRecords || records.length === 0}
+            >
+              {clearingRecords ? "清空中..." : "清空历史记录"}
+            </button>
+            <button type="button" onClick={() => loadRecords({ append: true })} disabled={!nextCursor || loading}>
+              {nextCursor ? "加载更早记录" : "没有更多记录"}
+            </button>
+          </div>
         </header>
 
         <div className="rc-records">

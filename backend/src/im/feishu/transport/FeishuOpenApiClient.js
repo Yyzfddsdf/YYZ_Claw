@@ -1,7 +1,11 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 const DEFAULT_FEISHU_OPEN_API_BASE_URL = "https://open.feishu.cn/open-apis";
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_MAX_REPLY_CHARS = 3_000;
+const DEFAULT_UPLOAD_MIME_TYPE = "application/octet-stream";
 
 function trimTrailingSlash(input) {
   return String(input ?? "").trim().replace(/\/+$/, "");
@@ -101,6 +105,61 @@ function parseFilenameFromContentDisposition(value) {
   return plainMatch?.[1] ? plainMatch[1].trim() : "";
 }
 
+function normalizeFileSendTarget(target = {}) {
+  const normalized = target && typeof target === "object" && !Array.isArray(target) ? target : {};
+  const messageId = String(normalized.messageId ?? normalized.message_id ?? "").trim();
+  const chatId = String(normalized.chatId ?? normalized.chat_id ?? "").trim();
+  const userId = String(normalized.userId ?? normalized.user_id ?? "").trim();
+  return {
+    messageId,
+    chatId,
+    userId
+  };
+}
+
+function normalizeFileInput(file = {}) {
+  const normalized = file && typeof file === "object" && !Array.isArray(file) ? file : {};
+  const filePath = String(normalized.filePath ?? "").trim();
+  const fileName = String(normalized.fileName ?? "").trim();
+  const mimeType = String(normalized.mimeType ?? "").trim() || DEFAULT_UPLOAD_MIME_TYPE;
+  return {
+    filePath,
+    fileName,
+    mimeType
+  };
+}
+
+function normalizeTextInput(value) {
+  return String(value ?? "").trim();
+}
+
+function buildInteractiveContentFromText(text) {
+  const normalizedText = normalizeTextInput(text);
+  return {
+    config: {
+      wide_screen_mode: true
+    },
+    elements: [
+      {
+        tag: "markdown",
+        content: normalizedText || " "
+      }
+    ]
+  };
+}
+
+function isLikelyImageFile(file = {}) {
+  const mimeType = String(file?.mimeType ?? "").trim().toLowerCase();
+  if (mimeType.startsWith("image/")) {
+    return true;
+  }
+
+  const fileName = String(file?.fileName ?? "").trim();
+  const filePath = String(file?.filePath ?? "").trim();
+  const extension = path.extname(fileName || filePath).toLowerCase();
+  return [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif"].includes(extension);
+}
+
 export class FeishuOpenApiClient {
   constructor(options = {}) {
     this.configStore = options.configStore ?? null;
@@ -186,24 +245,368 @@ export class FeishuOpenApiClient {
     if (!normalizedText) {
       return;
     }
-
-    await this.requestJson(`/im/v1/messages/${encodeURIComponent(normalizedMessageId)}/reply`, {
-      method: "POST",
-      body: {
-        msg_type: "text",
-        content: JSON.stringify({ text: normalizedText })
-      }
+    await this.replyInteractive({
+      messageId: normalizedMessageId,
+      text: normalizedText
     });
   }
 
   async replyTextInChunks({ messageId, text }) {
     const chunks = splitTextForFeishu(text, this.maxReplyChars);
     for (const chunk of chunks) {
-      await this.replyText({
+      await this.replyInteractive({
         messageId,
         text: chunk
       });
     }
+  }
+
+  async replyFile({ messageId, fileKey }) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const normalizedFileKey = String(fileKey ?? "").trim();
+    if (!normalizedMessageId) {
+      throw buildApiError("messageId is required for replyFile");
+    }
+    if (!normalizedFileKey) {
+      throw buildApiError("fileKey is required for replyFile");
+    }
+
+    await this.requestJson(`/im/v1/messages/${encodeURIComponent(normalizedMessageId)}/reply`, {
+      method: "POST",
+      body: {
+        msg_type: "file",
+        content: JSON.stringify({ file_key: normalizedFileKey })
+      }
+    });
+  }
+
+  async replyImage({ messageId, imageKey }) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const normalizedImageKey = String(imageKey ?? "").trim();
+    if (!normalizedMessageId) {
+      throw buildApiError("messageId is required for replyImage");
+    }
+    if (!normalizedImageKey) {
+      throw buildApiError("imageKey is required for replyImage");
+    }
+
+    await this.requestJson(`/im/v1/messages/${encodeURIComponent(normalizedMessageId)}/reply`, {
+      method: "POST",
+      body: {
+        msg_type: "image",
+        content: JSON.stringify({ image_key: normalizedImageKey })
+      }
+    });
+  }
+
+  async replyInteractive({ messageId, text }) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const normalizedText = normalizeTextInput(text);
+    if (!normalizedMessageId) {
+      throw buildApiError("messageId is required for replyInteractive");
+    }
+    if (!normalizedText) {
+      return;
+    }
+
+    await this.requestJson(`/im/v1/messages/${encodeURIComponent(normalizedMessageId)}/reply`, {
+      method: "POST",
+      body: {
+        msg_type: "interactive",
+        content: JSON.stringify(buildInteractiveContentFromText(normalizedText))
+      }
+    });
+  }
+
+  async sendFileToChat({ chatId, fileKey }) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    const normalizedFileKey = String(fileKey ?? "").trim();
+    if (!normalizedChatId) {
+      throw buildApiError("chatId is required for sendFileToChat");
+    }
+    if (!normalizedFileKey) {
+      throw buildApiError("fileKey is required for sendFileToChat");
+    }
+
+    await this.requestJson("/im/v1/messages?receive_id_type=chat_id", {
+      method: "POST",
+      body: {
+        receive_id: normalizedChatId,
+        msg_type: "file",
+        content: JSON.stringify({ file_key: normalizedFileKey })
+      }
+    });
+  }
+
+  async sendImageToChat({ chatId, imageKey }) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    const normalizedImageKey = String(imageKey ?? "").trim();
+    if (!normalizedChatId) {
+      throw buildApiError("chatId is required for sendImageToChat");
+    }
+    if (!normalizedImageKey) {
+      throw buildApiError("imageKey is required for sendImageToChat");
+    }
+
+    await this.requestJson("/im/v1/messages?receive_id_type=chat_id", {
+      method: "POST",
+      body: {
+        receive_id: normalizedChatId,
+        msg_type: "image",
+        content: JSON.stringify({ image_key: normalizedImageKey })
+      }
+    });
+  }
+
+  async sendTextToChat({ chatId, text }) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    const normalizedText = normalizeTextInput(text);
+    if (!normalizedChatId) {
+      throw buildApiError("chatId is required for sendTextToChat");
+    }
+    if (!normalizedText) {
+      return;
+    }
+
+    await this.requestJson("/im/v1/messages?receive_id_type=chat_id", {
+      method: "POST",
+      body: {
+        receive_id: normalizedChatId,
+        msg_type: "text",
+        content: JSON.stringify({ text: normalizedText })
+      }
+    });
+  }
+
+  async sendInteractiveToChat({ chatId, text }) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    const normalizedText = normalizeTextInput(text);
+    if (!normalizedChatId) {
+      throw buildApiError("chatId is required for sendInteractiveToChat");
+    }
+    if (!normalizedText) {
+      return;
+    }
+
+    await this.requestJson("/im/v1/messages?receive_id_type=chat_id", {
+      method: "POST",
+      body: {
+        receive_id: normalizedChatId,
+        msg_type: "interactive",
+        content: JSON.stringify(buildInteractiveContentFromText(normalizedText))
+      }
+    });
+  }
+
+  async uploadFile({ filePath, fileName, mimeType }) {
+    const normalizedPath = String(filePath ?? "").trim();
+    if (!normalizedPath) {
+      throw buildApiError("filePath is required for uploadFile");
+    }
+
+    const resolvedPath = path.resolve(normalizedPath);
+    const stats = await fs.stat(resolvedPath);
+    if (!stats.isFile()) {
+      throw buildApiError("uploadFile requires a valid file path");
+    }
+
+    const payloadBuffer = await fs.readFile(resolvedPath);
+    if (!payloadBuffer || payloadBuffer.length <= 0) {
+      throw buildApiError("uploadFile source is empty");
+    }
+
+    const normalizedFileName = String(fileName ?? "").trim() || path.basename(resolvedPath);
+    const normalizedMimeType = String(mimeType ?? "").trim() || DEFAULT_UPLOAD_MIME_TYPE;
+    const form = new FormData();
+    form.append("file_type", "stream");
+    form.append("file_name", normalizedFileName);
+    form.append("file", new Blob([payloadBuffer], { type: normalizedMimeType }), normalizedFileName);
+
+    const payload = await this.requestJson("/im/v1/files", {
+      method: "POST",
+      body: form
+    });
+
+    const fileKey = String(payload?.data?.file_key ?? "").trim();
+    if (!fileKey) {
+      throw buildApiError("飞书文件上传成功但未返回 file_key");
+    }
+
+    return {
+      fileKey,
+      fileName: normalizedFileName,
+      size: Number(payloadBuffer.length),
+      mimeType: normalizedMimeType
+    };
+  }
+
+  async uploadImage({ filePath, fileName, mimeType }) {
+    const normalizedPath = String(filePath ?? "").trim();
+    if (!normalizedPath) {
+      throw buildApiError("filePath is required for uploadImage");
+    }
+
+    const resolvedPath = path.resolve(normalizedPath);
+    const stats = await fs.stat(resolvedPath);
+    if (!stats.isFile()) {
+      throw buildApiError("uploadImage requires a valid file path");
+    }
+
+    const payloadBuffer = await fs.readFile(resolvedPath);
+    if (!payloadBuffer || payloadBuffer.length <= 0) {
+      throw buildApiError("uploadImage source is empty");
+    }
+
+    const normalizedFileName = String(fileName ?? "").trim() || path.basename(resolvedPath);
+    const normalizedMimeType = String(mimeType ?? "").trim() || "image/png";
+    const form = new FormData();
+    form.append("image_type", "message");
+    form.append("image", new Blob([payloadBuffer], { type: normalizedMimeType }), normalizedFileName);
+
+    const payload = await this.requestJson("/im/v1/images", {
+      method: "POST",
+      body: form
+    });
+
+    const imageKey = String(payload?.data?.image_key ?? "").trim();
+    if (!imageKey) {
+      throw buildApiError("飞书图片上传成功但未返回 image_key");
+    }
+
+    return {
+      imageKey,
+      fileName: normalizedFileName,
+      size: Number(payloadBuffer.length),
+      mimeType: normalizedMimeType
+    };
+  }
+
+  async sendFile({ target, file, caption = "" }) {
+    const normalizedTarget = normalizeFileSendTarget(target);
+    if (!normalizedTarget.messageId && !normalizedTarget.chatId && !normalizedTarget.userId) {
+      throw buildApiError("sendFile requires target.messageId/chatId/userId");
+    }
+
+    if (normalizedTarget.userId && !normalizedTarget.chatId && !normalizedTarget.messageId) {
+      throw buildApiError("当前飞书 sendFile 仅支持 messageId 或 chatId 目标");
+    }
+
+    const normalizedFile = normalizeFileInput(file);
+    if (!normalizedFile.filePath) {
+      throw buildApiError("sendFile requires file.filePath");
+    }
+
+    const sendAsImage = isLikelyImageFile(normalizedFile);
+    let uploadResult = null;
+    if (sendAsImage) {
+      uploadResult = await this.uploadImage(normalizedFile);
+      if (normalizedTarget.messageId) {
+        await this.replyImage({
+          messageId: normalizedTarget.messageId,
+          imageKey: uploadResult.imageKey
+        });
+      } else if (normalizedTarget.chatId) {
+        await this.sendImageToChat({
+          chatId: normalizedTarget.chatId,
+          imageKey: uploadResult.imageKey
+        });
+      }
+    } else {
+      uploadResult = await this.uploadFile(normalizedFile);
+      if (normalizedTarget.messageId) {
+        await this.replyFile({
+          messageId: normalizedTarget.messageId,
+          fileKey: uploadResult.fileKey
+        });
+      } else if (normalizedTarget.chatId) {
+        await this.sendFileToChat({
+          chatId: normalizedTarget.chatId,
+          fileKey: uploadResult.fileKey
+        });
+      }
+    }
+
+    const normalizedCaption = String(caption ?? "").trim();
+    if (normalizedCaption) {
+      await this.sendText({
+        target: normalizedTarget,
+        text: normalizedCaption
+      });
+    }
+
+    return {
+      ok: true,
+      target: normalizedTarget,
+      msgType: sendAsImage ? "image" : "file",
+      file: sendAsImage
+        ? {
+            fileName: uploadResult.fileName,
+            mimeType: uploadResult.mimeType,
+            size: uploadResult.size,
+            imageKey: uploadResult.imageKey
+          }
+        : {
+            fileName: uploadResult.fileName,
+            mimeType: uploadResult.mimeType,
+            size: uploadResult.size,
+            fileKey: uploadResult.fileKey
+          }
+    };
+  }
+
+  async sendText({ target, text }) {
+    const normalizedTarget = normalizeFileSendTarget(target);
+    const normalizedText = normalizeTextInput(text);
+    if (!normalizedTarget.messageId && !normalizedTarget.chatId && !normalizedTarget.userId) {
+      throw buildApiError("sendText requires target.messageId/chatId/userId");
+    }
+    if (!normalizedText) {
+      return {
+        ok: true,
+        target: normalizedTarget
+      };
+    }
+
+    if (normalizedTarget.userId && !normalizedTarget.chatId && !normalizedTarget.messageId) {
+      throw buildApiError("当前飞书 sendText 仅支持 messageId 或 chatId 目标");
+    }
+
+    if (normalizedTarget.messageId) {
+      await this.replyInteractive({
+        messageId: normalizedTarget.messageId,
+        text: normalizedText
+      });
+    } else if (normalizedTarget.chatId) {
+      await this.sendInteractiveToChat({
+        chatId: normalizedTarget.chatId,
+        text: normalizedText
+      });
+    }
+
+    return {
+      ok: true,
+      target: normalizedTarget,
+      msgType: "interactive"
+    };
+  }
+
+  async sendMessage({ target, file, text }) {
+    const normalizedText = normalizeTextInput(text);
+    const hasFile =
+      file && typeof file === "object" && !Array.isArray(file) && String(file.filePath ?? "").trim();
+
+    if (hasFile) {
+      return this.sendFile({
+        target,
+        file,
+        caption: normalizedText
+      });
+    }
+
+    return this.sendText({
+      target,
+      text: normalizedText
+    });
   }
 
   async downloadMessageResource({ messageId, fileKey, type }) {
@@ -281,11 +684,16 @@ export class FeishuOpenApiClient {
     const skipAuth = Boolean(options.skipAuth);
 
     const headers = {
-      "Content-Type": "application/json; charset=utf-8",
       ...(options.headers && typeof options.headers === "object" && !Array.isArray(options.headers)
         ? options.headers
         : {})
     };
+
+    const isFormBody =
+      typeof FormData !== "undefined" && options.body instanceof FormData;
+    if (!isFormBody) {
+      headers["Content-Type"] = "application/json; charset=utf-8";
+    }
 
     if (!skipAuth) {
       const token = await this.getTenantAccessToken();
@@ -301,6 +709,8 @@ export class FeishuOpenApiClient {
         body:
           options.body === undefined
             ? undefined
+            : isFormBody
+              ? options.body
             : typeof options.body === "string"
               ? options.body
               : JSON.stringify(options.body),

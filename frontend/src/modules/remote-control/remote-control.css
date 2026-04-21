@@ -595,6 +595,23 @@
   gap: 0.75rem;
 }
 
+.rc-records-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rc-records-head button.is-danger {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.rc-records-head button.is-danger:hover:not(:disabled) {
+  border-color: #fda4af;
+  background: #ffe4e6;
+}
+
 .rc-records {
   margin-top: 0.9rem;
   display: flex;

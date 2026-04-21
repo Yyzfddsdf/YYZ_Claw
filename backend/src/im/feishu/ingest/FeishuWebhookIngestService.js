@@ -91,6 +91,32 @@ function extractPostText(contentPayload) {
   return lines.join("\n").trim();
 }
 
+function normalizeInteractiveElementText(element) {
+  const payload = normalizeObject(element);
+  const textObject = normalizeObject(payload.text);
+  const directContent = String(payload.content ?? "").trim();
+  const nestedContent = String(textObject.content ?? "").trim();
+  return directContent || nestedContent;
+}
+
+function extractInteractiveText(contentPayload) {
+  const payload = normalizeObject(contentPayload);
+  const rawCard = payload.card;
+  const cardPayload =
+    typeof rawCard === "string"
+      ? normalizeObject(safeJsonParse(rawCard, {}))
+      : normalizeObject(rawCard);
+  const elements = Array.isArray(cardPayload.elements) ? cardPayload.elements : [];
+  const lines = [];
+  for (const element of elements) {
+    const text = normalizeInteractiveElementText(element);
+    if (text) {
+      lines.push(text);
+    }
+  }
+  return lines.join("\n").trim();
+}
+
 function buildSessionKey(message, sender) {
   const chatId = String(message?.chat_id ?? "").trim();
   const senderId =
@@ -121,6 +147,13 @@ function buildMessageText(messageType, rawContent, contentPayload) {
     const postText = extractPostText(contentPayload);
     if (postText) {
       return postText;
+    }
+  }
+
+  if (messageType === "interactive") {
+    const interactiveText = extractInteractiveText(contentPayload);
+    if (interactiveText) {
+      return interactiveText;
     }
   }
 

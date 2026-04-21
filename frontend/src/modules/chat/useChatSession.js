@@ -47,6 +47,11 @@ function clipText(text, maxLength) {
 
 const LOCAL_QUEUE_STATE_KEY = "localQueueState";
 const LEGACY_RETRY_NOTICE_PATTERN = /^请求重试：第\s*\d+\s*次，等待\s*\d+\s*ms$/;
+const EMPTY_COMPRESSION_STATE = Object.freeze({
+  inProgress: false,
+  trigger: "",
+  conversationId: ""
+});
 
 function normalizeToolCalls(toolCalls) {
   return Array.isArray(toolCalls)
@@ -892,11 +897,8 @@ export function useChatSession(maxContextWindow = 0) {
   const [skillCatalog, setSkillCatalog] = useState([]);
   const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
   const [tokenUsageRecords, setTokenUsageRecords] = useState([]);
-  const [compressionState, setCompressionState] = useState({
-    inProgress: false,
-    trigger: "",
-    conversationId: ""
-  });
+  const [compressionState, setCompressionState] = useState(EMPTY_COMPRESSION_STATE);
+  const compressionStateRef = useRef(EMPTY_COMPRESSION_STATE);
 
   const abortRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -1068,9 +1070,7 @@ export function useChatSession(maxContextWindow = 0) {
     if (activeAgentRunConversationIdsRef.current.has(normalizedConversationId)) {
       return true;
     }
-
-    const activeSummary = conversationList.find((item) => item.id === normalizedConversationId);
-    return Boolean(activeSummary?.agentBusy);
+    return false;
   }, [activeConversationId, conversationList]);
 
   const activeConversationHasForegroundStream = useMemo(() => {
@@ -1118,7 +1118,7 @@ export function useChatSession(maxContextWindow = 0) {
           }
 
           selectedSkillsRef.current = [];
-          setCompressionState({ inProgress: false, trigger: "", conversationId: "" });
+          updateCompressionState(EMPTY_COMPRESSION_STATE);
           setConversationList([]);
           setActiveConversationId(draftConversationId);
           lastPersistedSignatureRef.current = "";
@@ -1135,8 +1135,8 @@ export function useChatSession(maxContextWindow = 0) {
           return;
         }
 
-        const firstId = histories[0].id;
-        const detailResponse = await fetchHistoryById(firstId);
+        const initialConversationId = histories[0].id;
+        const detailResponse = await fetchHistoryById(initialConversationId);
 
         if (!mounted) {
           return;
@@ -1147,7 +1147,7 @@ export function useChatSession(maxContextWindow = 0) {
           ? loadedHistory.messages
           : [];
         const normalizedLoadedMessages = normalizeLoadedMessages(loadedMessages);
-        const replayedCachedMessages = readConversationMessages(firstId);
+        const replayedCachedMessages = readConversationMessages(initialConversationId);
         const initialMessagesForView = mergePersistedAndReplayMessages(
           normalizedLoadedMessages,
           replayedCachedMessages
@@ -1156,18 +1156,34 @@ export function useChatSession(maxContextWindow = 0) {
         const loadedSummary = toSummary(loadedHistory);
         const nextConversationList = upsertSummary(histories, loadedSummary);
         selectedSkillsRef.current = [
-          ...resolveConversationSkills(firstId, nextConversationList, null)
+          ...resolveConversationSkills(initialConversationId, nextConversationList, null)
         ];
         setConversationList(nextConversationList);
         setDraftConversation(null);
-        setActiveConversationId(firstId);
-        setCompressionState({ inProgress: false, trigger: "", conversationId: "" });
+        setActiveConversationId(initialConversationId);
+        updateCompressionState((prev) => {
+          const normalizedConversationId = String(prev?.conversationId ?? "").trim();
+          if (!prev?.inProgress || !normalizedConversationId) {
+            return EMPTY_COMPRESSION_STATE;
+          }
+
+          const hasConversation = nextConversationList.some(
+            (item) => String(item?.id ?? "").trim() === normalizedConversationId
+          );
+          return hasConversation
+            ? {
+                inProgress: true,
+                trigger: String(prev?.trigger ?? "auto").trim() || "auto",
+                conversationId: normalizedConversationId
+              }
+            : EMPTY_COMPRESSION_STATE;
+        });
         lastPersistedSignatureRef.current = "";
         const loadedTokenUsageRecords = Array.isArray(loadedHistory?.tokenUsageRecords)
           ? loadedHistory.tokenUsageRecords.map(normalizeTokenUsageRecord)
           : [];
 
-        writeConversationMessages(firstId, initialMessagesForView);
+        writeConversationMessages(initialConversationId, initialMessagesForView);
         setMessages(initialMessagesForView);
         setTokenUsageRecords(loadedTokenUsageRecords);
         setPendingApprovalValue(null, { clearAll: true });
@@ -1210,7 +1226,9 @@ export function useChatSession(maxContextWindow = 0) {
       };
       streamStateMap.set(normalizedConversationId, streamState);
 
-      const handled = applyAgentEvent(nextEvent, streamState, normalizedConversationId);
+      const handled = applyAgentEvent(nextEvent, streamState, normalizedConversationId, {
+        source: "external"
+      });
       if (handled && String(nextEvent?.type ?? "").trim() === "session_end") {
         streamStateMap.delete(normalizedConversationId);
       }
@@ -1440,7 +1458,7 @@ export function useChatSession(maxContextWindow = 0) {
 
   function clearCompressionStateForConversation(conversationId) {
     const normalizedConversationId = String(conversationId ?? "").trim();
-    setCompressionState((prev) => {
+    updateCompressionState((prev) => {
       if (String(prev?.conversationId ?? "").trim() !== normalizedConversationId) {
         return prev;
       }
@@ -1453,6 +1471,25 @@ export function useChatSession(maxContextWindow = 0) {
     });
   }
 
+  function updateCompressionState(nextValueOrUpdater) {
+    const previousValue = compressionStateRef.current ?? EMPTY_COMPRESSION_STATE;
+    const resolvedValue =
+      typeof nextValueOrUpdater === "function"
+        ? nextValueOrUpdater(previousValue)
+        : nextValueOrUpdater;
+    const normalizedValue =
+      resolvedValue && typeof resolvedValue === "object" && !Array.isArray(resolvedValue)
+        ? {
+            inProgress: Boolean(resolvedValue.inProgress),
+            trigger: String(resolvedValue.trigger ?? "").trim(),
+            conversationId: String(resolvedValue.conversationId ?? "").trim()
+          }
+        : EMPTY_COMPRESSION_STATE;
+    compressionStateRef.current = normalizedValue;
+    setCompressionState(normalizedValue);
+    return normalizedValue;
+  }
+
   function markConversationRunEndedLocally(conversationId, nextStatus = "idle") {
     const normalizedConversationId = String(conversationId ?? "").trim();
     if (!normalizedConversationId) {
@@ -1461,7 +1498,6 @@ export function useChatSession(maxContextWindow = 0) {
 
     activeAgentRunConversationIdsRef.current.delete(normalizedConversationId);
     externalStreamStatesRef.current.delete(normalizedConversationId);
-    clearCompressionStateForConversation(normalizedConversationId);
     setConversationList((prev) =>
       prev.map((item) =>
         item.id === normalizedConversationId
@@ -1520,9 +1556,10 @@ export function useChatSession(maxContextWindow = 0) {
       return false;
     }
 
+    const currentCompressionState = compressionStateRef.current ?? compressionState;
     return (
-      Boolean(compressionState?.inProgress) &&
-      String(compressionState?.conversationId ?? "").trim() === normalizedConversationId
+      Boolean(currentCompressionState?.inProgress) &&
+      String(currentCompressionState?.conversationId ?? "").trim() === normalizedConversationId
     );
   }
 
@@ -2273,12 +2310,12 @@ export function useChatSession(maxContextWindow = 0) {
       return null;
     }
 
-    setCompressionState((prev) => ({
-      ...prev,
+    const nextCompressionState = {
       inProgress: true,
       trigger: normalizedTrigger,
       conversationId: targetConversationId
-    }));
+    };
+    updateCompressionState(nextCompressionState);
     setError("");
 
     try {
@@ -2304,7 +2341,7 @@ export function useChatSession(maxContextWindow = 0) {
           developerPrompt: normalizeDeveloperPrompt(history.developerPrompt ?? "")
         });
       }
-      setCompressionState({
+      updateCompressionState({
         inProgress: false,
         trigger: "",
         conversationId: ""
@@ -2326,7 +2363,7 @@ export function useChatSession(maxContextWindow = 0) {
       }
       return response;
     } catch (compressionError) {
-      setCompressionState((prev) => ({
+      updateCompressionState((prev) => ({
         ...prev,
         inProgress: false,
         trigger: "",
@@ -2345,12 +2382,14 @@ export function useChatSession(maxContextWindow = 0) {
     }
   }
 
-  function applyAgentEvent(event, streamState, targetConversationId) {
+  function applyAgentEvent(event, streamState, targetConversationId, options = {}) {
     if (!shouldProcessAgentEvent(event)) {
       return true;
     }
 
     const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
+    const source = String(options?.source ?? "direct").trim().toLowerCase();
+
     const isActiveTarget = normalizedTargetConversationId === activeConversationIdRef.current;
     const updateTargetMessages = (updater) =>
       updateConversationMessages(normalizedTargetConversationId, updater);
@@ -2455,6 +2494,23 @@ export function useChatSession(maxContextWindow = 0) {
         return currentAssistantId;
       }
 
+      const cachedMessages = readConversationMessages(normalizedTargetConversationId);
+      const lastMessage =
+        Array.isArray(cachedMessages) && cachedMessages.length > 0
+          ? normalizeChatMessage(cachedMessages[cachedMessages.length - 1])
+          : null;
+      if (
+        lastMessage &&
+        String(lastMessage.role ?? "").trim() === "assistant" &&
+        Array.isArray(lastMessage.toolCalls) &&
+        lastMessage.toolCalls.length === 0 &&
+        String(lastMessage.id ?? "").trim()
+      ) {
+        const reusableAssistantId = String(lastMessage.id).trim();
+        streamState.activeAssistantMessageId = reusableAssistantId;
+        return reusableAssistantId;
+      }
+
       const nextAssistantId = createId("assistant");
       streamState.activeAssistantMessageId = nextAssistantId;
       updateTargetMessages((prev) => [
@@ -2533,12 +2589,12 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (event?.type === "compression_started") {
-      setCompressionState((prev) => ({
-        ...prev,
+      const nextCompressionState = {
         inProgress: true,
         trigger: String(event?.trigger ?? "auto").trim() || "auto",
         conversationId: normalizedTargetConversationId
-      }));
+      };
+      updateCompressionState(nextCompressionState);
       return true;
     }
 
@@ -3407,7 +3463,9 @@ export function useChatSession(maxContextWindow = 0) {
             enableDeepThinking: currentPlan.enableDeepThinking,
             signal: controller.signal,
             onAgentEvent: (event) => {
-              applyAgentEvent(event, streamState, currentPlan.conversationId);
+              applyAgentEvent(event, streamState, currentPlan.conversationId, {
+                source: "foreground"
+              });
             }
           });
         } catch (streamError) {
@@ -3515,18 +3573,7 @@ export function useChatSession(maxContextWindow = 0) {
         }
       ]);
       setError("");
-
-      if (
-        !streamLoopActiveRef.current &&
-        !isStreaming &&
-        !activeAgentRunConversationIdsRef.current.has(targetConversationId)
-      ) {
-        const initialQueued = queuedUserMessagesRef.current[0];
-        const initialPlan = initialQueued ? buildQueuedRunPlan(initialQueued.messageId) : null;
-        if (initialPlan) {
-          await runConversationStreamLoop(initialPlan);
-        }
-      }
+      maybeStartQueuedRunForConversation(targetConversationId);
 
       return;
     }
@@ -3604,7 +3651,9 @@ export function useChatSession(maxContextWindow = 0) {
 
     try {
       await confirmToolApprovalById(approvalId, controller.signal, (event) => {
-        applyAgentEvent(event, streamState, targetConversationId);
+        applyAgentEvent(event, streamState, targetConversationId, {
+          source: "foreground"
+        });
       });
     } catch (approvalError) {
       if (approvalError?.name !== "AbortError") {
@@ -3668,6 +3717,17 @@ export function useChatSession(maxContextWindow = 0) {
     setRetryNotice("");
     const targetConversationId = String(activeConversationIdRef.current ?? "").trim();
     const activeAbortController = abortRef.current;
+    const localRunLikelyActive =
+      Boolean(activeAbortController) ||
+      Boolean(streamLoopActiveRef.current) ||
+      Boolean(hasPendingApprovalValue(targetConversationId)) ||
+      Boolean(
+        targetConversationId &&
+        (
+          activeAgentRunConversationIdsRef.current.has(targetConversationId) ||
+          String(streamingConversationIdRef.current ?? "").trim() === targetConversationId
+        )
+      );
     let shouldFinalizeLocally = false;
 
     if (activeAbortController) {
@@ -3686,11 +3746,13 @@ export function useChatSession(maxContextWindow = 0) {
         Boolean(stopResult?.success) ||
         Boolean(stopResult?.stopped === false);
     } catch {
-      // Ignore stop request failures; local abort may have already ended the run.
+      shouldFinalizeLocally = shouldFinalizeLocally || localRunLikelyActive;
     }
 
-    if (shouldFinalizeLocally) {
+    if (shouldFinalizeLocally || localRunLikelyActive) {
       abortRef.current = null;
+      setPendingApprovalValue(null, { conversationId: targetConversationId });
+      clearConversationRuntimeReplyError(targetConversationId);
       markConversationRunEndedLocally(targetConversationId, "aborted");
     }
   }

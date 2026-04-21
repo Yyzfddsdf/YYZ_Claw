@@ -564,6 +564,67 @@ function emitRunEvent(run, payload, conversationRunCoordinator, res) {
   }
 }
 
+function beginManualCompressionReplayRun({
+  conversationId,
+  conversationRunCoordinator
+}) {
+  if (
+    !conversationRunCoordinator ||
+    typeof conversationRunCoordinator.beginRun !== "function"
+  ) {
+    return {
+      run: null,
+      ownsRun: false,
+      detachBroadcast: () => {}
+    };
+  }
+
+  const normalizedConversationId = String(conversationId ?? "").trim();
+  if (!normalizedConversationId) {
+    return {
+      run: null,
+      ownsRun: false,
+      detachBroadcast: () => {}
+    };
+  }
+
+  const existingRun =
+    conversationRunCoordinator.getRunByConversationId?.(normalizedConversationId) ?? null;
+  if (existingRun) {
+    return {
+      run: existingRun,
+      ownsRun: false,
+      detachBroadcast: () => {}
+    };
+  }
+
+  const manualRun = conversationRunCoordinator.beginRun({
+    sessionId: normalizedConversationId,
+    agentId: "manual_compression",
+    conversationId: normalizedConversationId,
+    mode: "background",
+    status: "running"
+  });
+  const detachBroadcast =
+    conversationRunCoordinator.attachConversationBroadcast?.(manualRun, {
+      listenerId: `manual_compression_broadcast_${normalizedConversationId}`
+    }) ?? (() => {});
+
+  return {
+    run: manualRun,
+    ownsRun: true,
+    detachBroadcast
+  };
+}
+
+function isManualCompressionRun(run) {
+  if (!run || typeof run !== "object") {
+    return false;
+  }
+
+  return String(run.agentId ?? "").trim() === "manual_compression";
+}
+
 export function createChatController({
   chatAgent,
   toolRegistry,
@@ -914,12 +975,48 @@ export function createChatController({
       }
 
       const latestTokenUsage = existing?.tokenUsage ?? null;
-      const compressionResult = await compressionService.compressConversation({
-        messages: validation.data.messages,
-        runtimeConfig: configValidation.data,
-        latestTokenUsage,
-        trigger: validation.data.trigger
+      const manualReplayRunContext = beginManualCompressionReplayRun({
+        conversationId,
+        conversationRunCoordinator
       });
+      let compressionResult = null;
+
+      if (manualReplayRunContext.run) {
+        conversationRunCoordinator.emitEvent?.(manualReplayRunContext.run, {
+          type: "compression_started",
+          trigger: validation.data.trigger
+        });
+      }
+
+      try {
+        compressionResult = await compressionService.compressConversation({
+          messages: validation.data.messages,
+          runtimeConfig: configValidation.data,
+          latestTokenUsage,
+          trigger: validation.data.trigger
+        });
+      } catch (error) {
+        if (manualReplayRunContext.run) {
+          conversationRunCoordinator.emitEvent?.(manualReplayRunContext.run, {
+            type: "compression_completed",
+            trigger: validation.data.trigger,
+            compression: {
+              compressed: false,
+              reason: String(error?.message || "manual_compression_failed"),
+              usageRatio: 0,
+              estimatedTokensBefore: 0,
+              estimatedTokensAfter: 0
+            }
+          });
+        }
+        manualReplayRunContext.detachBroadcast?.();
+        if (manualReplayRunContext.ownsRun && manualReplayRunContext.run) {
+          conversationRunCoordinator.finishRun?.(manualReplayRunContext.run, {
+            status: "error"
+          });
+        }
+        throw error;
+      }
 
       const nextMessages = Array.isArray(compressionResult?.messages)
         ? compressionResult.messages
@@ -954,8 +1051,31 @@ export function createChatController({
         conversationId
       });
 
+      const enrichedHistory = enrichHistoryDetail(history, orchestratorStore, historyStore);
+      if (manualReplayRunContext.run) {
+        conversationRunCoordinator.emitEvent?.(manualReplayRunContext.run, {
+          type: "compression_completed",
+          trigger: validation.data.trigger,
+          history: enrichedHistory,
+          compression: {
+            compressed: Boolean(compressionResult?.compressed),
+            reason: String(compressionResult?.reason ?? ""),
+            usageRatio: Number(compressionResult?.usageRatio ?? 0),
+            estimatedTokensBefore: Number(compressionResult?.estimatedTokensBefore ?? 0),
+            estimatedTokensAfter: Number(compressionResult?.estimatedTokensAfter ?? 0)
+          }
+        });
+      }
+
+      manualReplayRunContext.detachBroadcast?.();
+      if (manualReplayRunContext.ownsRun && manualReplayRunContext.run) {
+        conversationRunCoordinator.finishRun?.(manualReplayRunContext.run, {
+          status: "idle"
+        });
+      }
+
       res.json({
-        history: enrichHistoryDetail(history, orchestratorStore, historyStore),
+        history: enrichedHistory,
         compression: {
           compressed: Boolean(compressionResult?.compressed),
           reason: String(compressionResult?.reason ?? ""),
@@ -1576,6 +1696,19 @@ export function createChatController({
       if (!chatValidation.success) {
         throw createValidationError(formatZodError(chatValidation.error));
       }
+      const streamConversationId = String(chatValidation.data.conversationId ?? "").trim();
+      if (!streamConversationId) {
+        throw createValidationError("conversationId is required");
+      }
+      const activeConversationRun =
+        conversationRunCoordinator?.getRunByConversationId?.(streamConversationId) ?? null;
+      if (isManualCompressionRun(activeConversationRun)) {
+        const compressionInProgressError = createValidationError(
+          "conversation compression is in progress; queue message and retry after compression completes"
+        );
+        compressionInProgressError.statusCode = 409;
+        throw compressionInProgressError;
+      }
 
       const configValidation = configSchema.safeParse(await configStore.read());
       if (!configValidation.success) {
@@ -1600,11 +1733,8 @@ export function createChatController({
           await toolRegistry.refresh();
         }
 
-        const conversationId = String(chatValidation.data.conversationId ?? "").trim();
+        const conversationId = streamConversationId;
         currentConversationId = conversationId;
-        if (!conversationId) {
-          throw createValidationError("conversationId is required");
-        }
 
         let existingConversation = historyStore.getConversation(conversationId);
         const firstUserMessage = chatValidation.data.messages.find(

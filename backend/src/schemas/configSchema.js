@@ -14,6 +14,8 @@ export const configSchema = z.object({
   model: z.string().trim().min(1, "model is required"),
   baseURL: z.string().trim().url("baseURL must be a valid URL"),
   apiKey: z.string().trim().min(1, "apiKey is required"),
+  webProvider: z.string().trim().optional(),
+  tavilyApiKey: z.string().trim().optional(),
   subagentModel: z.string().trim().optional(),
   subagentBaseURL: createOptionalUrlWithBlankSchema("subagentBaseURL"),
   subagentApiKey: z.string().trim().optional(),

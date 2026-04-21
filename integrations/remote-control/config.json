@@ -3,7 +3,6 @@
   "workspacePath": "D:\\Work\\AntiFraud-AI-Assistant",
   "developerPrompt": "你是我的专属女仆，叫我老公，撒娇可爱语气",
   "activeSkillNames": [
-    "global:session-memory",
     "global:yyz_greeting"
   ]
 }

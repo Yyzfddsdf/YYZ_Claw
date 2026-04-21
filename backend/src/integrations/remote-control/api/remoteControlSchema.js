@@ -66,6 +66,14 @@ export const remoteControlRecordsQuerySchema = z
         : null
   }));
 
+export const remoteControlClearRecordsQuerySchema = z
+  .object({
+    providerKey: z.string().trim().optional().default("")
+  })
+  .transform((payload) => ({
+    providerKey: normalizeProviderKey(payload.providerKey)
+  }));
+
 const remoteAttachmentSchema = z.object({
   id: z.string().trim().optional(),
   name: z.string().trim().optional(),

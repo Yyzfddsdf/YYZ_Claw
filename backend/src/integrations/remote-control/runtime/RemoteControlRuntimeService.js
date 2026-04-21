@@ -57,6 +57,60 @@ function normalizeMessageMeta(meta) {
   };
 }
 
+function normalizeRecorderMessageForStorage(message = {}, platformKey = "remote") {
+  const role = String(message.role ?? "assistant").trim() || "assistant";
+  return {
+    id:
+      String(message.id ?? `${platformKey}_generated_${randomUUID()}`).trim() ||
+      `${platformKey}_generated_${randomUUID()}`,
+    role,
+    source:
+      String(message.source ?? "").trim()
+      || (
+        role === "assistant"
+          ? "assistant"
+          : role === "tool"
+            ? "tool"
+            : role === "user"
+              ? "user"
+              : "system"
+      ),
+    providerKey: platformKey,
+    content: String(message.content ?? ""),
+    reasoningContent: String(message.reasoningContent ?? ""),
+    toolCallId: String(message.toolCallId ?? "").trim(),
+    toolName: String(message.toolName ?? "").trim(),
+    toolCalls: normalizeToolCalls(message.toolCalls),
+    timestamp: Number(message.timestamp ?? Date.now()),
+    meta: normalizeMessageMeta(message.meta)
+  };
+}
+
+function buildStorageMessageSignature(message = {}) {
+  return JSON.stringify({
+    content: String(message.content ?? ""),
+    reasoningContent: String(message.reasoningContent ?? ""),
+    toolCallId: String(message.toolCallId ?? "").trim(),
+    toolName: String(message.toolName ?? "").trim(),
+    toolCalls: normalizeToolCalls(message.toolCalls),
+    meta: normalizeMessageMeta(message.meta),
+    timestamp: Number(message.timestamp ?? 0)
+  });
+}
+
+function shouldSyncRecorderOnEvent(event = {}) {
+  const type = String(event?.type ?? "").trim();
+  return (
+    type === "assistant_message_end"
+    || type === "tool_call"
+    || type === "tool_result"
+    || type === "tool_pending_approval"
+    || type === "tool_image_input"
+    || type === "runtime_hook_injected"
+    || type === "usage"
+  );
+}
+
 function normalizeAttachment(attachment = {}, index = 0) {
   if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
     return null;
@@ -114,6 +168,25 @@ function normalizeReplyTarget(value) {
   return {
     messageId,
     chatId
+  };
+}
+
+function normalizeFileDeliveryTarget(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const messageId = String(value.messageId ?? value.message_id ?? "").trim();
+  const chatId = String(value.chatId ?? value.chat_id ?? "").trim();
+  const userId = String(value.userId ?? value.user_id ?? "").trim();
+  if (!messageId && !chatId && !userId) {
+    return null;
+  }
+
+  return {
+    messageId,
+    chatId,
+    userId
   };
 }
 
@@ -258,8 +331,9 @@ function resolveReplyTargetFromBatch(batch = []) {
   return null;
 }
 
-function pickFinalAssistantReplyText(messages = [], fallbackText = "") {
+function collectAssistantReplyTexts(messages = [], fallbackText = "") {
   const normalizedMessages = Array.isArray(messages) ? messages : [];
+  const texts = [];
   for (let index = normalizedMessages.length - 1; index >= 0; index -= 1) {
     const item = normalizedMessages[index];
     if (String(item?.role ?? "").trim() !== "assistant") {
@@ -271,11 +345,16 @@ function pickFinalAssistantReplyText(messages = [], fallbackText = "") {
       continue;
     }
 
-    return content;
+    texts.push(content);
   }
 
-  const fallback = String(fallbackText ?? "").trim();
-  return fallback || "已处理完成。";
+  const ordered = texts.reverse();
+  if (ordered.length > 0) {
+    return ordered;
+  }
+
+  const fallback = String(fallbackText ?? "").trim() || "已处理完成。";
+  return [fallback];
 }
 
 export class RemoteControlRuntimeService {
@@ -313,6 +392,8 @@ export class RemoteControlRuntimeService {
     this.activeTurnId = 0;
     this.lastRunError = "";
     this.lastRunAt = 0;
+    this.pendingReplyDeliveryTurnId = 0;
+    this.pendingReplyDeliveryPromise = Promise.resolve();
 
     const runtimeBlockRegistry = new RuntimeBlockRegistry();
     runtimeBlockRegistry.register(longTermMemoryRecallProvider);
@@ -473,6 +554,30 @@ export class RemoteControlRuntimeService {
 
     const batch = Array.isArray(options.batch) ? options.batch : [];
     const replyTarget = resolveReplyTargetFromBatch(batch);
+    let realtimeReplyCount = 0;
+
+    this.pendingReplyDeliveryTurnId = resolvedTurnId;
+    this.pendingReplyDeliveryPromise = Promise.resolve();
+
+    const enqueueRealtimeReply = (text) => {
+      const content = String(text ?? "").trim();
+      if (!content) {
+        return this.pendingReplyDeliveryPromise;
+      }
+
+      this.pendingReplyDeliveryPromise = this.pendingReplyDeliveryPromise
+        .then(async () => {
+          await this.deliverReplyToChannel({
+            replyTarget,
+            text: content,
+            turnId: resolvedTurnId
+          });
+          realtimeReplyCount += 1;
+        })
+        .catch(() => {});
+
+      return this.pendingReplyDeliveryPromise;
+    };
 
     const runtimeConfigValidation = configSchema.safeParse(await this.coreConfigStore.read());
     if (!runtimeConfigValidation.success) {
@@ -527,10 +632,46 @@ export class RemoteControlRuntimeService {
     });
 
     const turnMessages = this.historyStore.getMessagesByTurnIds([resolvedTurnId]);
-    const existingMessageIds = new Set(turnMessages.map((item) => String(item.id ?? "").trim()).filter(Boolean));
+    const storedMessageSignatures = new Map();
+    for (const item of turnMessages) {
+      const id = String(item?.id ?? "").trim();
+      if (!id) {
+        continue;
+      }
+      storedMessageSignatures.set(id, buildStorageMessageSignature(item));
+    }
     const recorder = new RemoteConversationRecorder({
       initialMessages: turnMessages
     });
+    const syncRecorderToHistory = () => {
+      const nextMessages = recorder
+        .getMessages()
+        .map((message) => normalizeRecorderMessageForStorage(message, this.platformKey));
+
+      for (const message of nextMessages) {
+        const id = String(message.id ?? "").trim();
+        if (!id) {
+          continue;
+        }
+
+        const nextSignature = buildStorageMessageSignature(message);
+        const previousSignature = storedMessageSignatures.get(id);
+        if (!previousSignature) {
+          this.historyStore.appendMessages(resolvedTurnId, [message]);
+          storedMessageSignatures.set(id, nextSignature);
+          continue;
+        }
+
+        if (previousSignature !== nextSignature) {
+          const updated = this.historyStore.updateMessage(resolvedTurnId, message);
+          if (updated) {
+            storedMessageSignatures.set(id, nextSignature);
+          }
+        }
+      }
+
+      return nextMessages;
+    };
 
     const contextMessages = this.historyStore.buildContextMessages({
       currentTurnId: resolvedTurnId,
@@ -567,6 +708,9 @@ export class RemoteControlRuntimeService {
           runId: `${this.platformKey}_run_${randomUUID()}`,
           workplacePath: workspacePath,
           workingDirectory: workspacePath,
+          remoteRuntimeService: this,
+          remoteReplyTarget: replyTarget,
+          remoteTurnId: resolvedTurnId,
           memoryStore: this.memoryStore,
           rawConversationMessages: contextMessages
             .filter((message) => String(message?.role ?? "").trim() !== "system")
@@ -582,50 +726,31 @@ export class RemoteControlRuntimeService {
         },
         onEvent: (event) => {
           recorder.applyEvent(event);
+          if (shouldSyncRecorderOnEvent(event)) {
+            syncRecorderToHistory();
+          }
+          if (String(event?.type ?? "").trim() === "assistant_message_end") {
+            enqueueRealtimeReply(String(event?.content ?? ""));
+          }
         }
       });
 
-      const nextMessages = recorder.getMessages();
-      const appendedMessages = nextMessages
-        .filter((message) => !existingMessageIds.has(String(message.id ?? "").trim()))
-        .map((message) => ({
-          id:
-            String(message.id ?? `${this.platformKey}_generated_${randomUUID()}`).trim() ||
-            `${this.platformKey}_generated_${randomUUID()}`,
-          role: String(message.role ?? "assistant").trim() || "assistant",
-          source: String(message.source ?? "").trim()
-            || (
-              String(message.role ?? "").trim() === "assistant"
-                ? "assistant"
-                : String(message.role ?? "").trim() === "tool"
-                  ? "tool"
-                  : String(message.role ?? "").trim() === "user"
-                    ? "user"
-                    : "system"
-            ),
-          providerKey: this.platformKey,
-          content: String(message.content ?? ""),
-          reasoningContent: String(message.reasoningContent ?? ""),
-          toolCallId: String(message.toolCallId ?? "").trim(),
-          toolName: String(message.toolName ?? "").trim(),
-          toolCalls: normalizeToolCalls(message.toolCalls),
-          timestamp: Number(message.timestamp ?? Date.now()),
-          meta: normalizeMessageMeta(message.meta)
-        }));
+      const nextMessages = syncRecorderToHistory();
 
-      if (appendedMessages.length > 0) {
-        this.historyStore.appendMessages(resolvedTurnId, appendedMessages);
+      await this.pendingReplyDeliveryPromise;
+      if (realtimeReplyCount <= 0) {
+        const replyTexts = collectAssistantReplyTexts(
+          nextMessages,
+          String(result?.outputText ?? "")
+        );
+        for (const text of replyTexts) {
+          await this.deliverReplyToChannel({
+            replyTarget,
+            text,
+            turnId: resolvedTurnId
+          });
+        }
       }
-
-      const finalReplyText = pickFinalAssistantReplyText(
-        appendedMessages,
-        String(result?.outputText ?? "")
-      );
-      await this.deliverReplyToChannel({
-        replyTarget,
-        text: finalReplyText,
-        turnId: resolvedTurnId
-      });
 
       this.historyStore.closeTurn(resolvedTurnId, {
         status: "completed"
@@ -654,6 +779,11 @@ export class RemoteControlRuntimeService {
       this.historyStore.closeTurn(resolvedTurnId, {
         status: "failed"
       });
+    } finally {
+      if (this.pendingReplyDeliveryTurnId === resolvedTurnId) {
+        this.pendingReplyDeliveryTurnId = 0;
+        this.pendingReplyDeliveryPromise = Promise.resolve();
+      }
     }
   }
 
@@ -709,5 +839,91 @@ export class RemoteControlRuntimeService {
         ]);
       }
     }
+  }
+
+  async sendMessageToChannel({ target, file, text = "", turnId } = {}) {
+    const normalizedTarget = normalizeFileDeliveryTarget(target) ?? null;
+    const fallbackTarget = normalizeReplyTarget(normalizedTarget ?? {});
+    const replyTarget = fallbackTarget ?? normalizeReplyTarget(target);
+    const messageId = String(replyTarget?.messageId ?? "").trim();
+    const chatId = String(normalizedTarget?.chatId ?? "").trim();
+    const userId = String(normalizedTarget?.userId ?? "").trim();
+
+    if (!messageId && !chatId && !userId) {
+      throw new Error("发送文件失败：缺少 target（messageId/chatId/userId）");
+    }
+
+    const normalizedText = String(text ?? "").trim();
+    const normalizedFile =
+      file && typeof file === "object" && !Array.isArray(file)
+        ? {
+            filePath: String(file.filePath ?? "").trim(),
+            fileName: String(file.fileName ?? "").trim(),
+            mimeType: String(file.mimeType ?? "").trim()
+          }
+        : null;
+    const hasFile = Boolean(normalizedFile?.filePath);
+    const hasText = Boolean(normalizedText);
+    if (!hasFile && !hasText) {
+      throw new Error("发送失败：file.filePath 或 text 至少提供一个");
+    }
+
+    if (!this.replyClient || typeof this.replyClient.sendMessage !== "function") {
+      throw new Error(`${this.platformLabel} 当前未实现 sendMessage 能力`);
+    }
+
+    const normalizedTurnId = Number(turnId ?? 0);
+    if (
+      Number.isInteger(normalizedTurnId) &&
+      normalizedTurnId > 0 &&
+      this.pendingReplyDeliveryTurnId === normalizedTurnId
+    ) {
+      await this.pendingReplyDeliveryPromise;
+    }
+
+    try {
+      const result = await this.replyClient.sendMessage({
+        target: {
+          messageId,
+          chatId,
+          userId
+        },
+        file: hasFile ? normalizedFile : null,
+        text: normalizedText
+      });
+
+      return result && typeof result === "object" ? result : {};
+    } catch (error) {
+      const message = `${this.platformLabel} 文件发送失败: ${String(error?.message ?? "unknown error")}`;
+      this.lastRunError = message;
+
+      if (this.historyStore && Number.isInteger(Number(turnId)) && Number(turnId) > 0) {
+        this.historyStore.appendMessages(Number(turnId), [
+          {
+            id: `${this.platformKey}_delivery_file_error_${randomUUID()}`,
+            role: "assistant",
+            source: "assistant",
+            providerKey: this.platformKey,
+            content: message,
+            timestamp: Date.now(),
+            meta: {
+              kind: "runtime_error",
+              subtype: "delivery_file_exception"
+            }
+          }
+        ]);
+      }
+
+      throw error;
+    }
+  }
+
+  async sendFileToChannel({ target, file, caption = "", turnId } = {}) {
+    return this.sendMessageToChannel({
+      target,
+      file,
+      text: String(caption ?? "").trim(),
+      turnId
+    });
   }
 }

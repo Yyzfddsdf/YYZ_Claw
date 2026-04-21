@@ -43,3 +43,16 @@ export function flushRemoteControlQueue() {
     method: "POST"
   });
 }
+
+export function clearRemoteControlRecords(params = {}) {
+  const query = new URLSearchParams();
+  const providerKey = String(params?.providerKey ?? "").trim().toLowerCase();
+  if (providerKey) {
+    query.set("providerKey", providerKey);
+  }
+
+  const queryText = query.toString();
+  return requestJson(`/remote-control/records${queryText ? `?${queryText}` : ""}`, {
+    method: "DELETE"
+  });
+}

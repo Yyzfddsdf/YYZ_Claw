@@ -2,9 +2,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  --chat-bubble-width: 720px;
+  --chat-bubble-width: 1000px;
 
-  --bg-main: #f6f8fc;
+  --bg-main: #f8fafc;
   --bg-elevated: #ffffff;
   --bg-hover: #f3f4f6;
   --bg-active: #e5e7eb;
@@ -67,8 +67,8 @@ body {
 .app-shell {
   display: flex;
   height: 100%;
-  max-width: 1600px;
-  margin: 0 auto;
+  max-width: 100%;
+  margin: 0;
   background: rgba(255, 255, 255, 0.84);
   box-shadow: 0 18px 50px rgb(15 23 42 / 0.08);
   backdrop-filter: blur(12px);
@@ -76,8 +76,8 @@ body {
 
 /* Sidebar Header / Nav */
 .app-sidebar {
-  width: 220px;
-  background: var(--bg-elevated);
+  width: 200px;
+  background: #fcfdfe;
   border-right: 1px solid var(--border-light);
   display: flex;
   flex-direction: column;
@@ -167,5 +167,8 @@ body {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+ound;
 }
 

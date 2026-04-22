@@ -1,62 +1,146 @@
-﻿/* Form Styles (Config Panel) */
+/* Config Module Layout */
 .config-module {
-  padding: 2rem;
-  max-width: 800px;
+  padding: 1.25rem;
+  max-width: 960px;
   margin: 0 auto;
   width: 100%;
   overflow-y: auto;
+  height: 100%;
 }
 
-.config-form {
+.module-title-wrap {
+  margin-bottom: 1rem;
+}
+
+.module-title-wrap h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 0.5rem;
+}
+
+.module-title-wrap p {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Settings Sections (Cards) */
+.config-section {
   background: var(--bg-elevated);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
-  padding: 2rem;
+  margin-bottom: 0.9rem;
   box-shadow: var(--shadow-sm);
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+  overflow: hidden;
+  transition: var(--transition);
 }
 
-.config-form label {
+.config-section-header {
+  padding: 0.8rem 1rem;
+  background: #fcfdfe;
+  border-bottom: 1px solid var(--border-light);
   display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  transition: var(--transition);
 }
 
-.config-form span {
-  font-size: 0.875rem;
-  font-weight: 500;
+.config-section.collapsible .config-section-header {
+  cursor: pointer;
+}
+
+.config-section.collapsible .config-section-header:hover {
+  background: var(--bg-hover);
+}
+
+.config-section-header h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
   color: var(--text-main);
 }
 
-.config-form input {
-  padding: 0.625rem 0.875rem;
+.config-section-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.config-section.collapsed .config-section-body {
+  display: none;
+}
+
+.config-section.collapsed {
+  margin-bottom: 0.5rem;
+}
+
+/* Config Items (Rows) */
+.config-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--border-light);
+  gap: 1rem;
+}
+
+.config-item:last-child {
+  border-bottom: none;
+}
+
+.config-item-info {
+  flex: 1;
+  max-width: 320px;
+}
+
+.config-item-label {
+  display: block;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--text-main);
+  margin-bottom: 0.25rem;
+}
+
+.config-item-desc {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.config-item-control {
+  flex: 1;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+}
+
+.config-item-control input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
   font-family: var(--font-sans);
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   background: var(--bg-main);
   color: var(--text-main);
   transition: var(--transition);
 }
 
-.config-form input:focus {
+.config-item-control input:focus {
   outline: none;
   border-color: var(--brand);
   background: var(--bg-elevated);
   box-shadow: 0 0 0 3px var(--brand-light);
 }
 
-.config-form input:disabled {
+.config-item-control input:disabled {
   background: var(--bg-hover);
-  color: var(--text-muted);
+  color: var(--text-placeholder);
   cursor: not-allowed;
 }
 
-.config-form textarea {
-  min-height: 180px;
-  resize: vertical;
+.config-item-control textarea {
+  width: 100%;
+  min-height: 140px;
   padding: 0.875rem 1rem;
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
@@ -66,38 +150,155 @@
   background: var(--bg-main);
   color: var(--text-main);
   transition: var(--transition);
+  resize: vertical;
 }
 
-.config-form textarea:focus {
-  outline: none;
+/* Custom Select Component UI */
+.select-container {
+  position: relative;
+  width: 100%;
+}
+
+.select-trigger {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  padding-right: 2.5rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+  color: var(--text-main);
+  font-size: 0.9375rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: var(--transition);
+  position: relative;
+}
+
+.select-trigger:hover {
+  border-color: var(--text-placeholder);
+}
+
+.select-trigger.is-active {
   border-color: var(--brand);
   background: var(--bg-elevated);
   box-shadow: 0 0 0 3px var(--brand-light);
 }
 
-.config-form textarea:disabled {
+.select-trigger::after {
+  content: "";
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  transition: transform 0.2s ease;
+}
+
+.select-trigger.is-active::after {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  padding: 0.25rem;
+  animation: dropdown-in 0.2s ease-out;
+}
+
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.select-option {
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.select-option:hover {
   background: var(--bg-hover);
-  color: var(--text-muted);
-  cursor: not-allowed;
 }
 
-.config-divider {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border-light), transparent);
-  margin: 2rem 0 1.5rem;
+.select-option.is-selected {
+  background: var(--brand-light);
+  color: var(--brand);
+  font-weight: 500;
 }
 
-.config-subtitle {
-  margin-top: 0;
+.text-btn, .text-btn-brand, .text-btn-danger {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
 }
 
-.config-form button[type="submit"] {
-  margin-top: 1rem;
-  align-self: flex-start;
+.text-btn { color: var(--text-muted); }
+.text-btn:hover { background: var(--bg-hover); color: var(--text-main); }
+
+.text-btn-brand { color: var(--brand); font-weight: 500; }
+.text-btn-brand:hover { background: var(--brand-light); }
+
+.text-btn-danger { color: var(--danger); font-weight: 500; }
+.text-btn-danger:hover { background: var(--danger-light); }
+
+.btn-add-section {
+  width: 100%;
+  padding: 0.75rem;
+  background: var(--bg-elevated);
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-lg);
+  color: var(--brand);
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  margin-bottom: 0.9rem;
+}
+
+.btn-add-section:hover {
+  border-color: var(--brand);
+  background: var(--brand-light);
+}
+
+/* 环境变量输入框微调 */
+.config-item-control input[placeholder="KEY"] {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+}
+
+.config-footer {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+.btn-primary {
   background: var(--brand);
   color: white;
   border: none;
-  padding: 0.625rem 2rem;
+  padding: 0.625rem 1.5rem;
   border-radius: var(--radius-md);
   font-size: 0.875rem;
   font-weight: 500;
@@ -106,34 +307,119 @@
   box-shadow: var(--shadow-sm);
 }
 
-.config-form button[type="submit"]:hover:not(:disabled) {
+.btn-primary:hover:not(:disabled) {
   background: var(--brand-hover);
+  transform: translateY(-1px);
 }
 
-.config-form button[type="submit"]:disabled {
-  opacity: 0.7;
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
 .status-note {
-  margin-top: 1.5rem;
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 0.75rem;
   border-radius: var(--radius-md);
   font-size: 0.875rem;
   font-weight: 500;
   background: var(--bg-elevated);
   border: 1px solid var(--border-light);
+  margin-top: 0.5rem;
 }
 
 .status-note.success {
   background: var(--success-light);
   color: var(--success);
-  border-color: #a7f3d0;
+  border-color: rgba(16, 185, 129, 0.2);
 }
 
 .status-note.error {
   background: var(--danger-light);
   color: var(--danger);
-  border-color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.chevron {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.config-section:not(.collapsed) .chevron {
+  transform: rotate(180deg);
+}
+
+.server-type-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  background: var(--brand-light);
+  color: var(--brand);
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.custom-select-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.custom-select {
+  width: 100%;
+  padding: 0.625rem 2.5rem 0.625rem 0.875rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: var(--transition);
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.custom-select-wrapper::after {
+  content: "";
+  position: absolute;
+  right: 0.875rem;
+  top: 50%;
+  width: 1rem;
+  height: 1rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.custom-select:hover {
+  border-color: var(--text-placeholder);
+}
+
+.custom-select:focus {
+  outline: none;
+  border-color: var(--brand);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 3px var(--brand-light);
+}
+
+.custom-select:disabled {
+  background: var(--bg-hover);
+  color: var(--text-placeholder);
+  cursor: not-allowed;
+}
+
+.header-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
 }
 

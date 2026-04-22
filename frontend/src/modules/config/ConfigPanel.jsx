@@ -1,5 +1,6 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./config.css";
+
 function normalizeConfig(config) {
   return {
     model: config?.model ?? "",
@@ -20,18 +21,26 @@ function normalizeConfig(config) {
 }
 
 function normalizeMcpConfig(config) {
-  return JSON.stringify(config ?? { servers: [] }, null, 2);
+  const servers = Array.isArray(config?.servers) ? config.servers : [];
+  return servers.map(s => ({
+    name: s.name ?? "",
+    transport: s.transport ?? "stdio",
+    command: s.command ?? "",
+    args: Array.isArray(s.args) ? s.args : [],
+    url: s.url ?? "",
+    env: s.env && typeof s.env === 'object' ? Object.entries(s.env).map(([k, v]) => ({ key: k, value: String(v) })) : [],
+    headers: s.httpHeaders && typeof s.httpHeaders === 'object' ? Object.entries(s.httpHeaders).map(([k, v]) => ({ key: k, value: String(v) })) : [],
+    enabled: s.enabled !== false,
+    startupTimeoutMs: s.startupTimeoutMs ?? "",
+    requestTimeoutMs: s.requestTimeoutMs ?? ""
+  }));
 }
 
 function formatStatusText(status) {
-  if (!status) {
-    return "尚未加载 MCP 配置";
-  }
-
+  if (!status) return "尚未加载 MCP 配置";
   const toolCount = Number(status.toolCount ?? 0);
   const errorCount = Number(status.errorCount ?? 0);
-
-  return `已加载 ${toolCount} 个 MCP 工具${errorCount > 0 ? `，${errorCount} 个 server 失败` : ""}`;
+  return `已加载 ${toolCount} 个工具${errorCount > 0 ? `，${errorCount} 个失败` : ""}`;
 }
 
 export function ConfigPanel({
@@ -50,257 +59,399 @@ export function ConfigPanel({
   const [form, setForm] = useState(() => normalizeConfig(initialConfig));
   const [localError, setLocalError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
-  const [mcpText, setMcpText] = useState(() => normalizeMcpConfig(initialMcpConfig));
+  const [mcpServers, setMcpServers] = useState(() => normalizeMcpConfig(initialMcpConfig));
   const [mcpLocalError, setMcpLocalError] = useState("");
   const [mcpSaveMessage, setMcpSaveMessage] = useState("");
+  const [expandedServers, setExpandedServers] = useState({});
+  const [openTransportMenuIndex, setOpenTransportMenuIndex] = useState(-1);
 
   useEffect(() => {
     setForm(normalizeConfig(initialConfig));
   }, [initialConfig]);
 
   useEffect(() => {
-    setMcpText(normalizeMcpConfig(initialMcpConfig));
+    setMcpServers(normalizeMcpConfig(initialMcpConfig));
   }, [initialMcpConfig]);
 
-  const mcpStatusText = useMemo(() => formatStatusText(mcpStatus), [mcpStatus]);
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-
-    const payload = {
-      model: form.model.trim(),
-      baseURL: form.baseURL.trim(),
-      apiKey: form.apiKey.trim(),
-      webProvider: "tavily",
-      tavilyApiKey: form.tavilyApiKey.trim(),
-      subagentModel: form.subagentModel.trim(),
-      subagentBaseURL: form.subagentBaseURL.trim(),
-      subagentApiKey: form.subagentApiKey.trim(),
-      compressionModel: form.compressionModel.trim(),
-      compressionBaseURL: form.compressionBaseURL.trim(),
-      compressionApiKey: form.compressionApiKey.trim()
-    };
-
-    const maxContextWindowText = String(form.maxContextWindow ?? "").trim();
-    if (maxContextWindowText) {
-      const maxContextWindow = Number(maxContextWindowText);
-      if (!Number.isInteger(maxContextWindow) || maxContextWindow <= 0) {
-        setLocalError("最大对话窗口必须是正整数");
+  useEffect(() => {
+    function handleDocumentPointerDown(event) {
+      if (event?.target?.closest?.(".select-container")) {
         return;
       }
-      payload.maxContextWindow = maxContextWindow;
+      setOpenTransportMenuIndex(-1);
     }
 
-    if (!payload.model || !payload.baseURL || !payload.apiKey) {
-      setLocalError("model / baseURL / apiKey 都是必填项");
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handleDocumentPointerDown);
+    };
+  }, []);
+
+  const mcpStatusText = useMemo(() => formatStatusText(mcpStatus), [mcpStatus]);
+  const transportOptions = useMemo(
+    () => [
+      { value: "stdio", label: "Stdio (本地进程)" },
+      { value: "http", label: "SSE (远程 HTTP)" }
+    ],
+    []
+  );
+
+  async function handleConfigSubmit(event) {
+    event.preventDefault();
+    if (!form.model || !form.baseURL || !form.apiKey) {
+      setLocalError("主模型的 Model / Base URL / API Key 均为必填项");
       return;
     }
-
     setLocalError("");
     setSaveMessage("");
-
     try {
+      const payload = { ...form, maxContextWindow: form.maxContextWindow ? Number(form.maxContextWindow) : undefined };
       await onSave(payload);
-      setSaveMessage("配置已保存到后端 config/config.json");
-    } catch {
-      setSaveMessage("");
-    }
+      setSaveMessage("配置已成功保存");
+    } catch { /* error handled by parent */ }
   }
 
   async function handleMcpSubmit(event) {
     event.preventDefault();
+    const finalServers = mcpServers.map(s => {
+      const server = {
+        name: s.name.trim(),
+        transport: s.transport,
+        enabled: s.enabled,
+        startupTimeoutMs: s.startupTimeoutMs ? Number(s.startupTimeoutMs) : undefined,
+        requestTimeoutMs: s.requestTimeoutMs ? Number(s.requestTimeoutMs) : undefined
+      };
 
-    let parsed;
-    try {
-      parsed = JSON.parse(mcpText);
-    } catch {
-      setMcpLocalError("MCP 配置必须是合法 JSON");
-      return;
+      if (s.transport === 'stdio') {
+        const envObj = {};
+        s.env.forEach(item => { if (item.key.trim()) envObj[item.key.trim()] = item.value; });
+        server.command = s.command.trim();
+        server.args = Array.isArray(s.args) ? s.args : String(s.args || "").split(/\s+/).filter(Boolean);
+        server.env = envObj;
+      } else {
+        const headerObj = {};
+        s.headers.forEach(item => { if (item.key.trim()) headerObj[item.key.trim()] = item.value; });
+        server.url = s.url.trim();
+        server.httpHeaders = headerObj;
+      }
+      return server;
+    });
+
+    for (const s of finalServers) {
+      if (!s.name) { setMcpLocalError("Server 名称不能为空"); return; }
+      if (s.transport === 'stdio' && !s.command) { setMcpLocalError(`Server [${s.name}] 的命令不能为空`); return; }
+      if (s.transport === 'http' && !s.url) { setMcpLocalError(`Server [${s.name}] 的 URL 不能为空`); return; }
     }
 
     setMcpLocalError("");
     setMcpSaveMessage("");
-
     try {
-      await onSaveMcpConfig(parsed);
-      setMcpSaveMessage("MCP 配置已保存并热加载");
-    } catch {
-      setMcpSaveMessage("");
-    }
+      await onSaveMcpConfig({ servers: finalServers });
+      setMcpSaveMessage("MCP 配置已成功应用");
+    } catch { /* error handled by parent */ }
   }
 
-  function updateField(field, value) {
-    setForm((prev) => ({
-      ...prev,
-      [field]: value
-    }));
+  function addMcpServer() {
+    const newIndex = mcpServers.length;
+    setMcpServers(prev => [...prev, { name: "", transport: "stdio", command: "", args: [], url: "", env: [], headers: [], enabled: true, startupTimeoutMs: "", requestTimeoutMs: "" }]);
+    setExpandedServers(prev => ({ ...prev, [newIndex]: true }));
+  }
+
+  function updateMcpServer(index, field, value) {
+    setMcpServers(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  }
+
+  function toggleServerExpand(index) {
+    setExpandedServers(prev => ({ ...prev, [index]: !prev[index] }));
+  }
+
+  function addMcpEnv(serverIndex) {
+    setMcpServers(prev => {
+      const next = [...prev];
+      const nextEnv = [...next[serverIndex].env, { key: "", value: "" }];
+      next[serverIndex] = { ...next[serverIndex], env: nextEnv };
+      return next;
+    });
+  }
+
+  function updateMcpEnv(serverIndex, envIndex, field, value) {
+    setMcpServers(prev => {
+      const next = [...prev];
+      const nextEnv = [...next[serverIndex].env];
+      nextEnv[envIndex] = { ...nextEnv[envIndex], [field]: value };
+      next[serverIndex] = { ...next[serverIndex], env: nextEnv };
+      return next;
+    });
+  }
+
+  function removeMcpEnv(serverIndex, envIndex) {
+    setMcpServers(prev => {
+      const next = [...prev];
+      next[serverIndex] = { ...next[serverIndex], env: next[serverIndex].env.filter((_, i) => i !== envIndex) };
+      return next;
+    });
+  }
+
+  function addMcpHeader(serverIndex) {
+    setMcpServers(prev => {
+      const next = [...prev];
+      const nextHeaders = [...(next[serverIndex].headers || []), { key: "", value: "" }];
+      next[serverIndex] = { ...next[serverIndex], headers: nextHeaders };
+      return next;
+    });
+  }
+
+  function updateMcpHeader(serverIndex, headerIndex, field, value) {
+    setMcpServers(prev => {
+      const next = [...prev];
+      const nextHeaders = [...next[serverIndex].headers];
+      nextHeaders[headerIndex] = { ...nextHeaders[headerIndex], [field]: value };
+      next[serverIndex] = { ...next[serverIndex], headers: nextHeaders };
+      return next;
+    });
+  }
+
+  function removeMcpHeader(serverIndex, headerIndex) {
+    setMcpServers(prev => {
+      const next = [...prev];
+      next[serverIndex] = { ...next[serverIndex], headers: next[serverIndex].headers.filter((_, i) => i !== headerIndex) };
+      return next;
+    });
   }
 
   return (
     <div className="config-module">
       <div className="module-title-wrap">
-        <h2>运行配置</h2>
-        <p>主模型必填。子智能体和压缩模型都可单独配置；留空时自动回退主模型配置。</p>
+        <h2>智能体配置</h2>
+        <p>管理全局运行参数与 MCP 扩展能力。</p>
       </div>
 
-      <form className="config-form" onSubmit={handleSubmit}>
-        <label>
-          <span>Model</span>
-          <input
-            value={form.model}
-            onChange={(e) => updateField("model", e.target.value)}
-            placeholder="例如 gpt-4-mini"
-            disabled={loading || saving}
-          />
-        </label>
+      <form onSubmit={handleConfigSubmit}>
+        <div className="config-section">
+          <div className="config-section-header"><h3>核心模型 (Core Model)</h3></div>
+          <div className="config-section-body">
+            <ConfigRow label="Model" desc="主语言模型标识" value={form.model} onChange={v => setForm({...form, model: v})} placeholder="gpt-4o" disabled={loading || saving} />
+            <ConfigRow label="Base URL" desc="API 基础地址" value={form.baseURL} onChange={v => setForm({...form, baseURL: v})} placeholder="https://api.openai.com/v1" disabled={loading || saving} />
+            <ConfigRow label="API Key" desc="鉴权密钥" value={form.apiKey} onChange={v => setForm({...form, apiKey: v})} isPassword disabled={loading || saving} />
+            <ConfigRow label="Max Tokens" desc="最大上下文限制" value={form.maxContextWindow} onChange={v => setForm({...form, maxContextWindow: v})} type="number" disabled={loading || saving} />
+          </div>
+        </div>
 
-        <label>
-          <span>Base URL</span>
-          <input
-            value={form.baseURL}
-            onChange={(e) => updateField("baseURL", e.target.value)}
-            placeholder="例如 https://api.openai.com/v1"
-            disabled={loading || saving}
-          />
-        </label>
+        <div className="config-section">
+          <div className="config-section-header"><h3>辅助功能 (Optional)</h3></div>
+          <div className="config-section-body">
+            <ConfigRow label="Search Key" desc="Tavily 搜索 API Key" value={form.tavilyApiKey} onChange={v => setForm({...form, tavilyApiKey: v})} isPassword disabled={loading || saving} />
+            <ConfigRow label="Subagent" desc="子智能体独立配置 (Model, URL, Key)" isMulti 
+              values={[form.subagentModel, form.subagentBaseURL, form.subagentApiKey]} 
+              onChanges={[v => setForm({...form, subagentModel: v}), v => setForm({...form, subagentBaseURL: v}), v => setForm({...form, subagentApiKey: v})]} 
+              disabled={loading || saving} 
+            />
+            <ConfigRow label="Compression" desc="上下文压缩独立配置 (Model, URL, Key)" isMulti 
+              values={[form.compressionModel, form.compressionBaseURL, form.compressionApiKey]} 
+              onChanges={[v => setForm({...form, compressionModel: v}), v => setForm({...form, compressionBaseURL: v}), v => setForm({...form, compressionApiKey: v})]} 
+              disabled={loading || saving} 
+            />
+          </div>
+        </div>
 
-        <label>
-          <span>API Key</span>
-          <input
-            type="password"
-            value={form.apiKey}
-            onChange={(e) => updateField("apiKey", e.target.value)}
-            placeholder="sk-..."
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Tavily API Key</span>
-          <input
-            type="password"
-            value={form.tavilyApiKey}
-            onChange={(e) => updateField("tavilyApiKey", e.target.value)}
-            placeholder="tvly-..."
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Max Context Window</span>
-          <input
-            type="number"
-            min="1"
-            step="1"
-            value={form.maxContextWindow}
-            onChange={(e) => updateField("maxContextWindow", e.target.value)}
-            placeholder="例如 128000"
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Subagent Model</span>
-          <input
-            value={form.subagentModel}
-            onChange={(e) => updateField("subagentModel", e.target.value)}
-            placeholder="留空则回退主 Model"
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Subagent Base URL</span>
-          <input
-            value={form.subagentBaseURL}
-            onChange={(e) => updateField("subagentBaseURL", e.target.value)}
-            placeholder="留空则回退主 Base URL"
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Subagent API Key</span>
-          <input
-            type="password"
-            value={form.subagentApiKey}
-            onChange={(e) => updateField("subagentApiKey", e.target.value)}
-            placeholder="留空则回退主 API Key"
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Compression Model</span>
-          <input
-            value={form.compressionModel}
-            onChange={(e) => updateField("compressionModel", e.target.value)}
-            placeholder="留空则回退主 Model"
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Compression Base URL</span>
-          <input
-            value={form.compressionBaseURL}
-            onChange={(e) => updateField("compressionBaseURL", e.target.value)}
-            placeholder="留空则回退主 Base URL"
-            disabled={loading || saving}
-          />
-        </label>
-
-        <label>
-          <span>Compression API Key</span>
-          <input
-            type="password"
-            value={form.compressionApiKey}
-            onChange={(e) => updateField("compressionApiKey", e.target.value)}
-            placeholder="留空则回退主 API Key"
-            disabled={loading || saving}
-          />
-        </label>
-
-        <button type="submit" disabled={loading || saving}>
-          {saving ? "保存中..." : "保存配置"}
-        </button>
+        <div className="config-footer">
+          {saveMessage && <span className="status-note success">{saveMessage}</span>}
+          {(localError || error) && <span className="status-note error">{localError || error}</span>}
+          <button type="submit" className="btn-primary" disabled={loading || saving}>{saving ? "保存中..." : "保存核心配置"}</button>
+        </div>
       </form>
 
-      {loading && <p className="status-note">正在读取后端配置...</p>}
-      {saveMessage && <p className="status-note success">{saveMessage}</p>}
-      {(localError || error) && <p className="status-note error">{localError || error}</p>}
+      <div className="config-divider" style={{ margin: '1.25rem 0' }} />
 
-      <div className="config-divider" />
-
-      <div className="module-title-wrap config-subtitle">
-        <h2>MCP 配置</h2>
-        <p>使用 `config/mcp.json` 管理本地 MCP servers，保存后会自动热加载。</p>
+      <div className="module-title-wrap">
+        <h2>MCP 服务器</h2>
+        <p>扩展智能体的工具集。支持本地标准输入输出 (Stdio) 和远程 SSE (HTTP)。</p>
       </div>
 
-      <form className="config-form mcp-form" onSubmit={handleMcpSubmit}>
-        <label>
-          <span>Servers JSON</span>
-          <textarea
-            value={mcpText}
-            onChange={(e) => setMcpText(e.target.value)}
-            placeholder='{"servers":[{"name":"filesystem","command":"node","args":["server.js"]}]}'
-            disabled={mcpLoading || mcpSaving}
-          />
-        </label>
+      <form onSubmit={handleMcpSubmit}>
+        {mcpServers.map((server, sIndex) => {
+          const isExpanded = expandedServers[sIndex];
+          return (
+            <div key={sIndex} className={`config-section collapsible ${isExpanded ? '' : 'collapsed'}`}>
+              <div className="config-section-header" onClick={() => toggleServerExpand(sIndex)}>
+                <div className="header-main">
+                  <input 
+                    type="checkbox" 
+                    checked={server.enabled} 
+                    onClick={e => e.stopPropagation()} 
+                    onChange={e => updateMcpServer(sIndex, 'enabled', e.target.checked)} 
+                    style={{ width: 'auto' }} 
+                  />
+                  <h3 style={{ margin: 0, opacity: server.enabled ? 1 : 0.5 }}>{server.name || "未命名 Server"}</h3>
+                  <span className="server-type-badge">{server.transport}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <button 
+                    type="button" 
+                    onClick={(e) => { e.stopPropagation(); setMcpServers(prev => prev.filter((_, i) => i !== sIndex)); }} 
+                    className="text-btn-danger"
+                  >
+                    移除
+                  </button>
+                  <svg className="chevron icon" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                </div>
+              </div>
 
-        <button type="submit" disabled={mcpLoading || mcpSaving}>
-          {mcpSaving ? "保存中..." : "保存 MCP 配置"}
-        </button>
+              <div className="config-section-body">
+                <ConfigRow label="名称" desc="Server 唯一标识" value={server.name} onChange={v => updateMcpServer(sIndex, 'name', v)} disabled={mcpSaving} />
+                
+                <div className="config-item">
+                  <div className="config-item-info">
+                    <span className="config-item-label">传输类型</span>
+                    <span className="config-item-desc">选择连接方式</span>
+                  </div>
+                  <div className="config-item-control">
+                    <div className="select-container">
+                      <button
+                        type="button"
+                        className={`select-trigger ${openTransportMenuIndex === sIndex ? "is-active" : ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpenTransportMenuIndex((prev) => (prev === sIndex ? -1 : sIndex));
+                        }}
+                        disabled={mcpSaving}
+                      >
+                        <span>
+                          {transportOptions.find((option) => option.value === server.transport)?.label ||
+                            "Stdio (本地进程)"}
+                        </span>
+                      </button>
+                      {openTransportMenuIndex === sIndex && (
+                        <div className="select-dropdown" onClick={(event) => event.stopPropagation()}>
+                          {transportOptions.map((option) => (
+                            <div
+                              key={`${sIndex}_${option.value}`}
+                              role="button"
+                              tabIndex={0}
+                              className={`select-option ${
+                                server.transport === option.value ? "is-selected" : ""
+                              }`}
+                              onClick={() => {
+                                updateMcpServer(sIndex, "transport", option.value);
+                                setOpenTransportMenuIndex(-1);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.preventDefault();
+                                  updateMcpServer(sIndex, "transport", option.value);
+                                  setOpenTransportMenuIndex(-1);
+                                }
+                              }}
+                            >
+                              {option.label}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {server.transport === 'stdio' ? (
+                  <>
+                    <ConfigRow label="命令" desc="可执行程序 (node, npx, python)" value={server.command} onChange={v => updateMcpServer(sIndex, 'command', v)} disabled={mcpSaving} />
+                    <ConfigRow label="参数" desc="命令行参数 (空格分隔)" value={Array.isArray(server.args) ? server.args.join(' ') : server.args} onChange={v => updateMcpServer(sIndex, 'args', v)} disabled={mcpSaving} />
+                    
+                    <div className="config-item">
+                      <div className="config-item-info">
+                        <span className="config-item-label">环境变量 (Env)</span>
+                        <span className="config-item-desc">配置 API Key 或其他运行参数</span>
+                      </div>
+                      <div className="config-item-control">
+                        {server.env.map((env, eIndex) => (
+                          <div key={eIndex} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                            <input placeholder="KEY" value={env.key} onChange={e => updateMcpEnv(sIndex, eIndex, 'key', e.target.value)} style={{ flex: 1 }} />
+                            <input placeholder="VALUE" value={env.value} onChange={e => updateMcpEnv(sIndex, eIndex, 'value', e.target.value)} style={{ flex: 2 }} />
+                            <button type="button" onClick={() => removeMcpEnv(sIndex, eIndex)} className="text-btn">×</button>
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => addMcpEnv(sIndex)} className="text-btn-brand" style={{ width: 'fit-content' }}>+ 添加变量</button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <ConfigRow label="URL" desc="远程 SSE 服务地址" value={server.url} onChange={v => updateMcpServer(sIndex, 'url', v)} placeholder="http://localhost:3001/sse" disabled={mcpSaving} />
+                    <div className="config-item">
+                      <div className="config-item-info">
+                        <span className="config-item-label">请求头 (Headers)</span>
+                        <span className="config-item-desc">配置 Authorization 或其他鉴权信息</span>
+                      </div>
+                      <div className="config-item-control">
+                        {(server.headers || []).map((header, hIndex) => (
+                          <div key={hIndex} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                            <input placeholder="Header-Name" value={header.key} onChange={e => updateMcpHeader(sIndex, hIndex, 'key', e.target.value)} style={{ flex: 1 }} />
+                            <input placeholder="Value" value={header.value} onChange={e => updateMcpHeader(sIndex, hIndex, 'value', e.target.value)} style={{ flex: 2 }} />
+                            <button type="button" onClick={() => removeMcpHeader(sIndex, hIndex)} className="text-btn">×</button>
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => addMcpHeader(sIndex)} className="text-btn-brand" style={{ width: 'fit-content' }}>+ 添加 Header</button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div className="config-item">
+                  <div className="config-item-info">
+                    <span className="config-item-label">超时设置 (ms)</span>
+                    <span className="config-item-desc">配置启动与请求的超时时间（毫秒）</span>
+                  </div>
+                  <div className="config-item-control" style={{ flexDirection: 'row', gap: '1rem' }}>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>启动超时</span>
+                      <input type="number" value={server.startupTimeoutMs} onChange={e => updateMcpServer(sIndex, 'startupTimeoutMs', e.target.value)} placeholder="默认 10000" disabled={mcpSaving} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>请求超时</span>
+                      <input type="number" value={server.requestTimeoutMs} onChange={e => updateMcpServer(sIndex, 'requestTimeoutMs', e.target.value)} placeholder="默认 60000" disabled={mcpSaving} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        <button type="button" onClick={addMcpServer} className="btn-add-section">+ 添加新的 MCP 服务器</button>
+
+        <div className="config-footer">
+          <span className="status-note">{mcpStatusText}</span>
+          {mcpSaveMessage && <span className="status-note success">{mcpSaveMessage}</span>}
+          {(mcpLocalError || mcpError) && <span className="status-note error">{mcpLocalError || mcpError}</span>}
+          <button type="submit" className="btn-primary" disabled={mcpSaving}>{mcpSaving ? "正在应用..." : "应用 MCP 配置"}</button>
+        </div>
       </form>
-
-      <p className="status-note">{mcpStatusText}</p>
-      {mcpLoading && <p className="status-note">正在读取 MCP 配置...</p>}
-      {mcpSaveMessage && <p className="status-note success">{mcpSaveMessage}</p>}
-      {(mcpLocalError || mcpError) && (
-        <p className="status-note error">{mcpLocalError || mcpError}</p>
-      )}
     </div>
   );
 }
 
-
+function ConfigRow({ label, desc, value, onChange, placeholder, isPassword, type = "text", disabled, isMulti, values, onChanges }) {
+  return (
+    <div className="config-item">
+      <div className="config-item-info">
+        <span className="config-item-label">{label}</span>
+        <span className="config-item-desc">{desc}</span>
+      </div>
+      <div className="config-item-control">
+        {isMulti ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {values.map((v, i) => (
+              <input key={i} value={v} onChange={e => onChanges[i](e.target.value)} placeholder={i === 0 ? "Model" : i === 1 ? "URL" : "Key"} type={i === 2 ? "password" : "text"} disabled={disabled} />
+            ))}
+          </div>
+        ) : (
+          <input type={isPassword ? "password" : type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} disabled={disabled} />
+        )}
+      </div>
+    </div>
+  );
+}

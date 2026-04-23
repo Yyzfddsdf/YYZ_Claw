@@ -2388,6 +2388,42 @@
   gap: 0.55rem;
 }
 
+.composer-clarify-question {
+  margin: 0.45rem 0 0.75rem;
+  color: #7c2d12;
+  line-height: 1.45;
+}
+
+.composer-clarify-options {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.composer-clarify-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #7c2d12;
+}
+
+.composer-clarify-option input[type="radio"] {
+  accent-color: var(--brand);
+}
+
+.composer-clarify-textarea {
+  width: 100%;
+  border: 1px solid rgba(251, 146, 60, 0.45);
+  border-radius: var(--radius-md);
+  background: #fffbf5;
+  color: #7c2d12;
+  padding: 0.6rem 0.7rem;
+  margin-bottom: 0.75rem;
+  resize: vertical;
+  min-height: 72px;
+}
+
 /* From Uiverse.io by Cobp */ 
 .container-ia-chat {
   position: relative;

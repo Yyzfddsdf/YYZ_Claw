@@ -349,16 +349,27 @@ export class ChatAgent {
 
   async executeToolCall(toolCall, executionContext = {}) {
     throwIfAborted(executionContext?.abortSignal);
+    const nestedExecutionContext = {
+      ...executionContext,
+      toolRegistry: this.toolRegistry
+    };
+    nestedExecutionContext.invokeToolCall = async (nestedToolCall, nestedContext = {}) => {
+      const mergedNestedContext = {
+        ...nestedExecutionContext,
+        ...nestedContext
+      };
+      return this.toolRegistry.executeToolCall(nestedToolCall, mergedNestedContext);
+    };
 
     try {
-      const result = await this.toolRegistry.executeToolCall(toolCall, executionContext);
-      throwIfAborted(executionContext?.abortSignal);
+      const result = await this.toolRegistry.executeToolCall(toolCall, nestedExecutionContext);
+      throwIfAborted(nestedExecutionContext?.abortSignal);
       return result;
     } catch (error) {
-      if (isAbortError(error) || executionContext?.abortSignal?.aborted) {
+      if (isAbortError(error) || nestedExecutionContext?.abortSignal?.aborted) {
         throw isAbortError(error)
           ? error
-          : createAbortError(executionContext?.abortSignal?.reason ?? error);
+          : createAbortError(nestedExecutionContext?.abortSignal?.reason ?? error);
       }
 
       const name = toolCall?.function?.name || "unknown_tool";
@@ -386,6 +397,10 @@ export class ChatAgent {
   }
 
   requiresApproval(toolCall, approvalMode, approvalRules) {
+    const toolName = String(toolCall?.function?.name ?? "").trim();
+    if (toolName === "clarify") {
+      return true;
+    }
     return requiresApprovalForToolCall(approvalRules, toolCall, approvalMode);
   }
 

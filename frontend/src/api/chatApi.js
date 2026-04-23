@@ -161,9 +161,15 @@ export function validateSkillByName(skillName) {
   return requestJson(`/skills/${encodeURIComponent(skillName)}/validate`);
 }
 
-export function confirmToolApprovalById(approvalId, signal, onAgentEvent) {
+export function confirmToolApprovalById(
+  approvalId,
+  signal,
+  onAgentEvent,
+  confirmPayload = undefined
+) {
   return streamSseJson({
     url: `/api/chat/tool-approvals/${encodeURIComponent(approvalId)}/confirm`,
+    body: confirmPayload,
     signal,
     onMessage: (packet) => {
       if (packet.event === "agent" && packet.data && typeof packet.data === "object") {

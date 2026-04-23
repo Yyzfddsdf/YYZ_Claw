@@ -137,6 +137,24 @@ function normalizeMessageMeta(meta) {
   return nextMeta;
 }
 
+function normalizePendingApprovalArguments(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function isRetryNoticeMessage(message) {
   const role = String(message?.role ?? "").trim();
   const content = String(message?.content ?? "").trim();
@@ -2762,7 +2780,7 @@ export function useChatSession(maxContextWindow = 0) {
         toolName: String(event.toolName ?? ""),
         toolApprovalGroup: String(event.toolApprovalGroup ?? "unknown"),
         toolApprovalSection: String(event.toolApprovalSection ?? "unknown"),
-        arguments: event.arguments ?? {},
+        arguments: normalizePendingApprovalArguments(event.arguments),
         toolCount: Number(event.toolCount ?? 1),
         approvalMode: String(event.approvalMode ?? "confirm")
       });
@@ -3590,7 +3608,7 @@ export function useChatSession(maxContextWindow = 0) {
     });
   }
 
-  async function confirmPendingApproval() {
+  async function confirmPendingApproval(options = {}) {
     const approvalId = String(pendingApproval?.approvalId ?? "").trim();
     const targetConversationId = String(pendingApproval?.conversationId ?? "").trim();
     const foregroundConversationId = String(streamingConversationIdRef.current ?? "").trim();
@@ -3618,13 +3636,22 @@ export function useChatSession(maxContextWindow = 0) {
       pendingReasoningBuffer: "",
       flushFrameId: null
     };
+    const confirmPayload =
+      options && typeof options === "object" && !Array.isArray(options)
+        ? options
+        : undefined;
 
     try {
-      await confirmToolApprovalById(approvalId, controller.signal, (event) => {
-        applyAgentEvent(event, streamState, targetConversationId, {
-          source: "foreground"
-        });
-      });
+      await confirmToolApprovalById(
+        approvalId,
+        controller.signal,
+        (event) => {
+          applyAgentEvent(event, streamState, targetConversationId, {
+            source: "foreground"
+          });
+        },
+        confirmPayload
+      );
     } catch (approvalError) {
       if (approvalError?.name !== "AbortError") {
         markConversationRunEndedLocally(targetConversationId, "error");

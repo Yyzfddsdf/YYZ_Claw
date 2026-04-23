@@ -334,6 +334,17 @@ function describeQueuedMessage(message = {}) {
   return parts.join(" · ");
 }
 
+function normalizeClarifyOptions(options) {
+  if (!Array.isArray(options)) {
+    return [];
+  }
+
+  return options
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
 function getFileBadgeLabel(name, mimeType) {
   const fileName = String(name ?? "").trim();
   const extension = fileName.includes(".")
@@ -507,6 +518,8 @@ export function ChatPanel({
   const [historyPaneOpen, setHistoryPaneOpen] = useState(Boolean(showHistoryPane));
   const [contextPopupOpen, setContextPopupOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
+  const [clarifySelectedOption, setClarifySelectedOption] = useState("");
+  const [clarifyAdditionalText, setClarifyAdditionalText] = useState("");
   const [viewingImage, setViewingImage] = useState(null);
   const [viewingFileText, setViewingFileText] = useState(null);
   const [draggedQueueMessageId, setDraggedQueueMessageId] = useState("");
@@ -605,6 +618,18 @@ export function ChatPanel({
         String(message?.role ?? "").trim() === "assistant" &&
         String(message?.id ?? "").trim() === String(activeConversationRuntimeReplyError?.messageId ?? "").trim()
     );
+  const pendingApprovalArguments =
+    chat?.pendingApproval?.arguments &&
+    typeof chat.pendingApproval.arguments === "object" &&
+    !Array.isArray(chat.pendingApproval.arguments)
+      ? chat.pendingApproval.arguments
+      : {};
+  const isClarifyApproval = String(chat?.pendingApproval?.toolName ?? "").trim() === "clarify";
+  const clarifyQuestion = String(pendingApprovalArguments?.question ?? "").trim();
+  const clarifyOptions = normalizeClarifyOptions(pendingApprovalArguments?.options);
+  const clarifyAllowAdditionalText = Boolean(
+    pendingApprovalArguments?.allowAdditionalText ?? true
+  );
   const topLevelHistoryIds = useMemo(
     () =>
       new Set(
@@ -757,6 +782,19 @@ export function ChatPanel({
   useEffect(() => {
     activeConversationIdRef.current = String(chat.activeConversationId ?? "");
   }, [chat.activeConversationId]);
+
+  useEffect(() => {
+    if (!chat.pendingApproval || !isClarifyApproval) {
+      setClarifySelectedOption("");
+      setClarifyAdditionalText("");
+      return;
+    }
+
+    const presetOption = String(pendingApprovalArguments?.selectedOption ?? "").trim();
+    const presetAdditionalText = String(pendingApprovalArguments?.additionalText ?? "").trim();
+    setClarifySelectedOption(presetOption);
+    setClarifyAdditionalText(presetAdditionalText);
+  }, [chat.pendingApproval, isClarifyApproval, pendingApprovalArguments]);
 
   useEffect(() => {
     const activeConversationId = String(chat.activeConversationId ?? "").trim();
@@ -1194,6 +1232,21 @@ export function ChatPanel({
       text: message,
       imageAttachments,
       parsedFileAttachments
+    });
+  }
+
+  function handleClarifyConfirm() {
+    const selectedOption = String(clarifySelectedOption ?? "").trim();
+    const additionalText = String(clarifyAdditionalText ?? "").trim();
+    if (!selectedOption && !additionalText) {
+      return;
+    }
+
+    chat.confirmPendingApproval({
+      approvalInput: {
+        selectedOption,
+        additionalText
+      }
     });
   }
 
@@ -2089,57 +2142,120 @@ export function ChatPanel({
             {chat.pendingApproval && (
               <div className="composer-approval-card" role="region" aria-live="polite">
                 <header className="composer-approval-head">
-                  <strong>待审批工具调用</strong>
+                  <strong>{isClarifyApproval ? "待用户澄清" : "待审批工具调用"}</strong>
                   <span className="composer-approval-badge">
                     {chat.pendingApproval.approvalMode === "auto" ? "自动审批" : "确认审批"}
                   </span>
                 </header>
 
-                <div className="composer-approval-body">
-                  <div>
-                    <span>工具</span>
-                    <strong>{chat.pendingApproval.toolName}</strong>
-                  </div>
-                  <div>
-                    <span>分组</span>
-                    <strong>{chat.pendingApproval.toolApprovalGroup || "unknown"}</strong>
-                  </div>
-                  <div>
-                    <span>规则段</span>
-                    <strong>{chat.pendingApproval.toolApprovalSection || "unknown"}</strong>
-                  </div>
-                  <div>
-                    <span>调用 ID</span>
-                    <strong>{chat.pendingApproval.toolCallId || "未知"}</strong>
-                  </div>
-                  <div>
-                    <span>调用数</span>
-                    <strong>{chat.pendingApproval.toolCount}</strong>
-                  </div>
-                </div>
+                {isClarifyApproval ? (
+                  <>
+                    <div className="composer-clarify-question">
+                      <strong>{clarifyQuestion || "请补充你的选择或说明。"}</strong>
+                    </div>
 
-                <pre className="composer-approval-json">
-                  {JSON.stringify(chat.pendingApproval.arguments ?? {}, null, 2)}
-                </pre>
+                    {clarifyOptions.length > 0 ? (
+                      <div className="composer-clarify-options" role="radiogroup" aria-label="澄清选项">
+                        {clarifyOptions.map((option) => (
+                          <label key={option} className="composer-clarify-option">
+                            <input
+                              type="radio"
+                              name="clarify-option"
+                              value={option}
+                              checked={clarifySelectedOption === option}
+                              onChange={() => setClarifySelectedOption(option)}
+                              disabled={chat.isStreaming || chat.isCompressing}
+                            />
+                            <span>{option}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
 
-                <div className="composer-approval-actions">
-                  <button
-                    type="button"
-                    className="approval-confirm"
-                    onClick={chat.confirmPendingApproval}
-                    disabled={chat.isStreaming || chat.isCompressing}
-                  >
-                    确认执行
-                  </button>
-                  <button
-                    type="button"
-                    className="approval-reject"
-                    onClick={chat.rejectPendingApproval}
-                    disabled={chat.isStreaming || chat.isCompressing}
-                  >
-                    拒绝
-                  </button>
-                </div>
+                    {clarifyAllowAdditionalText ? (
+                      <textarea
+                        className="composer-clarify-textarea"
+                        value={clarifyAdditionalText}
+                        onChange={(event) => setClarifyAdditionalText(event.target.value)}
+                        placeholder="可补充说明（选填）"
+                        rows={3}
+                        disabled={chat.isStreaming || chat.isCompressing}
+                      />
+                    ) : null}
+
+                    <div className="composer-approval-actions">
+                      <button
+                        type="button"
+                        className="approval-confirm"
+                        onClick={handleClarifyConfirm}
+                        disabled={
+                          chat.isStreaming ||
+                          chat.isCompressing ||
+                          (!String(clarifySelectedOption ?? "").trim() &&
+                            !String(clarifyAdditionalText ?? "").trim())
+                        }
+                      >
+                        提交澄清
+                      </button>
+                      <button
+                        type="button"
+                        className="approval-reject"
+                        onClick={chat.rejectPendingApproval}
+                        disabled={chat.isStreaming || chat.isCompressing}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="composer-approval-body">
+                      <div>
+                        <span>工具</span>
+                        <strong>{chat.pendingApproval.toolName}</strong>
+                      </div>
+                      <div>
+                        <span>分组</span>
+                        <strong>{chat.pendingApproval.toolApprovalGroup || "unknown"}</strong>
+                      </div>
+                      <div>
+                        <span>规则段</span>
+                        <strong>{chat.pendingApproval.toolApprovalSection || "unknown"}</strong>
+                      </div>
+                      <div>
+                        <span>调用 ID</span>
+                        <strong>{chat.pendingApproval.toolCallId || "未知"}</strong>
+                      </div>
+                      <div>
+                        <span>调用数</span>
+                        <strong>{chat.pendingApproval.toolCount}</strong>
+                      </div>
+                    </div>
+
+                    <pre className="composer-approval-json">
+                      {JSON.stringify(chat.pendingApproval.arguments ?? {}, null, 2)}
+                    </pre>
+
+                    <div className="composer-approval-actions">
+                      <button
+                        type="button"
+                        className="approval-confirm"
+                        onClick={() => chat.confirmPendingApproval()}
+                        disabled={chat.isStreaming || chat.isCompressing}
+                      >
+                        确认执行
+                      </button>
+                      <button
+                        type="button"
+                        className="approval-reject"
+                        onClick={chat.rejectPendingApproval}
+                        disabled={chat.isStreaming || chat.isCompressing}
+                      >
+                        拒绝
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

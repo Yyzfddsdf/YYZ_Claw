@@ -13,6 +13,7 @@
 - tool: insert_text
 - tool: replace_text
 - tool: run_terminal
+- tool: execute_code
 
 ### patch_edit
 - tool: apply_patch

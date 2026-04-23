@@ -22,6 +22,7 @@ export const APPROVAL_RULES_DEFAULT_MARKDOWN = `# Approval Rules
 - tool: delete_text
 - tool: insert_text
 - tool: replace_text
+- tool: execute_code
 
 ### patch_edit
 - tool: apply_patch

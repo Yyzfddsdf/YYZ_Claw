@@ -174,6 +174,87 @@ function normalizeMessageMeta(meta) {
   return meta && typeof meta === "object" && !Array.isArray(meta) ? { ...meta } : {};
 }
 
+function parseJsonIfString(value) {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!normalized) {
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(normalized);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function resolveClarifyApprovalInput(body = {}) {
+  const approvalInput =
+    body?.approvalInput && typeof body.approvalInput === "object" && !Array.isArray(body.approvalInput)
+      ? body.approvalInput
+      : {};
+  return {
+    selectedOption: String(approvalInput?.selectedOption ?? "").trim(),
+    additionalText: String(approvalInput?.additionalText ?? "").trim()
+  };
+}
+
+function applyClarifyApprovalInput(pendingApproval, clarifyInput = {}) {
+  if (!pendingApproval || String(pendingApproval?.toolName ?? "").trim() !== "clarify") {
+    return pendingApproval;
+  }
+
+  const selectedOption = String(clarifyInput?.selectedOption ?? "").trim();
+  const additionalText = String(clarifyInput?.additionalText ?? "").trim();
+  const hasInput = Boolean(selectedOption || additionalText);
+  if (!hasInput) {
+    return pendingApproval;
+  }
+
+  const toolCalls = Array.isArray(pendingApproval.toolCalls) ? pendingApproval.toolCalls : [];
+  const targetToolCallId = String(pendingApproval.toolCallId ?? "").trim();
+  const nextToolCalls = toolCalls.map((toolCall) => {
+    const toolName = String(toolCall?.function?.name ?? "").trim();
+    const toolCallId = String(toolCall?.id ?? "").trim();
+    const isTargetClarifyCall =
+      toolName === "clarify" && (!targetToolCallId || targetToolCallId === toolCallId);
+    if (!isTargetClarifyCall) {
+      return toolCall;
+    }
+
+    const parsedArguments = parseJsonIfString(toolCall?.function?.arguments);
+    const nextArguments = {
+      ...parsedArguments,
+      selectedOption,
+      additionalText
+    };
+
+    return {
+      ...toolCall,
+      function: {
+        ...toolCall.function,
+        arguments: JSON.stringify(nextArguments)
+      }
+    };
+  });
+
+  const parsedToolArguments = parseJsonIfString(pendingApproval.toolArguments);
+  const nextToolArguments = JSON.stringify({
+    ...parsedToolArguments,
+    selectedOption,
+    additionalText
+  });
+
+  return {
+    ...pendingApproval,
+    toolArguments: nextToolArguments,
+    toolCalls: nextToolCalls
+  };
+}
+
 function mergeParsedFilesIntoMessages(messages, parsedFilePayload) {
   const parsedFiles = Array.isArray(parsedFilePayload?.files) ? parsedFilePayload.files : [];
 
@@ -1417,6 +1498,13 @@ export function createChatController({
         throw conflictError;
       }
 
+      const clarifyInput = resolveClarifyApprovalInput(req.body ?? {});
+      const isClarifyApproval = String(pendingApproval?.toolName ?? "").trim() === "clarify";
+      if (isClarifyApproval && !clarifyInput.selectedOption && !clarifyInput.additionalText) {
+        throw createValidationError("clarify approval requires selectedOption or additionalText");
+      }
+      const resolvedPendingApproval = applyClarifyApprovalInput(pendingApproval, clarifyInput);
+
       initSse(res);
       let foregroundStatus = "idle";
       let foregroundRun = null;
@@ -1432,34 +1520,34 @@ export function createChatController({
           await toolRegistry.refresh();
         }
 
-        orchestratorSupervisorService?.ensureSession?.(pendingApproval.conversationId);
-        const resumedHistory = historyStore.getConversation(pendingApproval.conversationId);
+        orchestratorSupervisorService?.ensureSession?.(resolvedPendingApproval.conversationId);
+        const resumedHistory = historyStore.getConversation(resolvedPendingApproval.conversationId);
         resolvedRuntime =
           conversationAgentRuntimeService &&
           typeof conversationAgentRuntimeService.resolveConversationRuntime === "function"
             ? await conversationAgentRuntimeService.resolveConversationRuntime(
-                pendingApproval.conversationId
+                resolvedPendingApproval.conversationId
               )
             : {
                 history: resumedHistory,
                 sessionId: String(
-                  pendingApproval.executionContext?.sessionId ?? pendingApproval.conversationId
+                  resolvedPendingApproval.executionContext?.sessionId ?? resolvedPendingApproval.conversationId
                 ).trim(),
-                agentId: String(pendingApproval.executionContext?.agentId ?? "").trim(),
-                agentType: String(pendingApproval.executionContext?.agentType ?? "primary").trim(),
+                agentId: String(resolvedPendingApproval.executionContext?.agentId ?? "").trim(),
+                agentType: String(resolvedPendingApproval.executionContext?.agentType ?? "primary").trim(),
                 isSubagent:
                   String(resumedHistory?.source ?? "").trim().toLowerCase() === "subagent",
-                activeSkillNames: Array.isArray(pendingApproval.executionContext?.activeSkillNames)
-                  ? pendingApproval.executionContext.activeSkillNames
+                activeSkillNames: Array.isArray(resolvedPendingApproval.executionContext?.activeSkillNames)
+                  ? resolvedPendingApproval.executionContext.activeSkillNames
                   : [],
                 developerPrompt: String(
-                  pendingApproval.executionContext?.developerPrompt ?? ""
+                  resolvedPendingApproval.executionContext?.developerPrompt ?? ""
                 ).trim(),
                 definitionPrompt: "",
                 chatAgent
               };
         const runtimeChatAgent = resolvedRuntime?.chatAgent ?? chatAgent;
-        const runtimeModel = String(pendingApproval.runtimeConfig?.model ?? "").trim();
+        const runtimeModel = String(resolvedPendingApproval.runtimeConfig?.model ?? "").trim();
         const recorder = new AgentConversationRecorder({
           initialMessages: Array.isArray(resumedHistory?.messages) ? resumedHistory.messages : []
         });
@@ -1467,7 +1555,7 @@ export function createChatController({
         foregroundRun = wakeDispatcher?.beginForegroundRun?.({
           sessionId: resolvedRuntime?.sessionId,
           agentId: resolvedRuntime?.agentId,
-          conversationId: pendingApproval.conversationId,
+          conversationId: resolvedPendingApproval.conversationId,
           allowExistingRun: true,
           allowRestore: true
         }) ?? null;
@@ -1487,15 +1575,15 @@ export function createChatController({
           {
           type: "session_resume",
           approvalId,
-          conversationId: pendingApproval.conversationId
+          conversationId: resolvedPendingApproval.conversationId
           },
           conversationRunCoordinator,
           res
         );
 
         executionContext = {
-          ...(pendingApproval.executionContext ?? {}),
-          conversationId: pendingApproval.conversationId,
+          ...(resolvedPendingApproval.executionContext ?? {}),
+          conversationId: resolvedPendingApproval.conversationId,
           runId: foregroundRun?.runId,
           sessionId: resolvedRuntime?.sessionId,
           agentId: resolvedRuntime?.agentId,
@@ -1506,7 +1594,7 @@ export function createChatController({
           rawConversationMessages: Array.isArray(resumedHistory?.messages)
             ? resumedHistory.messages
             : [],
-          runtimeConfig: pendingApproval.runtimeConfig,
+          runtimeConfig: resolvedPendingApproval.runtimeConfig,
           memoryStore,
           skillCatalog,
           skillValidator,
@@ -1515,8 +1603,8 @@ export function createChatController({
             ? resolvedRuntime.activeSkillNames
             : [],
           developerPrompt: String(
-            resolvedRuntime?.developerPrompt ??
-              pendingApproval.executionContext?.developerPrompt ??
+              resolvedRuntime?.developerPrompt ??
+              resolvedPendingApproval.executionContext?.developerPrompt ??
               ""
           ).trim(),
           orchestratorStore,
@@ -1525,8 +1613,8 @@ export function createChatController({
         };
 
         runResult = await runtimeChatAgent.resumePendingApproval({
-          pendingApproval,
-          runtimeConfig: pendingApproval.runtimeConfig,
+          pendingApproval: resolvedPendingApproval,
+          runtimeConfig: resolvedPendingApproval.runtimeConfig,
           approvalStore: historyStore,
           approvalRules: await loadApprovalRules(approvalRulesStore),
           executionContext,
@@ -1535,7 +1623,7 @@ export function createChatController({
               const usage = normalizeUsageRecordPayload(payload.usage);
               if (usage) {
                 historyStore.recordConversationTokenUsage(
-                  pendingApproval.conversationId,
+                  resolvedPendingApproval.conversationId,
                   usage,
                   {
                     model: String(payload.model ?? runtimeModel ?? "").trim()
@@ -1556,7 +1644,7 @@ export function createChatController({
 
         const nextMessages = recorder.getMessages();
         const updatedResumedHistory = historyStore.mergeConversation({
-          conversationId: pendingApproval.conversationId,
+          conversationId: resolvedPendingApproval.conversationId,
           title: resumedHistory?.title,
           workplacePath: resumedHistory?.workplacePath,
           parentConversationId: resumedHistory?.parentConversationId,
@@ -1572,7 +1660,7 @@ export function createChatController({
 
         if (runResult?.status !== "pending_approval") {
           memorySummaryService?.scheduleRefresh?.({
-            conversationId: pendingApproval.conversationId
+            conversationId: resolvedPendingApproval.conversationId
           });
         }
 
@@ -1608,7 +1696,7 @@ export function createChatController({
           runResult,
           status: foregroundStatus,
           displayName:
-            orchestratorStore?.findAgentByConversationId?.(pendingApproval.conversationId)
+            orchestratorStore?.findAgentByConversationId?.(resolvedPendingApproval.conversationId)
               ?.displayName ?? "",
           agentType: resolvedRuntime?.agentType
         });

@@ -289,15 +289,19 @@ async function selectDirectoryFromSystemDialogWindows(initialPath) {
     "Add-Type -AssemblyName System.Windows.Forms",
     "Add-Type -AssemblyName System.Drawing",
     "$initial = $env:WORKPLACE_INITIAL_PATH",
+    "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea",
     "$owner = New-Object System.Windows.Forms.Form",
     "$owner.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual",
     "$owner.Size = New-Object System.Drawing.Size(1, 1)",
-    "$owner.Location = New-Object System.Drawing.Point(-32000, -32000)",
+    "$owner.Location = New-Object System.Drawing.Point([int]($screen.X + ($screen.Width / 2)), [int]($screen.Y + ($screen.Height / 2)))",
     "$owner.ShowInTaskbar = $false",
+    "$owner.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedToolWindow",
     "$owner.TopMost = $true",
     "$owner.Opacity = 0",
     "$owner.Show()",
+    "$owner.BringToFront()",
     "$owner.Activate()",
+    "[System.Windows.Forms.Application]::DoEvents()",
     "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
     "$dialog.Description = '选择会话工作区目录'",
     "$dialog.ShowNewFolderButton = $true",
@@ -697,7 +701,9 @@ export function createChatController({
     },
 
     listHistories: async (_req, res) => {
-      const histories = historyStore.listConversations().map((history) =>
+      const histories = historyStore.listConversations({
+        excludeSources: ["automation"]
+      }).map((history) =>
         enrichHistorySummary(history, orchestratorStore, historyStore)
       );
       res.json({ histories });

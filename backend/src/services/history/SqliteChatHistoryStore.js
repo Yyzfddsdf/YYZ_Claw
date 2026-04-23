@@ -822,8 +822,39 @@ export class SqliteChatHistoryStore {
     }
   }
 
-  listConversations() {
+  listConversations(options = {}) {
     const db = this.ensureDb();
+    const includeChildren = options.includeChildren !== false;
+    const includeSources = Array.isArray(options.includeSources)
+      ? options.includeSources
+          .map((item) => normalizeConversationSource(item))
+          .filter(Boolean)
+      : [];
+    const excludeSources = Array.isArray(options.excludeSources)
+      ? options.excludeSources
+          .map((item) => normalizeConversationSource(item))
+          .filter(Boolean)
+      : [];
+    const whereClauses = [];
+    const params = [];
+
+    if (!includeChildren) {
+      whereClauses.push("(c.parent_conversation_id IS NULL OR TRIM(c.parent_conversation_id) = '')");
+    }
+
+    if (includeSources.length > 0) {
+      const placeholders = includeSources.map(() => "?").join(", ");
+      whereClauses.push(`c.source IN (${placeholders})`);
+      params.push(...includeSources);
+    }
+
+    if (excludeSources.length > 0) {
+      const placeholders = excludeSources.map(() => "?").join(", ");
+      whereClauses.push(`c.source NOT IN (${placeholders})`);
+      params.push(...excludeSources);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     const rows = db
       .prepare(
@@ -869,10 +900,11 @@ export class SqliteChatHistoryStore {
           ''
         ) AS preview
           FROM conversations c
+          ${whereSql}
           ORDER BY c.updated_at DESC
         `
       )
-      .all();
+      .all(...params);
 
     return rows.map((item) => ({
       id: String(item.id),

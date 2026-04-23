@@ -44,6 +44,8 @@ import { RemoteControlProviderAdapter } from "../integrations/remote-control/pro
 import { RemoteControlProviderRegistry } from "../integrations/remote-control/providers/RemoteControlProviderRegistry.js";
 import { HookBlockBuilder } from "../services/hooks/HookBlockBuilder.js";
 import { HookRegistry } from "../services/hooks/HookRegistry.js";
+import { AutomationSchedulerService } from "../services/automation/AutomationSchedulerService.js";
+import { SqliteAutomationTaskStore } from "../services/automation/SqliteAutomationTaskStore.js";
 import { LongTermMemoryRecallService } from "../services/memory/LongTermMemoryRecallService.js";
 import { MemorySummaryService } from "../services/memory/MemorySummaryService.js";
 import { SqliteLongTermMemoryStore } from "../services/memory/SqliteLongTermMemoryStore.js";
@@ -135,6 +137,11 @@ export async function createServices() {
     dirPath: HISTORY_DIR
   });
   await orchestratorStore.initialize();
+  const automationTaskStore = new SqliteAutomationTaskStore({
+    dbFilePath: HISTORY_DB_FILE,
+    dirPath: HISTORY_DIR
+  });
+  await automationTaskStore.initialize();
 
   const memoryStore = new SqliteLongTermMemoryStore({
     dbFilePath: MEMORY_DB_FILE
@@ -275,6 +282,17 @@ export async function createServices() {
     orchestratorStore,
     orchestratorSupervisorService: null
   });
+  const automationSchedulerService = new AutomationSchedulerService({
+    taskStore: automationTaskStore,
+    historyStore,
+    runtimeService: conversationAgentRuntimeService,
+    wakeDispatcher: null,
+    conversationRunCoordinator,
+    orchestratorSupervisorService: null,
+    defaultWorkplacePath: PROJECT_ROOT,
+    tickIntervalMs: 15000,
+    maxDueTasksPerTick: 10
+  });
   const wakeDispatcher = new AgentWakeDispatcher({
     historyStore,
     schedulerService: orchestratorSchedulerService,
@@ -304,6 +322,9 @@ export async function createServices() {
   });
   conversationAgentRuntimeService.chatAgent = chatAgent;
   conversationAgentRuntimeService.orchestratorSupervisorService = orchestratorSupervisorService;
+  automationSchedulerService.wakeDispatcher = wakeDispatcher;
+  automationSchedulerService.orchestratorSupervisorService = orchestratorSupervisorService;
+  automationSchedulerService.start();
 
   return {
     toolRegistry,
@@ -340,6 +361,8 @@ export async function createServices() {
     skillValidator,
     mcpManager,
     historyStore,
+    automationTaskStore,
+    automationSchedulerService,
     remoteControlHistoryStore,
     memoryStore,
     longTermMemoryRecallService,

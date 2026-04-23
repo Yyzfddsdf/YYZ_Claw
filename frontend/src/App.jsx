@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  fetchAutomationTasks,
+  runAutomationTaskNow,
+  updateAutomationTask
+} from "./api/automationApi";
 import { fetchConfig, saveConfig } from "./api/configApi";
 import { fetchMcpConfig, saveMcpConfig } from "./api/mcpApi";
+import { AutomationPanel } from "./modules/automation/AutomationPanel";
 import { ChatPanel } from "./modules/chat/ChatPanel";
 import { useChatSession } from "./modules/chat/useChatSession";
 import { ConfigPanel } from "./modules/config/ConfigPanel";
@@ -47,6 +53,8 @@ export default function App() {
   const [mcpLoading, setMcpLoading] = useState(true);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [activeWorkspace, setActiveWorkspace] = useState("chat");
+  const [automationConversationId, setAutomationConversationId] = useState("");
+  const [automationTask, setAutomationTask] = useState(null);
 
   const chat = useChatSession(Number(config.maxContextWindow || 0));
 
@@ -155,6 +163,69 @@ export default function App() {
     }
   }
 
+  async function loadAutomationTaskByConversationId(conversationId) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      setAutomationTask(null);
+      return null;
+    }
+
+    const response = await fetchAutomationTasks();
+    const list = Array.isArray(response?.tasks) ? response.tasks : [];
+    const matchedTask =
+      list.find(
+        (item) =>
+          String(item?.conversationId ?? "").trim() === normalizedConversationId
+      ) ?? null;
+    setAutomationTask(matchedTask);
+    return matchedTask;
+  }
+
+  async function handleOpenAutomationConversation(history) {
+    const conversationId = String(history?.id ?? "").trim();
+    if (!conversationId) {
+      return;
+    }
+    const conversationSource = String(history?.source ?? "").trim().toLowerCase();
+    const automationRootConversationId =
+      conversationSource === "subagent"
+        ? String(history?.parentConversationId ?? "").trim() || conversationId
+        : conversationId;
+
+    await chat.loadConversation(conversationId);
+    await loadAutomationTaskByConversationId(automationRootConversationId);
+    setAutomationConversationId(conversationId);
+    setActiveWorkspace("automation-chat");
+  }
+
+  async function handleAutomationScheduleToggle(nextEnabled) {
+    if (!automationTask?.id) {
+      return;
+    }
+    await updateAutomationTask(automationTask.id, {
+      enabled: Boolean(nextEnabled)
+    });
+    await loadAutomationTaskByConversationId(automationConversationId);
+  }
+
+  async function handleAutomationScheduleRunNow() {
+    if (!automationTask?.id) {
+      return;
+    }
+    await runAutomationTaskNow(automationTask.id);
+    await loadAutomationTaskByConversationId(automationConversationId);
+  }
+
+  async function handleAutomationScheduleChangeTime(nextTimeOfDay) {
+    if (!automationTask?.id) {
+      return;
+    }
+    await updateAutomationTask(automationTask.id, {
+      timeOfDay: String(nextTimeOfDay ?? "").trim()
+    });
+    await loadAutomationTaskByConversationId(automationConversationId);
+  }
+
   const canChat = useMemo(() => hasRuntimeConfig(config), [config]);
 
   return (
@@ -205,6 +276,22 @@ export default function App() {
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
             </svg>
             配置中心
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeWorkspace === "automation" || activeWorkspace === "automation-chat"}
+            className={`nav-item ${
+              activeWorkspace === "automation" || activeWorkspace === "automation-chat" ? "active" : ""
+            }`}
+            onClick={() => setActiveWorkspace("automation")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M8 2v3M16 2v3M4 8h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
+              <path d="M8 13h3M8 17h8" />
+            </svg>
+            自动化
           </button>
 
           <button
@@ -269,9 +356,48 @@ export default function App() {
           </section>
         )}
 
+        {activeWorkspace === "automation-chat" && (
+          <section className="panel panel-chat" role="tabpanel" aria-label="automation chat workspace">
+            <ChatPanel
+              chat={chat}
+              modelContextWindow={Number(config.maxContextWindow ?? 0)}
+              disabled={!canChat}
+              disabledReason="请先到配置中心保存 model / baseURL / apiKey"
+              onNavigate={(nav) => setActiveWorkspace(nav)}
+              showHistoryPane={false}
+              onBack={() => setActiveWorkspace("automation")}
+              automationSchedule={
+                automationTask
+                  ? {
+                      ...automationTask,
+                      onToggleEnabled: handleAutomationScheduleToggle,
+                      onRunNow: handleAutomationScheduleRunNow,
+                      onChangeTime: handleAutomationScheduleChangeTime
+                    }
+                  : null
+              }
+            />
+          </section>
+        )}
+
         {activeWorkspace === "remote-control" && (
           <section className="panel panel-remote-control" role="tabpanel" aria-label="remote control workspace">
             <RemoteControlPanel />
+          </section>
+        )}
+
+        {activeWorkspace === "automation" && (
+          <section className="panel panel-automation" role="tabpanel" aria-label="automation workspace">
+            <AutomationPanel
+              onOpenConversation={(history) => {
+                void handleOpenAutomationConversation(history);
+              }}
+              activeConversationId={
+                activeWorkspace === "automation-chat"
+                  ? String(chat.activeConversationId ?? "").trim()
+                  : String(automationConversationId ?? "").trim()
+              }
+            />
           </section>
         )}
       </main>

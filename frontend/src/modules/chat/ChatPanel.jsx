@@ -2,6 +2,7 @@
 
 import { parseChatFiles } from "../../api/chatApi";
 import { formatTimestamp } from "../../shared/formatTimestamp";
+import { TimePickerDropdown } from "../../shared/TimePickerDropdown";
 import { MarkdownMessage } from "./MarkdownMessage";
 import "./chat.css";
 import { parseToolMessagePayload } from "./toolMessageCodec";
@@ -479,7 +480,21 @@ function formatReasoningDuration(ms) {
   return `${seconds}秒`;
 }
 
-export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReason, onNavigate }) {
+function normalizeWorkplaceGroupLabel(workplacePath) {
+  const normalized = String(workplacePath ?? "").trim();
+  return normalized || "未设置工作区";
+}
+
+export function ChatPanel({
+  chat,
+  modelContextWindow = 0,
+  disabled,
+  disabledReason,
+  onNavigate,
+  showHistoryPane = true,
+  onBack,
+  automationSchedule = null
+}) {
   const [draft, setDraft] = useState("");
   const [pendingImages, setPendingImages] = useState([]);
   const [pendingFiles, setPendingFiles] = useState([]);
@@ -489,7 +504,7 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
   const [reasoningNow, setReasoningNow] = useState(() => Date.now());
   const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
-  const [historyPaneOpen, setHistoryPaneOpen] = useState(true);
+  const [historyPaneOpen, setHistoryPaneOpen] = useState(Boolean(showHistoryPane));
   const [contextPopupOpen, setContextPopupOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [viewingImage, setViewingImage] = useState(null);
@@ -507,6 +522,10 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
   const isScrollTrackingReadyRef = useRef(false);
   const contextPopupRef = useRef(null);
   const approvalMenuRef = useRef(null);
+
+  useEffect(() => {
+    setHistoryPaneOpen(Boolean(showHistoryPane));
+  }, [showHistoryPane]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -622,6 +641,30 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
       childItemsByParentId
     };
   }, [historyConversationList, topLevelHistoryIds]);
+  const workplaceHistorySections = useMemo(() => {
+    const sections = [];
+    const sectionIndexByKey = new Map();
+
+    for (const item of groupedHistoryList.topLevelItems) {
+      const workplacePath = String(item?.workplacePath ?? "").trim();
+      const workplaceKey = workplacePath || "__empty_workplace__";
+      const sectionIndex = sectionIndexByKey.get(workplaceKey);
+      if (Number.isInteger(sectionIndex)) {
+        sections[sectionIndex].items.push(item);
+        continue;
+      }
+
+      sectionIndexByKey.set(workplaceKey, sections.length);
+      sections.push({
+        workplaceKey,
+        workplaceLabel: normalizeWorkplaceGroupLabel(workplacePath),
+        workplacePath,
+        items: [item]
+      });
+    }
+
+    return sections;
+  }, [groupedHistoryList.topLevelItems]);
   const activeHistoryConversation = useMemo(
     () =>
       historyConversationList.find(
@@ -863,6 +906,14 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
     maxContextWindow > 0 ? Math.min(1, latestTokenTotal / maxContextWindow) : 0;
   const contextWindowUsagePercent = Math.round(contextWindowUsageRatio * 100);
   const contextWindowRemainder = maxContextWindow > 0 ? maxContextWindow - latestTokenTotal : 0;
+  const automationScheduleEnabled =
+    automationSchedule && typeof automationSchedule === "object"
+      ? Boolean(automationSchedule.enabled)
+      : false;
+  const automationScheduleTime = useMemo(() => {
+    const normalized = String(automationSchedule?.timeOfDay ?? "").trim();
+    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(normalized) ? normalized : "09:00";
+  }, [automationSchedule?.timeOfDay]);
 
   function toggleToolResult(messageId) {
     setExpandedToolMap((prev) => ({
@@ -1148,7 +1199,8 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
 
   return (
     <div className="module chat-module">
-      <div className="chat-workspace">
+      <div className={`chat-workspace ${showHistoryPane ? "" : "chat-workspace-no-history"}`}>
+        {showHistoryPane && (
         <aside className="history-pane" style={{ display: historyPaneOpen ? 'flex' : 'none' }}>
           <div className="history-pane-head">
             <h3>历史记录</h3>
@@ -1165,11 +1217,21 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
           <div className="history-list">
             {!chat.historyLoaded && <p className="empty-note">正在加载历史...</p>}
 
-            {chat.historyLoaded && groupedHistoryList.topLevelItems.length === 0 && (
+            {chat.historyLoaded && workplaceHistorySections.length === 0 && (
               <p className="empty-note">暂无历史会话</p>
             )}
 
-            {groupedHistoryList.topLevelItems.map((item) => {
+            {workplaceHistorySections.map((section) => (
+              <section key={section.workplaceKey} className="history-workspace-section">
+                <header
+                  className="history-workspace-header"
+                  title={section.workplacePath || "未设置工作区"}
+                >
+                  <span className="history-workspace-name">{section.workplaceLabel}</span>
+                  <span className="history-workspace-count">{section.items.length}</span>
+                </header>
+
+                {section.items.map((item) => {
               const childItems = groupedHistoryList.childItemsByParentId.get(String(item.id ?? "").trim()) ?? [];
               const hasChildren = childItems.length > 0;
               const isParentActive = String(item.id ?? "").trim() === String(chat.activeConversationId ?? "").trim();
@@ -1180,160 +1242,177 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
               const isExpanded =
                 !hasChildren || Boolean(expandedHistoryGroupMap?.[normalizedItemId]);
 
-              return (
-                <article
-                  key={item.id}
-                  className={`history-group ${isExpanded ? "history-group-expanded" : ""}`}
-                >
-                  <div
-                    className={`history-item ${
-                      isParentActive ? "history-item-active" : containsActiveChild ? "history-item-contains-active" : ""
-                    } ${hasChildren ? "history-item-has-children" : ""}`}
-                  >
-                    <button
-                      type="button"
-                      className="history-item-main"
-                      onClick={() => chat.loadConversation(item.id)}
+                  return (
+                    <article
+                      key={item.id}
+                      className={`history-group ${isExpanded ? "history-group-expanded" : ""}`}
                     >
-                      <div className="history-item-top">
-                        <strong>{item.title || "未命名会话"}</strong>
-                        <div className="history-item-meta">
-                          {String(item.source ?? "").trim() === "subagent" ? (
-                            <span className="history-item-badge">
-                              {item.agentDisplayName || "子智能体"}
-                            </span>
-                          ) : String(item.source ?? "").trim() === "fork" ? (
-                            <span className="history-item-badge">Fork</span>
-                          ) : hasChildren ? (
-                            <span className="history-item-badge">子智能体 {childItems.length}</span>
-                          ) : null}
-                          {Boolean(item.agentBusy) && (
-                            <span className="history-item-badge">运行中</span>
-                          )}
-                          <span>{formatTimestamp(item.updatedAt)}</span>
-                        </div>
-                      </div>
-                      <p>{item.preview || "暂无内容"}</p>
-                    </button>
-
-                    {hasChildren && (
-                      <button
-                        type="button"
-                        className={`history-item-toggle ${isExpanded ? "is-expanded" : ""}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleHistoryGroup(item.id);
-                        }}
-                        aria-label={isExpanded ? "收起子智能体对话" : "展开子智能体对话"}
-                        title={isExpanded ? "收起子智能体对话" : "展开子智能体对话"}
+                      <div
+                        className={`history-item ${
+                          isParentActive ? "history-item-active" : containsActiveChild ? "history-item-contains-active" : ""
+                        } ${hasChildren ? "history-item-has-children" : ""}`}
                       >
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m9 6l6 6l-6 6" />
-                        </svg>
-                      </button>
-                    )}
-
-                    <div className="history-item-actions">
-                      {String(item.source ?? "").trim() !== "subagent" && (
                         <button
                           type="button"
-                          className="history-item-fork"
-                          onClick={() => chat.forkConversation(item.id)}
-                          disabled={chat.isStreaming}
-                          aria-label="Fork 该历史"
+                          className="history-item-main"
+                          onClick={() => chat.loadConversation(item.id)}
                         >
-                          Fork
+                          <div className="history-item-top">
+                            <strong>{item.title || "未命名会话"}</strong>
+                            <div className="history-item-meta">
+                              {String(item.source ?? "").trim() === "subagent" ? (
+                                <span className="history-item-badge">
+                                  {item.agentDisplayName || "子智能体"}
+                                </span>
+                              ) : String(item.source ?? "").trim() === "fork" ? (
+                                <span className="history-item-badge">Fork</span>
+                              ) : hasChildren ? (
+                                <span className="history-item-badge">子智能体 {childItems.length}</span>
+                              ) : null}
+                              {Boolean(item.agentBusy) && (
+                                <span className="history-item-badge">运行中</span>
+                              )}
+                              <span>{formatTimestamp(item.updatedAt)}</span>
+                            </div>
+                          </div>
+                          <p>{item.preview || "暂无内容"}</p>
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        className="history-item-delete"
-                        onClick={() => chat.deleteConversation(item.id)}
-                        disabled={chat.isStreaming || chat.isCompressing}
-                        aria-label="删除该历史"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
 
-                  {hasChildren && isExpanded && (
-                    <div className="history-subitem-list">
-                      {childItems.map((child) => {
-                        const isChildActive =
-                          String(child?.id ?? "").trim() === String(chat.activeConversationId ?? "").trim();
-                        return (
-                          <article
-                            key={child.id}
-                            className={`history-subitem ${isChildActive ? "history-subitem-active" : ""}`}
+                        {hasChildren && (
+                          <button
+                            type="button"
+                            className={`history-item-toggle ${isExpanded ? "is-expanded" : ""}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleHistoryGroup(item.id);
+                            }}
+                            aria-label={isExpanded ? "收起子智能体对话" : "展开子智能体对话"}
+                            title={isExpanded ? "收起子智能体对话" : "展开子智能体对话"}
                           >
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="m9 6l6 6l-6 6" />
+                            </svg>
+                          </button>
+                        )}
+
+                        <div className="history-item-actions">
+                          {String(item.source ?? "").trim() !== "subagent" && (
                             <button
                               type="button"
-                              className="history-subitem-main"
-                              onClick={() => chat.loadConversation(child.id)}
+                              className="history-item-fork"
+                              onClick={() => chat.forkConversation(item.id)}
+                              disabled={chat.isStreaming}
+                              aria-label="Fork 该历史"
                             >
-                              <div className="history-item-top">
-                                <strong>{child.title || child.agentDisplayName || "子智能体对话"}</strong>
-                                <div className="history-item-meta">
-                                  <span className="history-item-badge">
-                                    {child.agentDisplayName || child.agentType || "子智能体"}
-                                  </span>
-                                  {Boolean(child.agentBusy) && (
-                                    <span className="history-item-badge">运行中</span>
-                                  )}
-                                  <span>{formatTimestamp(child.updatedAt)}</span>
-                                </div>
-                              </div>
-                              <p>{child.preview || "暂无内容"}</p>
+                              Fork
                             </button>
+                          )}
+                          <button
+                            type="button"
+                            className="history-item-delete"
+                            onClick={() => chat.deleteConversation(item.id)}
+                            disabled={chat.isStreaming || chat.isCompressing}
+                            aria-label="删除该历史"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </div>
 
-                            <div className="history-subitem-actions">
-                              <button
-                                type="button"
-                                className="history-item-delete"
-                                onClick={() => chat.deleteConversation(child.id)}
-                                disabled={chat.isStreaming || chat.isCompressing}
-                                aria-label="删除该子智能体历史"
+                      {hasChildren && isExpanded && (
+                        <div className="history-subitem-list">
+                          {childItems.map((child) => {
+                            const isChildActive =
+                              String(child?.id ?? "").trim() === String(chat.activeConversationId ?? "").trim();
+                            return (
+                              <article
+                                key={child.id}
+                                className={`history-subitem ${isChildActive ? "history-subitem-active" : ""}`}
                               >
-                                删除
-                              </button>
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
+                                <button
+                                  type="button"
+                                  className="history-subitem-main"
+                                  onClick={() => chat.loadConversation(child.id)}
+                                >
+                                  <div className="history-item-top">
+                                    <strong>{child.title || child.agentDisplayName || "子智能体对话"}</strong>
+                                    <div className="history-item-meta">
+                                      <span className="history-item-badge">
+                                        {child.agentDisplayName || child.agentType || "子智能体"}
+                                      </span>
+                                      {Boolean(child.agentBusy) && (
+                                        <span className="history-item-badge">运行中</span>
+                                      )}
+                                      <span>{formatTimestamp(child.updatedAt)}</span>
+                                    </div>
+                                  </div>
+                                  <p>{child.preview || "暂无内容"}</p>
+                                </button>
+
+                                <div className="history-subitem-actions">
+                                  <button
+                                    type="button"
+                                    className="history-item-delete"
+                                    onClick={() => chat.deleteConversation(child.id)}
+                                    disabled={chat.isStreaming || chat.isCompressing}
+                                    aria-label="删除该子智能体历史"
+                                  >
+                                    删除
+                                  </button>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </section>
+            ))}
           </div>
 
         </aside>
+        )}
 
         <section className="chat-pane">
           <div className="chat-pane-head">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <button
-                  type="button"
-                  onClick={() => setHistoryPaneOpen((prev) => !prev)}
-                  title="切换会话记录"
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '0.2rem',
-                    borderRadius: '4px',
-                    color: 'var(--text-muted)'
-                  }}
-                  onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-active)'}
-                  onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-                >
-                  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
+                {showHistoryPane ? (
+                  <button
+                    type="button"
+                    onClick={() => setHistoryPaneOpen((prev) => !prev)}
+                    title="切换会话记录"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '0.2rem',
+                      borderRadius: '4px',
+                      color: 'var(--text-muted)'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-active)'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="chat-back-btn"
+                    onClick={() => onBack?.()}
+                    title="返回自动化列表"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m15 18-6-6 6-6" />
+                    </svg>
+                    返回
+                  </button>
+                )}
                 <h3>{chat.activeConversationTitle || "当前会话"}</h3>
                 {isSubagentConversation && (
                   <span className="history-item-badge">
@@ -1403,6 +1482,41 @@ export function ChatPanel({ chat, modelContextWindow = 0, disabled, disabledReas
               />
             </section>
           )}
+
+          {automationSchedule ? (
+            <section className="chat-automation-schedule">
+              <div className="chat-automation-schedule-meta">
+                <strong>{automationSchedule.name || "自动化调度"}</strong>
+                <span>
+                  {automationScheduleEnabled ? "启用中" : "已停用"}
+                  {automationSchedule?.nextRunAt ? ` · 下次 ${formatTimestamp(automationSchedule.nextRunAt)}` : ""}
+                </span>
+              </div>
+              <div className="chat-automation-schedule-controls">
+                <div className="chat-automation-time-picker">
+                  <TimePickerDropdown
+                    value={automationScheduleTime}
+                    onChange={(nextValue) => automationSchedule.onChangeTime?.(nextValue)}
+                    ariaLabel="自动化执行时间"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="mode-pill"
+                  onClick={() => automationSchedule.onToggleEnabled?.(!automationScheduleEnabled)}
+                >
+                  {automationScheduleEnabled ? "停用调度" : "启用调度"}
+                </button>
+                <button
+                  type="button"
+                  className="mode-pill"
+                  onClick={() => automationSchedule.onRunNow?.()}
+                >
+                  立即执行
+                </button>
+              </div>
+            </section>
+          ) : null}
 
           <div className="chat-workplace-row">
             <div className="chat-workplace-meta">

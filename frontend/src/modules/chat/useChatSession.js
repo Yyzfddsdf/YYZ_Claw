@@ -924,10 +924,6 @@ export function useChatSession(maxContextWindow = 0) {
     compressionState.inProgress &&
     String(compressionState.conversationId ?? "").trim() === String(activeConversationId ?? "").trim();
   const isDraftConversationActive = draftConversation?.id === activeConversationId;
-  const skillsDrawerStorageKey = useMemo(
-    () => (activeConversationId ? `chat.skills.drawer.open.${activeConversationId}` : ""),
-    [activeConversationId]
-  );
 
   const activeConversationTitle = useMemo(() => {
     if (draftConversation?.id === activeConversationId) {
@@ -1291,32 +1287,6 @@ export function useChatSession(maxContextWindow = 0) {
       }
     };
   }, [activeConversationWorkplace]);
-
-  useEffect(() => {
-    if (!skillsDrawerStorageKey) {
-      setSkillsDrawerOpen(false);
-      return;
-    }
-
-    try {
-      const storedValue = window.localStorage.getItem(skillsDrawerStorageKey);
-      setSkillsDrawerOpen(storedValue === "1");
-    } catch {
-      setSkillsDrawerOpen(false);
-    }
-  }, [skillsDrawerStorageKey]);
-
-  useEffect(() => {
-    if (!skillsDrawerStorageKey) {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem(skillsDrawerStorageKey, skillsDrawerOpen ? "1" : "0");
-    } catch {
-      // Ignore storage failures.
-    }
-  }, [skillsDrawerStorageKey, skillsDrawerOpen]);
 
   useEffect(() => {
     lastPersistedSignatureRef.current = "";

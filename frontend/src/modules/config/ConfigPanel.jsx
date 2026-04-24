@@ -13,6 +13,10 @@ function normalizeConfig(config) {
     compressionModel: config?.compressionModel ?? "",
     compressionBaseURL: config?.compressionBaseURL ?? "",
     compressionApiKey: config?.compressionApiKey ?? "",
+    sttProvider: config?.sttProvider ?? "local",
+    sttCloudflareApiToken: config?.sttCloudflareApiToken ?? "",
+    sttCloudflareAccountId: config?.sttCloudflareAccountId ?? "",
+    sttCloudflareModel: config?.sttCloudflareModel ?? "@cf/openai/whisper-large-v3-turbo",
     maxContextWindow:
       config?.maxContextWindow === undefined || config?.maxContextWindow === null
         ? ""
@@ -64,6 +68,7 @@ export function ConfigPanel({
   const [mcpSaveMessage, setMcpSaveMessage] = useState("");
   const [expandedServers, setExpandedServers] = useState({});
   const [openTransportMenuIndex, setOpenTransportMenuIndex] = useState(-1);
+  const [sttProviderMenuOpen, setSttProviderMenuOpen] = useState(false);
 
   useEffect(() => {
     setForm(normalizeConfig(initialConfig));
@@ -79,6 +84,7 @@ export function ConfigPanel({
         return;
       }
       setOpenTransportMenuIndex(-1);
+      setSttProviderMenuOpen(false);
     }
 
     document.addEventListener("pointerdown", handleDocumentPointerDown);
@@ -92,6 +98,13 @@ export function ConfigPanel({
     () => [
       { value: "stdio", label: "Stdio (本地进程)" },
       { value: "http", label: "SSE (远程 HTTP)" }
+    ],
+    []
+  );
+  const sttProviderOptions = useMemo(
+    () => [
+      { value: "local", label: "local（本地 ONNX）" },
+      { value: "cloudflare", label: "cloudflare（远端 API）" }
     ],
     []
   );
@@ -255,6 +268,88 @@ export function ConfigPanel({
               onChanges={[v => setForm({...form, compressionModel: v}), v => setForm({...form, compressionBaseURL: v}), v => setForm({...form, compressionApiKey: v})]} 
               disabled={loading || saving} 
             />
+            <div className="config-item">
+              <div className="config-item-info">
+                <span className="config-item-label">STT 路径</span>
+                <span className="config-item-desc">选择语音转文字使用本地 ONNX 或 Cloudflare 远端。不会自动兜底切换。</span>
+              </div>
+              <div className="config-item-control">
+                <div className="select-container">
+                  <button
+                    type="button"
+                    className={`select-trigger ${sttProviderMenuOpen ? "is-active" : ""}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (loading || saving) {
+                        return;
+                      }
+                      setOpenTransportMenuIndex(-1);
+                      setSttProviderMenuOpen((prev) => !prev);
+                    }}
+                    disabled={loading || saving}
+                  >
+                    <span>
+                      {sttProviderOptions.find((item) => item.value === form.sttProvider)?.label ||
+                        "local（本地 ONNX）"}
+                    </span>
+                  </button>
+                  {sttProviderMenuOpen && (
+                    <div className="select-dropdown" onClick={(event) => event.stopPropagation()}>
+                      {sttProviderOptions.map((option) => (
+                        <div
+                          key={`stt_provider_${option.value}`}
+                          role="button"
+                          tabIndex={0}
+                          className={`select-option ${
+                            form.sttProvider === option.value ? "is-selected" : ""
+                          }`}
+                          onClick={() => {
+                            setForm({ ...form, sttProvider: option.value });
+                            setSttProviderMenuOpen(false);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setForm({ ...form, sttProvider: option.value });
+                              setSttProviderMenuOpen(false);
+                            }
+                          }}
+                        >
+                          {option.label}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {form.sttProvider === "cloudflare" && (
+              <>
+                <ConfigRow
+                  label="STT Cloudflare Token"
+                  desc="Cloudflare API Token（Workers AI 权限）"
+                  value={form.sttCloudflareApiToken}
+                  onChange={v => setForm({ ...form, sttCloudflareApiToken: v })}
+                  isPassword
+                  disabled={loading || saving}
+                />
+                <ConfigRow
+                  label="STT Cloudflare Account"
+                  desc="Cloudflare Account ID"
+                  value={form.sttCloudflareAccountId}
+                  onChange={v => setForm({ ...form, sttCloudflareAccountId: v })}
+                  disabled={loading || saving}
+                />
+                <ConfigRow
+                  label="STT Cloudflare Model"
+                  desc="示例：@cf/openai/whisper-large-v3-turbo"
+                  value={form.sttCloudflareModel}
+                  onChange={v => setForm({ ...form, sttCloudflareModel: v })}
+                  disabled={loading || saving}
+                />
+              </>
+            )}
           </div>
         </div>
 
@@ -316,6 +411,7 @@ export function ConfigPanel({
                         className={`select-trigger ${openTransportMenuIndex === sIndex ? "is-active" : ""}`}
                         onClick={(event) => {
                           event.stopPropagation();
+                          setSttProviderMenuOpen(false);
                           setOpenTransportMenuIndex((prev) => (prev === sIndex ? -1 : sIndex));
                         }}
                         disabled={mcpSaving}

@@ -28,7 +28,11 @@ function createEmptyConfig() {
     maxContextWindow: "",
     compressionModel: "",
     compressionBaseURL: "",
-    compressionApiKey: ""
+    compressionApiKey: "",
+    sttProvider: "local",
+    sttCloudflareApiToken: "",
+    sttCloudflareAccountId: "",
+    sttCloudflareModel: "@cf/openai/whisper-large-v3-turbo"
   };
 }
 
@@ -86,7 +90,12 @@ export default function App() {
               : String(response.config.maxContextWindow),
           compressionModel: response?.config?.compressionModel ?? "",
           compressionBaseURL: response?.config?.compressionBaseURL ?? "",
-          compressionApiKey: response?.config?.compressionApiKey ?? ""
+          compressionApiKey: response?.config?.compressionApiKey ?? "",
+          sttProvider: response?.config?.sttProvider ?? "local",
+          sttCloudflareApiToken: response?.config?.sttCloudflareApiToken ?? "",
+          sttCloudflareAccountId: response?.config?.sttCloudflareAccountId ?? "",
+          sttCloudflareModel:
+            response?.config?.sttCloudflareModel ?? "@cf/openai/whisper-large-v3-turbo"
         });
       } catch (error) {
         if (!mounted) return;

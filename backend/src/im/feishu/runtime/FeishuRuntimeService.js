@@ -20,6 +20,7 @@ export class FeishuRuntimeService extends RemoteControlRuntimeService {
       longTermMemoryRecallService: options.longTermMemoryRecallService,
       remoteHookRegistry: options.remoteHookRegistry,
       remoteHookBlockBuilder: options.remoteHookBlockBuilder,
+      edgeTextToSpeechService: options.edgeTextToSpeechService,
       defaultWorkplacePath: options.defaultWorkplacePath,
       queueFlushDelayMs: options.queueFlushDelayMs
     });

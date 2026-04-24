@@ -69,6 +69,38 @@
 3. 打开页面
    - `http://localhost:3000`
 
+## STT（本地 ONNX）
+
+### 1. 模型缓存路径
+
+- 当前后端 STT 使用 `@huggingface/transformers + onnxruntime-node`
+- 模型缓存目录固定为：
+  - `D:\Work\YYZ_Claw\models\onnx`
+- 代码位置：
+  - `backend/src/bootstrap/createServices.js`
+  - `backend/src/services/stt/SpeechToTextService.js`
+  - `backend/src/services/stt/SpeechToText.worker.js`
+
+### 2. 自动下载机制
+
+- 首次调用 `POST /api/stt/transcribe` 时，如果本地没有对应模型，会自动下载到 `models/onnx`
+- 当前默认模型：`Xenova/whisper-tiny`
+- 后续调用复用本地缓存，不重复下载
+
+### 3. 单独预下载命令（不走 API）
+
+在项目根目录执行（PowerShell）：
+
+```powershell
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+node --input-type=module -e "import { pipeline, env } from '@huggingface/transformers'; env.allowLocalModels=true; env.useBrowserCache=false; env.cacheDir='D:/Work/YYZ_Claw/models/onnx'; await pipeline('automatic-speech-recognition','Xenova/whisper-tiny'); console.log('STT model ready at', env.cacheDir);"
+```
+
+说明：
+
+- 这条命令只负责把模型下载到本地缓存，不会保存任何用户音频
+- 如果要换更大模型，把 `Xenova/whisper-tiny` 改成 `Xenova/whisper-base` / `Xenova/whisper-small`
+
 ## 配置流程
 
 1. 在页面左侧填写 model/baseURL/apiKey
@@ -1058,6 +1090,7 @@ mcp__filesystem__read_file
 - `PUT/PATCH /api/memory/nodes/:nodeId`
 - `DELETE /api/memory/nodes/:nodeId`
 - `POST /api/memory/node-relations`
+- `POST /api/stt/transcribe`（支持 `multipart file` 和 `raw audio bytes`，转写结果仅回传文本，不自动发送消息）
 
 ## 说明
 

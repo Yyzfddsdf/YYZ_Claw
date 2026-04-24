@@ -67,6 +67,8 @@ import { SkillValidator } from "../services/skills/SkillValidator.js";
 import { AgentRuntimeFactory } from "../services/subagents/AgentRuntimeFactory.js";
 import { SubagentDefinitionRegistry } from "../services/subagents/SubagentDefinitionRegistry.js";
 import { ConversationEventBroadcaster } from "../services/stream/ConversationEventBroadcaster.js";
+import { SpeechToTextService } from "../services/stt/SpeechToTextService.js";
+import { EdgeTextToSpeechService } from "../services/tts/EdgeTextToSpeechService.js";
 import { ToolRegistry } from "../services/tools/ToolRegistry.js";
 import { UnifiedToolRegistry } from "../services/tools/UnifiedToolRegistry.js";
 
@@ -115,6 +117,16 @@ export async function createServices() {
     configStore: mcpConfigStore
   });
   await mcpManager.refresh();
+  const speechToTextService = new SpeechToTextService({
+    cacheDir: path.join(PROJECT_ROOT, "models", "onnx")
+  });
+  const edgeTextToSpeechService = new EdgeTextToSpeechService({
+    defaultVoice: "zh-CN-XiaoxiaoNeural",
+    defaultRate: "+0%",
+    defaultVolume: "+0%",
+    defaultPitch: "+0Hz",
+    connectionTimeoutMs: 20000
+  });
 
   const toolRegistry = new UnifiedToolRegistry({
     localToolRegistry,
@@ -229,13 +241,15 @@ export async function createServices() {
     longTermMemoryRecallService,
     remoteHookRegistry,
     remoteHookBlockBuilder,
+    edgeTextToSpeechService,
     defaultWorkplacePath: PROJECT_ROOT,
     queueFlushDelayMs: 1200
   });
   const feishuWebhookIngestService = new FeishuWebhookIngestService({
     runtimeService: feishuRuntimeService,
     openApiClient: feishuOpenApiClient,
-    attachmentParserService
+    attachmentParserService,
+    speechToTextService
   });
   const feishuLongConnectionService = new FeishuLongConnectionService({
     configStore: feishuConfigStore,
@@ -360,6 +374,8 @@ export async function createServices() {
     skillPromptBuilder,
     skillValidator,
     mcpManager,
+    speechToTextService,
+    edgeTextToSpeechService,
     historyStore,
     automationTaskStore,
     automationSchedulerService,

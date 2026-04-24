@@ -4,8 +4,11 @@
   max-width: 960px;
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
   overflow-y: auto;
-  height: 100%;
+  overflow-x: visible;
+  min-height: 100%;
+  height: auto;
 }
 
 .module-title-wrap {
@@ -31,8 +34,12 @@
   border-radius: var(--radius-lg);
   margin-bottom: 0.9rem;
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
+  overflow: visible;
   transition: var(--transition);
+}
+
+.config-section.collapsible {
+  overflow: hidden;
 }
 
 .config-section-header {

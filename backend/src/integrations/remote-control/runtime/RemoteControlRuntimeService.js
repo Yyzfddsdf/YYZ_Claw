@@ -374,6 +374,7 @@ export class RemoteControlRuntimeService {
     this.historyStore = options.historyStore ?? null;
     this.channelToolRegistry = options.channelToolRegistry ?? null;
     this.replyClient = options.replyClient ?? null;
+    this.edgeTextToSpeechService = options.edgeTextToSpeechService ?? null;
     this.agentsPromptStore = options.agentsPromptStore ?? null;
     this.memorySummaryStore = options.memorySummaryStore ?? null;
     this.skillPromptBuilder = options.skillPromptBuilder ?? null;
@@ -841,7 +842,48 @@ export class RemoteControlRuntimeService {
     }
   }
 
-  async sendMessageToChannel({ target, file, text = "", turnId } = {}) {
+  async synthesizeAudioFromText(audio = {}) {
+    const audioConfig =
+      audio && typeof audio === "object" && !Array.isArray(audio) ? audio : {};
+    const audioText = String(audioConfig.text ?? "").trim();
+    if (!audioText) {
+      return null;
+    }
+
+    if (
+      !this.edgeTextToSpeechService ||
+      typeof this.edgeTextToSpeechService.streamSynthesize !== "function"
+    ) {
+      throw new Error("TTS service is unavailable");
+    }
+
+    const chunks = [];
+    for await (const chunk of this.edgeTextToSpeechService.streamSynthesize({
+      text: audioText,
+      voice: String(audioConfig.voice ?? "").trim(),
+      rate: String(audioConfig.rate ?? "").trim(),
+      volume: String(audioConfig.volume ?? "").trim(),
+      pitch: String(audioConfig.pitch ?? "").trim()
+    })) {
+      if (chunk && chunk.length > 0) {
+        chunks.push(Buffer.from(chunk));
+      }
+    }
+
+    const buffer = chunks.length > 0 ? Buffer.concat(chunks) : Buffer.alloc(0);
+    if (buffer.length <= 0) {
+      throw new Error("TTS did not return audio data");
+    }
+
+    return {
+      buffer,
+      fileName: `tts_${Date.now()}.mp3`,
+      mimeType: "audio/mpeg",
+      durationMs: 0
+    };
+  }
+
+  async sendMessageToChannel({ target, file, audio, text = "", turnId } = {}) {
     const normalizedTarget = normalizeFileDeliveryTarget(target) ?? null;
     const fallbackTarget = normalizeReplyTarget(normalizedTarget ?? {});
     const replyTarget = fallbackTarget ?? normalizeReplyTarget(target);
@@ -850,7 +892,7 @@ export class RemoteControlRuntimeService {
     const userId = String(normalizedTarget?.userId ?? "").trim();
 
     if (!messageId && !chatId && !userId) {
-      throw new Error("发送文件失败：缺少 target（messageId/chatId/userId）");
+      throw new Error("发送消息失败：缺少 target（messageId/chatId/userId）");
     }
 
     const normalizedText = String(text ?? "").trim();
@@ -862,10 +904,25 @@ export class RemoteControlRuntimeService {
             mimeType: String(file.mimeType ?? "").trim()
           }
         : null;
+    const normalizedAudio =
+      audio && typeof audio === "object" && !Array.isArray(audio)
+        ? {
+            text: String(audio.text ?? "").trim(),
+            filePath: String(audio.filePath ?? "").trim(),
+            fileName: String(audio.fileName ?? "").trim(),
+            mimeType: String(audio.mimeType ?? "").trim(),
+            voice: String(audio.voice ?? "").trim(),
+            rate: String(audio.rate ?? "").trim(),
+            volume: String(audio.volume ?? "").trim(),
+            pitch: String(audio.pitch ?? "").trim(),
+            durationMs: Math.max(0, Math.trunc(Number(audio.durationMs ?? 0) || 0))
+          }
+        : null;
     const hasFile = Boolean(normalizedFile?.filePath);
+    const hasAudio = Boolean(normalizedAudio?.filePath || normalizedAudio?.text);
     const hasText = Boolean(normalizedText);
-    if (!hasFile && !hasText) {
-      throw new Error("发送失败：file.filePath 或 text 至少提供一个");
+    if (!hasFile && !hasAudio && !hasText) {
+      throw new Error("发送失败：file.filePath 或 audio 或 text 至少提供一个");
     }
 
     if (!this.replyClient || typeof this.replyClient.sendMessage !== "function") {
@@ -882,6 +939,18 @@ export class RemoteControlRuntimeService {
     }
 
     try {
+      const preparedAudio =
+        hasAudio && normalizedAudio?.text
+          ? await this.synthesizeAudioFromText(normalizedAudio)
+          : hasAudio
+            ? {
+                filePath: normalizedAudio.filePath,
+                fileName: normalizedAudio.fileName,
+                mimeType: normalizedAudio.mimeType,
+                durationMs: normalizedAudio.durationMs
+              }
+            : null;
+
       const result = await this.replyClient.sendMessage({
         target: {
           messageId,
@@ -889,30 +958,14 @@ export class RemoteControlRuntimeService {
           userId
         },
         file: hasFile ? normalizedFile : null,
+        audio: preparedAudio,
         text: normalizedText
       });
 
       return result && typeof result === "object" ? result : {};
     } catch (error) {
-      const message = `${this.platformLabel} 文件发送失败: ${String(error?.message ?? "unknown error")}`;
+      const message = `${this.platformLabel} 消息发送失败: ${String(error?.message ?? "unknown error")}`;
       this.lastRunError = message;
-
-      if (this.historyStore && Number.isInteger(Number(turnId)) && Number(turnId) > 0) {
-        this.historyStore.appendMessages(Number(turnId), [
-          {
-            id: `${this.platformKey}_delivery_file_error_${randomUUID()}`,
-            role: "assistant",
-            source: "assistant",
-            providerKey: this.platformKey,
-            content: message,
-            timestamp: Date.now(),
-            meta: {
-              kind: "runtime_error",
-              subtype: "delivery_file_exception"
-            }
-          }
-        ]);
-      }
 
       throw error;
     }

@@ -1,25 +1,24 @@
 import path from "node:path";
 
-function normalizeTarget(target = {}, fallbackTarget = null) {
-  const source =
-    target && typeof target === "object" && !Array.isArray(target) ? target : {};
+function normalizeTarget(value = null, fallbackValue = null) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const fallback =
-    fallbackTarget && typeof fallbackTarget === "object" && !Array.isArray(fallbackTarget)
-      ? fallbackTarget
+    fallbackValue && typeof fallbackValue === "object" && !Array.isArray(fallbackValue)
+      ? fallbackValue
       : {};
-
-  const messageId = String(source.messageId ?? fallback.messageId ?? "").trim();
-  const chatId = String(source.chatId ?? fallback.chatId ?? "").trim();
-  const userId = String(source.userId ?? fallback.userId ?? "").trim();
-  if (!messageId && !chatId && !userId) {
+  const messageId = String(source.messageId ?? source.message_id ?? "").trim();
+  const chatId = String(source.chatId ?? source.chat_id ?? "").trim();
+  const userId = String(source.userId ?? source.user_id ?? "").trim();
+  const fallbackMessageId = String(fallback.messageId ?? fallback.message_id ?? "").trim();
+  const fallbackChatId = String(fallback.chatId ?? fallback.chat_id ?? "").trim();
+  const fallbackUserId = String(fallback.userId ?? fallback.user_id ?? "").trim();
+  const finalMessageId = messageId || fallbackMessageId;
+  const finalChatId = chatId || fallbackChatId;
+  const finalUserId = userId || fallbackUserId;
+  if (!finalMessageId && !finalChatId && !finalUserId) {
     return null;
   }
-
-  return {
-    messageId,
-    chatId,
-    userId
-  };
+  return { messageId: finalMessageId, chatId: finalChatId, userId: finalUserId };
 }
 
 function resolveWorkingDirectory(executionContext = {}) {
@@ -77,7 +76,7 @@ export default {
         additionalProperties: false
       }
     },
-    required: ["filePath"],
+    required: [],
     additionalProperties: false
   },
   async execute(args = {}, executionContext = {}) {
@@ -93,10 +92,11 @@ export default {
     }
     const normalizedText = String(args.text ?? args.caption ?? "").trim();
     const hasFilePath = String(args.filePath ?? "").trim().length > 0;
+    const resolvedFilePath = hasFilePath ? resolveFilePath(args.filePath, cwd) : "";
+
     if (!hasFilePath && !normalizedText) {
       throw new Error("filePath or text is required");
     }
-    const resolvedFilePath = hasFilePath ? resolveFilePath(args.filePath, cwd) : "";
 
     const result = await runtimeService.sendMessageToChannel({
       target,

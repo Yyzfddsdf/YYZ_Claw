@@ -7,6 +7,8 @@ import { createRemoteControlRoutes } from "../integrations/remote-control/api/re
 import { createMemoryRoutes } from "./memoryRoutes.js";
 import { createMcpRoutes } from "./mcpRoutes.js";
 import { createSkillsRoutes } from "./skillsRoutes.js";
+import { createSttRoutes } from "./sttRoutes.js";
+import { createTtsRoutes } from "./ttsRoutes.js";
 
 export function createApiRouter(services) {
   const router = Router();
@@ -15,6 +17,8 @@ export function createApiRouter(services) {
   router.use(createMcpRoutes(services));
   router.use(createMemoryRoutes(services));
   router.use(createSkillsRoutes(services));
+  router.use(createSttRoutes(services));
+  router.use(createTtsRoutes(services));
   router.use(createRemoteControlRoutes(services));
   router.use(createAutomationRoutes(services));
   router.use(createChatRoutes(services));

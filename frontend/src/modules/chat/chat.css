@@ -1209,6 +1209,70 @@
   gap: 0.25rem;
 }
 
+.bubble-tts-spinner {
+  width: 0.78rem;
+  height: 0.78rem;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--brand) 28%, #fff);
+  border-top-color: var(--brand);
+  animation: bubble-tts-spin 0.85s linear infinite;
+}
+
+@keyframes bubble-tts-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.bubble-action-row {
+  margin-top: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  justify-content: flex-start;
+}
+
+.bubble-user .bubble-action-row {
+  justify-content: flex-end;
+}
+
+.bubble-action-btn {
+  min-width: 2.6rem;
+  height: 1.55rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.bubble-action-btn:hover:not(:disabled) {
+  color: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--border-light));
+  background: color-mix(in srgb, var(--brand-light) 60%, #fff);
+}
+
+.bubble-action-btn.is-playing {
+  color: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 58%, var(--border-light));
+  background: color-mix(in srgb, var(--brand-light) 72%, #fff);
+}
+
+.bubble-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .bubble header {
   display: flex;
   align-items: center;
@@ -2468,6 +2532,28 @@
 .container-upload-files .upload-file:hover:not(:disabled) {
   color: #4c4c4c;
   scale: 1.1;
+}
+
+.container-upload-files .upload-file.voice-input-trigger.is-recording {
+  color: #dc2626;
+  animation: voice-record-pulse 1.15s ease-in-out infinite;
+}
+
+@keyframes voice-record-pulse {
+  0% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 rgba(220, 38, 38, 0.35));
+  }
+
+  50% {
+    transform: scale(1.08);
+    filter: drop-shadow(0 0 8px rgba(220, 38, 38, 0.45));
+  }
+
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 rgba(220, 38, 38, 0.35));
+  }
 }
 
 .input-text {

@@ -175,6 +175,7 @@ export class FeishuWebhookIngestService {
     this.runtimeService = options.runtimeService ?? null;
     this.openApiClient = options.openApiClient ?? null;
     this.attachmentParserService = options.attachmentParserService ?? null;
+    this.speechToTextService = options.speechToTextService ?? null;
     this.attachmentResolver =
       options.attachmentResolver ??
       new RemoteAttachmentResolver({
@@ -311,6 +312,18 @@ export class FeishuWebhookIngestService {
       }
     }
 
+    if (messageType === "audio") {
+      const audioText = await this.resolveAudioTranscription({
+        messageId: originMessageId,
+        contentPayload
+      });
+      if (audioText) {
+        notes.push(`【语音消息转文字】${audioText}`);
+      } else {
+        notes.push("【语音消息转文字】(转写为空)");
+      }
+    }
+
     const mergedContent = [content, ...notes]
       .map((item) => String(item ?? "").trim())
       .filter(Boolean)
@@ -356,5 +369,66 @@ export class FeishuWebhookIngestService {
       missingKeyNote: "文件消息缺少 file_key，无法下载。",
       noClientNote: "文件消息未启用飞书资源下载能力。"
     });
+  }
+
+  async downloadAudioResourceBuffer({ messageId, resourceKey }) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const normalizedResourceKey = String(resourceKey ?? "").trim();
+    if (!normalizedMessageId || !normalizedResourceKey) {
+      return null;
+    }
+    if (!this.openApiClient || typeof this.openApiClient.downloadMessageResource !== "function") {
+      return null;
+    }
+
+    try {
+      return await this.openApiClient.downloadMessageResource({
+        messageId: normalizedMessageId,
+        fileKey: normalizedResourceKey,
+        type: "audio"
+      });
+    } catch {
+      try {
+        return await this.openApiClient.downloadMessageResource({
+          messageId: normalizedMessageId,
+          fileKey: normalizedResourceKey,
+          type: "file"
+        });
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  async resolveAudioTranscription({ messageId, contentPayload }) {
+    const audioKey = String(
+      contentPayload?.file_key ?? contentPayload?.audio_key ?? contentPayload?.audioKey ?? ""
+    ).trim();
+    if (!audioKey) {
+      return "";
+    }
+    if (!this.speechToTextService || typeof this.speechToTextService.transcribe !== "function") {
+      return "";
+    }
+
+    const resource = await this.downloadAudioResourceBuffer({
+      messageId,
+      resourceKey: audioKey
+    });
+    if (!resource?.buffer || resource.buffer.length <= 0) {
+      return "";
+    }
+
+    try {
+      const result = await this.speechToTextService.transcribe({
+        audioBuffer: resource.buffer,
+        language: "zh",
+        task: "transcribe",
+        provider: "local"
+      });
+      return String(result?.text ?? "").trim();
+    } catch {
+      return "";
+    }
   }
 }

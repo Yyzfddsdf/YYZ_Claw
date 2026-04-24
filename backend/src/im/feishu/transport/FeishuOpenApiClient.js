@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
 const DEFAULT_FEISHU_OPEN_API_BASE_URL = "https://open.feishu.cn/open-apis";
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_MAX_REPLY_CHARS = 3_000;
 const DEFAULT_UPLOAD_MIME_TYPE = "application/octet-stream";
+const FEISHU_AUDIO_PREPEND_SILENCE_MS = 350;
 
 function trimTrailingSlash(input) {
   return String(input ?? "").trim().replace(/\/+$/, "");
@@ -129,6 +131,27 @@ function normalizeFileInput(file = {}) {
   };
 }
 
+function normalizeAudioInput(audio = {}) {
+  const normalized = audio && typeof audio === "object" && !Array.isArray(audio) ? audio : {};
+  const filePath = String(normalized.filePath ?? "").trim();
+  const fileName = String(normalized.fileName ?? "").trim();
+  const mimeType = String(normalized.mimeType ?? "").trim() || "audio/ogg";
+  const durationMs = Math.max(0, toInteger(normalized.durationMs, 0));
+  const buffer =
+    normalized.buffer instanceof Uint8Array
+      ? Buffer.from(normalized.buffer)
+      : Buffer.isBuffer(normalized.buffer)
+        ? normalized.buffer
+        : null;
+  return {
+    filePath,
+    fileName,
+    mimeType,
+    durationMs,
+    buffer
+  };
+}
+
 function normalizeTextInput(value) {
   return String(value ?? "").trim();
 }
@@ -158,6 +181,100 @@ function isLikelyImageFile(file = {}) {
   const filePath = String(file?.filePath ?? "").trim();
   const extension = path.extname(fileName || filePath).toLowerCase();
   return [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif"].includes(extension);
+}
+
+function isLikelyAudioFile(file = {}) {
+  const mimeType = String(file?.mimeType ?? "").trim().toLowerCase();
+  if (mimeType.startsWith("audio/")) {
+    return true;
+  }
+
+  const fileName = String(file?.fileName ?? "").trim();
+  const filePath = String(file?.filePath ?? "").trim();
+  const extension = path.extname(fileName || filePath).toLowerCase();
+  return [".opus", ".ogg", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".webm"].includes(extension);
+}
+
+function replaceExt(fileName, nextExt) {
+  const normalized = String(fileName ?? "").trim();
+  const ext = String(nextExt ?? "").trim();
+  if (!normalized) {
+    return `audio_${Date.now()}${ext}`;
+  }
+  const base = normalized.replace(/\.[^/.]+$/, "");
+  return `${base}${ext}`;
+}
+
+async function convertAudioBufferToOpusOgg(inputBuffer) {
+  const source = Buffer.isBuffer(inputBuffer)
+    ? inputBuffer
+    : inputBuffer instanceof Uint8Array
+      ? Buffer.from(inputBuffer)
+      : null;
+
+  if (!source || source.length <= 0) {
+    throw new Error("audio source buffer is empty");
+  }
+
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      "pipe:0",
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-af",
+      `adelay=${FEISHU_AUDIO_PREPEND_SILENCE_MS}`,
+      "-c:a",
+      "libopus",
+      "-b:a",
+      "32k",
+      "-application",
+      "voip",
+      "-f",
+      "ogg",
+      "pipe:1"
+    ]);
+
+    const stdoutChunks = [];
+    const stderrChunks = [];
+
+    ffmpeg.stdout.on("data", (chunk) => {
+      stdoutChunks.push(Buffer.from(chunk));
+    });
+
+    ffmpeg.stderr.on("data", (chunk) => {
+      stderrChunks.push(Buffer.from(chunk));
+    });
+
+    ffmpeg.on("error", (error) => {
+      reject(new Error(`ffmpeg unavailable: ${String(error?.message ?? error)}`));
+    });
+
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        const detail = Buffer.concat(stderrChunks).toString("utf8").trim();
+        reject(new Error(detail || `ffmpeg exited with code ${code}`));
+        return;
+      }
+
+      const output = Buffer.concat(stdoutChunks);
+      if (output.length <= 0) {
+        reject(new Error("ffmpeg returned empty opus audio"));
+        return;
+      }
+
+      resolve(output);
+    });
+
+    ffmpeg.stdin.on("error", () => {});
+    ffmpeg.stdin.end(source);
+  });
 }
 
 export class FeishuOpenApiClient {
@@ -338,6 +455,26 @@ export class FeishuOpenApiClient {
     });
   }
 
+  async sendAudioToChat({ chatId, fileKey }) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    const normalizedFileKey = String(fileKey ?? "").trim();
+    if (!normalizedChatId) {
+      throw buildApiError("chatId is required for sendAudioToChat");
+    }
+    if (!normalizedFileKey) {
+      throw buildApiError("fileKey is required for sendAudioToChat");
+    }
+
+    await this.requestJson("/im/v1/messages?receive_id_type=chat_id", {
+      method: "POST",
+      body: {
+        receive_id: normalizedChatId,
+        msg_type: "audio",
+        content: JSON.stringify({ file_key: normalizedFileKey })
+      }
+    });
+  }
+
   async sendImageToChat({ chatId, imageKey }) {
     const normalizedChatId = String(chatId ?? "").trim();
     const normalizedImageKey = String(imageKey ?? "").trim();
@@ -438,6 +575,84 @@ export class FeishuOpenApiClient {
       size: Number(payloadBuffer.length),
       mimeType: normalizedMimeType
     };
+  }
+
+  async uploadAudio({ filePath, fileName, mimeType, durationMs = 0, buffer = null }) {
+    const normalizedPath = String(filePath ?? "").trim();
+    const inlineBuffer =
+      Buffer.isBuffer(buffer) ? buffer : buffer instanceof Uint8Array ? Buffer.from(buffer) : null;
+    let payloadBuffer = inlineBuffer;
+    let resolvedPath = "";
+
+    if (!payloadBuffer) {
+      if (!normalizedPath) {
+        throw buildApiError("filePath or buffer is required for uploadAudio");
+      }
+      resolvedPath = path.resolve(normalizedPath);
+      const stats = await fs.stat(resolvedPath);
+      if (!stats.isFile()) {
+        throw buildApiError("uploadAudio requires a valid file path");
+      }
+      payloadBuffer = await fs.readFile(resolvedPath);
+    }
+
+    if (!payloadBuffer || payloadBuffer.length <= 0) {
+      throw buildApiError("uploadAudio source is empty");
+    }
+
+    const originalFileName =
+      String(fileName ?? "").trim() || (resolvedPath ? path.basename(resolvedPath) : `audio_${Date.now()}.mp3`);
+    const normalizedMimeType = String(mimeType ?? "").trim() || "audio/mpeg";
+    const normalizedDurationMs = Math.max(0, toInteger(durationMs, 0));
+
+    const opusPayloadBuffer = await convertAudioBufferToOpusOgg(payloadBuffer);
+    const normalizedFileName = replaceExt(originalFileName, ".opus");
+    const uploadMimeType = "audio/ogg";
+
+    const form = new FormData();
+    form.append("file_type", "opus");
+    form.append("file_name", normalizedFileName);
+    if (normalizedDurationMs > 0) {
+      form.append("duration", String(normalizedDurationMs));
+    }
+    form.append("file", new Blob([opusPayloadBuffer], { type: uploadMimeType }), normalizedFileName);
+
+    const payload = await this.requestJson("/im/v1/files", {
+      method: "POST",
+      body: form
+    });
+
+    const fileKey = String(payload?.data?.file_key ?? "").trim();
+    if (!fileKey) {
+      throw buildApiError("飞书音频上传成功但未返回 file_key");
+    }
+
+    return {
+      fileKey,
+      fileName: normalizedFileName,
+      size: Number(opusPayloadBuffer.length),
+      mimeType: uploadMimeType,
+      durationMs: normalizedDurationMs
+    };
+  }
+
+  async replyAudio({ messageId, fileKey }) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const normalizedFileKey = String(fileKey ?? "").trim();
+    if (!normalizedMessageId) {
+      throw buildApiError("messageId is required for replyAudio");
+    }
+    if (!normalizedFileKey) {
+      throw buildApiError("fileKey is required for replyAudio");
+    }
+
+    await this.requestJson(`/im/v1/messages/${encodeURIComponent(normalizedMessageId)}/reply`, {
+      method: "POST",
+      body: {
+        msg_type: "audio",
+        content: JSON.stringify({ file_key: normalizedFileKey })
+      }
+    });
   }
 
   async uploadImage({ filePath, fileName, mimeType }) {
@@ -554,6 +769,58 @@ export class FeishuOpenApiClient {
     };
   }
 
+  async sendAudio({ target, audio, caption = "" }) {
+    const normalizedTarget = normalizeFileSendTarget(target);
+    if (!normalizedTarget.messageId && !normalizedTarget.chatId && !normalizedTarget.userId) {
+      throw buildApiError("sendAudio requires target.messageId/chatId/userId");
+    }
+    if (normalizedTarget.userId && !normalizedTarget.chatId && !normalizedTarget.messageId) {
+      throw buildApiError("当前飞书 sendAudio 仅支持 messageId 或 chatId 目标");
+    }
+
+    const normalizedAudio = normalizeAudioInput(audio);
+    if (!normalizedAudio.filePath && !normalizedAudio.buffer) {
+      throw buildApiError("sendAudio requires audio.filePath or audio.buffer");
+    }
+    if (!normalizedAudio.buffer && !isLikelyAudioFile(normalizedAudio)) {
+      throw buildApiError("sendAudio requires an audio file");
+    }
+
+    const uploadResult = await this.uploadAudio(normalizedAudio);
+    if (normalizedTarget.messageId) {
+      await this.replyAudio({
+        messageId: normalizedTarget.messageId,
+        fileKey: uploadResult.fileKey
+      });
+    } else if (normalizedTarget.chatId) {
+      await this.sendAudioToChat({
+        chatId: normalizedTarget.chatId,
+        fileKey: uploadResult.fileKey
+      });
+    }
+
+    const normalizedCaption = String(caption ?? "").trim();
+    if (normalizedCaption) {
+      await this.sendText({
+        target: normalizedTarget,
+        text: normalizedCaption
+      });
+    }
+
+    return {
+      ok: true,
+      target: normalizedTarget,
+      msgType: "audio",
+      file: {
+        fileName: uploadResult.fileName,
+        mimeType: uploadResult.mimeType,
+        size: uploadResult.size,
+        fileKey: uploadResult.fileKey,
+        durationMs: uploadResult.durationMs
+      }
+    };
+  }
+
   async sendText({ target, text }) {
     const normalizedTarget = normalizeFileSendTarget(target);
     const normalizedText = normalizeTextInput(text);
@@ -590,10 +857,32 @@ export class FeishuOpenApiClient {
     };
   }
 
-  async sendMessage({ target, file, text }) {
+  async sendMessage({ target, file, audio, text }) {
     const normalizedText = normalizeTextInput(text);
     const hasFile =
       file && typeof file === "object" && !Array.isArray(file) && String(file.filePath ?? "").trim();
+    const hasAudio =
+      Boolean(
+        audio &&
+          typeof audio === "object" &&
+          !Array.isArray(audio) &&
+          (
+            String(audio.filePath ?? "").trim() ||
+            (Buffer.isBuffer(audio.buffer)
+              ? audio.buffer.length > 0
+              : audio.buffer instanceof Uint8Array
+                ? audio.buffer.length > 0
+                : false)
+          )
+      );
+
+    if (hasAudio) {
+      return this.sendAudio({
+        target,
+        audio,
+        caption: normalizedText
+      });
+    }
 
     if (hasFile) {
       return this.sendFile({

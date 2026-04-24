@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 
-import { parseChatFiles } from "../../api/chatApi";
+import { createTtsStreamUrl, parseChatFiles, transcribeAudioBytes } from "../../api/chatApi";
 import { formatTimestamp } from "../../shared/formatTimestamp";
 import { TimePickerDropdown } from "../../shared/TimePickerDropdown";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -10,6 +10,13 @@ const AUTO_SCROLL_BOTTOM_THRESHOLD = 72;
 const MAX_IMAGE_PAYLOAD_BYTES = 2_000_000;
 const MAX_UPLOAD_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const MAX_UPLOAD_FILE_COUNT = 8;
+const RECORDER_MIME_TYPE_CANDIDATES = [
+  "audio/webm;codecs=opus",
+  "audio/ogg;codecs=opus",
+  "audio/webm",
+  "audio/ogg"
+];
+const TTS_MAX_TEXT_LENGTH = 1000;
 const GENERAL_FILE_ACCEPT = [
   ".pdf",
   ".doc",
@@ -290,6 +297,87 @@ function buildOrchestratorNotice(message) {
   };
 }
 
+function truncateTtsText(text, maxLength = TTS_MAX_TEXT_LENGTH) {
+  const normalized = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength)}。`;
+}
+
+function stripMarkdownForTts(input) {
+  let text = String(input ?? "");
+  if (!text) {
+    return "";
+  }
+
+  text = text.replace(/```[\s\S]*?```/g, (block) =>
+    block
+      .replace(/^```[^\n]*\n?/m, "")
+      .replace(/```$/m, "")
+  );
+  text = text.replace(/`([^`]+)`/g, "$1");
+  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1");
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+  text = text.replace(/<https?:\/\/[^>]+>/g, "");
+  text = text.replace(/^\s{0,3}(#{1,6})\s+/gm, "");
+  text = text.replace(/^\s*>\s?/gm, "");
+  text = text.replace(/^\s*[-*+]\s+/gm, "");
+  text = text.replace(/^\s*\d+\.\s+/gm, "");
+  text = text.replace(/^\s*[-*_]{3,}\s*$/gm, " ");
+  text = text.replace(/(\*\*|__|\*|_)(.*?)\1/g, "$2");
+  text = text.replace(/~~(.*?)~~/g, "$1");
+  text = text.replace(/^\s*\|/gm, "");
+  text = text.replace(/\|\s*$/gm, "");
+  text = text.replace(/\|/g, " ");
+  text = text.replace(/\\([\\`*_{}[\]()#+\-.!|])/g, "$1");
+
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function resolveMessageSpeakText({
+  message,
+  messageText,
+  isRuntimeHookInjectedMessage,
+  isOrchestratorMessage,
+  orchestratorNotice,
+  isCompressionSummary,
+  isToolCard,
+  toolPayload,
+  hasImageAttachments,
+  hasFileAttachments
+}) {
+  const plainMessageText = stripMarkdownForTts(messageText);
+
+  if (isRuntimeHookInjectedMessage) {
+    return truncateTtsText(getRuntimeHookStripText(message));
+  }
+
+  if (isOrchestratorMessage) {
+    return truncateTtsText(String(orchestratorNotice?.summary ?? ""));
+  }
+
+  if (isCompressionSummary || plainMessageText.length > 0) {
+    return truncateTtsText(plainMessageText);
+  }
+
+  if (isToolCard) {
+    const toolName = String(toolPayload?.toolName ?? "").trim() || "工具";
+    const toolResult = stripMarkdownForTts(String(toolPayload?.result ?? "").trim());
+    const statusText = toolResult || (toolPayload?.isError ? "执行失败" : "执行中");
+    return truncateTtsText(`${toolName}：${statusText}`);
+  }
+
+  if (hasImageAttachments || hasFileAttachments) {
+    return "这是一条附件消息。";
+  }
+
+  return "";
+}
+
 function formatFileSize(size) {
   const numericSize = Number(size ?? 0);
   if (!Number.isFinite(numericSize) || numericSize <= 0) {
@@ -525,10 +613,20 @@ export function ChatPanel({
   const [draggedQueueMessageId, setDraggedQueueMessageId] = useState("");
   const [queueDropTarget, setQueueDropTarget] = useState(null);
   const [expandedHistoryGroupMap, setExpandedHistoryGroupMap] = useState({});
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+  const [ttsPlayingMessageId, setTtsPlayingMessageId] = useState("");
+  const [ttsLoadingMessageId, setTtsLoadingMessageId] = useState("");
+  const [copiedMessageId, setCopiedMessageId] = useState("");
   const chatStreamRef = useRef(null);
   const inputRef = useRef(null);
   const imageInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const voiceRecorderRef = useRef(null);
+  const voiceChunksRef = useRef([]);
+  const voiceStreamRef = useRef(null);
+  const ttsAudioRef = useRef(null);
+  const ttsPlaybackTokenRef = useRef(0);
   const activeConversationIdRef = useRef(String(chat.activeConversationId ?? ""));
   const lastAutoExpandedHistoryConversationIdRef = useRef("");
   const shouldAutoScrollRef = useRef(true);
@@ -539,6 +637,41 @@ export function ChatPanel({
   useEffect(() => {
     setHistoryPaneOpen(Boolean(showHistoryPane));
   }, [showHistoryPane]);
+
+  useEffect(() => {
+    return () => {
+      const recorder = voiceRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {}
+      }
+
+      const stream = voiceStreamRef.current;
+      if (stream) {
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+      }
+
+      voiceRecorderRef.current = null;
+      voiceStreamRef.current = null;
+      voiceChunksRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const audio = ttsAudioRef.current;
+      if (audio) {
+        try {
+          audio.pause();
+        } catch {}
+        audio.src = "";
+      }
+      ttsAudioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -559,6 +692,7 @@ export function ChatPanel({
     disabled ||
     !chat.historyLoaded ||
     Boolean(chat.pendingApproval);
+  const voiceInputDisabled = inputDisabled || isParsingFiles || isVoiceTranscribing;
   const hasComposerPayload =
     draft.trim().length > 0 || pendingImages.length > 0 || pendingFiles.length > 0;
   const isComposerActive =
@@ -589,9 +723,13 @@ export function ChatPanel({
               ? `（已排队 ${chat.queuedUserMessageCount} 条）`
               : ""
           }`
+      : isVoiceTranscribing
+        ? "语音转写中，请稍候..."
+      : isVoiceRecording
+        ? "录音中，再点一次麦克风结束录音"
       : isParsingFiles
         ? "文件解析中，请稍候发送"
-        : disabled
+      : disabled
         ? disabledReason
         : "输入消息，观察流式与工具调用";
   const queuedUserMessages = Array.isArray(chat.queuedUserMessages) ? chat.queuedUserMessages : [];
@@ -835,6 +973,7 @@ export function ChatPanel({
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+    stopTtsPlayback();
     resetQueueDragState();
   }, [chat.activeConversationId]);
 
@@ -989,6 +1128,272 @@ export function ChatPanel({
 
   function handleDraftChange(event) {
     setDraft(event.target.value);
+  }
+
+  function resolveRecorderMimeType() {
+    if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+      return "";
+    }
+
+    for (const candidate of RECORDER_MIME_TYPE_CANDIDATES) {
+      if (MediaRecorder.isTypeSupported(candidate)) {
+        return candidate;
+      }
+    }
+
+    return "";
+  }
+
+  function stopVoiceMediaStream() {
+    const stream = voiceStreamRef.current;
+    if (!stream) {
+      return;
+    }
+
+    for (const track of stream.getTracks()) {
+      track.stop();
+    }
+    voiceStreamRef.current = null;
+  }
+
+  async function stopRecordingAndTranscribe() {
+    const recorder = voiceRecorderRef.current;
+    if (!recorder) {
+      return;
+    }
+
+    setIsVoiceRecording(false);
+
+    const audioBlob = await new Promise((resolve, reject) => {
+      const handleStop = () => {
+        const chunks = [...voiceChunksRef.current];
+        voiceChunksRef.current = [];
+        const mimeType = String(recorder.mimeType ?? "").trim() || "application/octet-stream";
+        resolve(new Blob(chunks, { type: mimeType }));
+      };
+      const handleError = (event) => {
+        const message = String(event?.error?.message ?? "录音失败");
+        reject(new Error(message));
+      };
+
+      recorder.addEventListener("stop", handleStop, { once: true });
+      recorder.addEventListener("error", handleError, { once: true });
+
+      if (recorder.state === "inactive") {
+        handleStop();
+        return;
+      }
+
+      try {
+        recorder.stop();
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    voiceRecorderRef.current = null;
+    stopVoiceMediaStream();
+
+    if (!(audioBlob instanceof Blob) || audioBlob.size <= 0) {
+      throw new Error("录音内容为空，请重试");
+    }
+
+    setIsVoiceTranscribing(true);
+    try {
+      const result = await transcribeAudioBytes(audioBlob, {
+        language: "zh",
+        task: "transcribe"
+      });
+      const transcript = String(result?.text ?? "").trim();
+      if (!transcript) {
+        throw new Error("未识别到有效文本，请重试");
+      }
+
+      setDraft((prev) => {
+        const previous = String(prev ?? "");
+        const trimmedPrevious = previous.trim();
+        if (!trimmedPrevious) {
+          return transcript;
+        }
+
+        const separator = /[\s\n]$/.test(previous) ? "" : "\n";
+        return `${previous}${separator}${transcript}`;
+      });
+      inputRef.current?.focus();
+    } finally {
+      setIsVoiceTranscribing(false);
+    }
+  }
+
+  async function handleVoiceInputClick() {
+    if (isVoiceTranscribing) {
+      return;
+    }
+
+    if (isVoiceRecording) {
+      try {
+        await stopRecordingAndTranscribe();
+      } catch (error) {
+        stopVoiceMediaStream();
+        voiceRecorderRef.current = null;
+        voiceChunksRef.current = [];
+        setIsVoiceRecording(false);
+        setIsVoiceTranscribing(false);
+        window.alert(error?.message || "语音转写失败");
+      }
+      return;
+    }
+
+    if (voiceInputDisabled) {
+      return;
+    }
+
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices ||
+      typeof navigator.mediaDevices.getUserMedia !== "function" ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      window.alert("当前浏览器不支持语音录音");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = resolveRecorderMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      voiceChunksRef.current = [];
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event?.data && event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      });
+
+      recorder.start(250);
+      voiceStreamRef.current = stream;
+      voiceRecorderRef.current = recorder;
+      setIsVoiceRecording(true);
+    } catch (error) {
+      stopVoiceMediaStream();
+      voiceRecorderRef.current = null;
+      voiceChunksRef.current = [];
+      setIsVoiceRecording(false);
+      window.alert(error?.message || "无法启动录音，请检查麦克风权限");
+    }
+  }
+
+  function stopTtsPlayback() {
+    const audio = ttsAudioRef.current;
+    if (!audio) {
+      setTtsPlayingMessageId("");
+      setTtsLoadingMessageId("");
+      return;
+    }
+
+    try {
+      audio.pause();
+    } catch {}
+    audio.src = "";
+    audio.onplaying = null;
+    audio.onended = null;
+    audio.onerror = null;
+    setTtsPlayingMessageId("");
+    setTtsLoadingMessageId("");
+  }
+
+  async function handleBubbleSpeakClick(messageId, speakText) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const normalizedText = truncateTtsText(speakText);
+    if (!normalizedMessageId || !normalizedText) {
+      return;
+    }
+
+    if (ttsPlayingMessageId === normalizedMessageId || ttsLoadingMessageId === normalizedMessageId) {
+      stopTtsPlayback();
+      return;
+    }
+
+    const playbackToken = ttsPlaybackTokenRef.current + 1;
+    ttsPlaybackTokenRef.current = playbackToken;
+    stopTtsPlayback();
+    setTtsLoadingMessageId(normalizedMessageId);
+
+    try {
+      const streamUrl = createTtsStreamUrl(normalizedText, {
+        voice: "zh-CN-XiaoxiaoNeural"
+      });
+
+      const audio = ttsAudioRef.current ?? new Audio();
+      ttsAudioRef.current = audio;
+      audio.preload = "none";
+      audio.src = streamUrl;
+
+      audio.onplaying = () => {
+        if (ttsPlaybackTokenRef.current !== playbackToken) {
+          return;
+        }
+        setTtsLoadingMessageId("");
+        setTtsPlayingMessageId(normalizedMessageId);
+      };
+
+      audio.onended = () => {
+        if (ttsPlaybackTokenRef.current !== playbackToken) {
+          return;
+        }
+        setTtsLoadingMessageId("");
+        setTtsPlayingMessageId("");
+      };
+
+      audio.onerror = () => {
+        if (ttsPlaybackTokenRef.current !== playbackToken) {
+          return;
+        }
+        setTtsLoadingMessageId("");
+        setTtsPlayingMessageId("");
+        window.alert("语音朗读失败，请稍后重试");
+      };
+
+      await audio.play();
+    } catch (error) {
+      if (ttsPlaybackTokenRef.current !== playbackToken) {
+        return;
+      }
+      stopTtsPlayback();
+      window.alert(error?.message || "语音朗读失败，请稍后重试");
+    }
+  }
+
+  async function handleCopyMessageClick(messageId, content) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const copyText = String(content ?? "").trim();
+    if (!normalizedMessageId || !copyText) {
+      return;
+    }
+
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyText);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = copyText;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "fixed";
+        textArea.style.top = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setCopiedMessageId(normalizedMessageId);
+      window.setTimeout(() => {
+        setCopiedMessageId((prev) => (prev === normalizedMessageId ? "" : prev));
+      }, 1200);
+    } catch {
+      window.alert("复制失败，请重试");
+    }
   }
 
   function clearPendingImages() {
@@ -1672,6 +2077,24 @@ export function ChatPanel({
                   ? activeConversationRuntimeReplyError
                   : null;
               const orchestratorNotice = isOrchestratorMessage ? buildOrchestratorNotice(message) : null;
+              const speakText = resolveMessageSpeakText({
+                message,
+                messageText,
+                isRuntimeHookInjectedMessage,
+                isOrchestratorMessage,
+                orchestratorNotice,
+                isCompressionSummary,
+                isToolCard,
+                toolPayload,
+                hasImageAttachments: imageAttachments.length > 0,
+                hasFileAttachments: parsedFileAttachments.length > 0
+              });
+              const isSpeakDisabled = !speakText;
+              const isPlayingThisMessage = ttsPlayingMessageId === String(message.id ?? "").trim();
+              const isLoadingThisMessage = ttsLoadingMessageId === String(message.id ?? "").trim();
+              const copyText = String(message.content ?? "").trim() || speakText;
+              const canCopyMessage = copyText.length > 0;
+              const showBubbleActionRow = canCopyMessage || !isSpeakDisabled;
               const deleteButton = (
                 <button
                   type="button"
@@ -1956,6 +2379,40 @@ export function ChatPanel({
                         <div className="assistant-runtime-error">
                           <strong>本次运行报错</strong>
                           <p>{runtimeReplyErrorForMessage.message}</p>
+                        </div>
+                      )}
+                      {showBubbleActionRow && (
+                        <div className="bubble-action-row">
+                          <button
+                            type="button"
+                            className="bubble-action-btn"
+                            onClick={() => handleCopyMessageClick(message.id, copyText)}
+                            disabled={!canCopyMessage}
+                            title={copiedMessageId === String(message.id ?? "").trim() ? "已复制" : "复制消息"}
+                          >
+                            {copiedMessageId === String(message.id ?? "").trim() ? "已复制" : "复制"}
+                          </button>
+                          <button
+                            type="button"
+                            className={`bubble-action-btn ${isPlayingThisMessage ? "is-playing" : ""}`}
+                            onClick={() => handleBubbleSpeakClick(message.id, speakText)}
+                            disabled={isSpeakDisabled}
+                            title={
+                              isPlayingThisMessage
+                                ? "停止朗读"
+                                : isLoadingThisMessage
+                                  ? "语音加载中..."
+                                  : "朗读消息"
+                            }
+                          >
+                            {isLoadingThisMessage ? (
+                              <span className="bubble-tts-spinner" aria-hidden="true" />
+                            ) : isPlayingThisMessage ? (
+                              "停止"
+                            ) : (
+                              "朗读"
+                            )}
+                          </button>
                         </div>
                       )}
                     </>
@@ -2292,6 +2749,29 @@ export function ChatPanel({
                 >
                   <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 4.5a5.5 5.5 0 0 0-3.63 9.63c.4.36.63.88.63 1.42V17a1 1 0 0 0 1 1h2.25m0 0V16.5m0 1.5h4.5m-4.5 0v1.25a1.75 1.75 0 0 0 3.5 0V18m0 0H16.5a1 1 0 0 0 1-1v-1.45c0-.54.23-1.06.63-1.42A5.5 5.5 0 1 0 9.5 4.5Z" />
+                  </svg>
+                </button>
+
+                {/* 语音输入 */}
+                <button
+                  type="button"
+                  className={`upload-file voice-input-trigger ${isVoiceRecording ? "is-recording" : ""}`}
+                  onClick={handleVoiceInputClick}
+                  disabled={voiceInputDisabled}
+                  aria-label={isVoiceRecording ? "停止录音并转文字" : "开始语音输入"}
+                  title={
+                    isVoiceTranscribing
+                      ? "语音转写中..."
+                      : isVoiceRecording
+                        ? "停止录音并转文字"
+                        : "语音输入"
+                  }
+                >
+                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4a3 3 0 0 1 3 3v5a3 3 0 1 1-6 0V7a3 3 0 0 1 3-3Z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 0 1-14 0" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v3" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 21h6" />
                   </svg>
                 </button>
 

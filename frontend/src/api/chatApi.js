@@ -264,3 +264,76 @@ export async function streamChat({
     }
   });
 }
+
+export async function transcribeAudioBytes(audioBlob, options = {}) {
+  if (!(audioBlob instanceof Blob) || audioBlob.size <= 0) {
+    throw new Error("audio blob is required");
+  }
+
+  const query = new URLSearchParams();
+  const language = String(options?.language ?? "zh").trim();
+  const task = String(options?.task ?? "transcribe").trim().toLowerCase();
+  const timeoutMs = Number(options?.timeoutMs ?? 0);
+
+  if (language) {
+    query.set("language", language);
+  }
+
+  if (task === "translate") {
+    query.set("task", "translate");
+  } else {
+    query.set("task", "transcribe");
+  }
+
+  if (Number.isFinite(timeoutMs) && timeoutMs >= 5000) {
+    query.set("timeoutMs", String(Math.trunc(timeoutMs)));
+  }
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await fetch(`/api/stt/transcribe${suffix}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": String(audioBlob.type || "application/octet-stream")
+    },
+    body: audioBlob
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+
+  if (!response.ok) {
+    throw new Error(data?.error || `POST /stt/transcribe failed with ${response.status}`);
+  }
+
+  return data;
+}
+
+export function createTtsStreamUrl(text, options = {}) {
+  const normalizedText = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!normalizedText) {
+    throw new Error("text is required");
+  }
+
+  const query = new URLSearchParams();
+  query.set("text", normalizedText);
+
+  const voice = String(options?.voice ?? "").trim();
+  const rate = String(options?.rate ?? "").trim();
+  const volume = String(options?.volume ?? "").trim();
+  const pitch = String(options?.pitch ?? "").trim();
+
+  if (voice) {
+    query.set("voice", voice);
+  }
+  if (rate) {
+    query.set("rate", rate);
+  }
+  if (volume) {
+    query.set("volume", volume);
+  }
+  if (pitch) {
+    query.set("pitch", pitch);
+  }
+
+  return `/api/tts/stream?${query.toString()}`;
+}

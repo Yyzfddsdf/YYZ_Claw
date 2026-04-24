@@ -15,6 +15,7 @@
     "start:backend": "npm run start --workspace backend"
   },
   "dependencies": {
+    "edge-tts-universal": "^1.4.0",
     "esbuild": "^0.25.4"
   },
   "devDependencies": {

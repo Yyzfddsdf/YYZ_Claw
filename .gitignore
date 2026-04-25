@@ -8,3 +8,4 @@ History/*.sqlite-*
 memory.sqlite
 memory.sqlite-*
 .yyz/memory/
+models/

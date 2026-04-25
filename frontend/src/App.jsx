@@ -11,6 +11,7 @@ import { AutomationPanel } from "./modules/automation/AutomationPanel";
 import { ChatPanel } from "./modules/chat/ChatPanel";
 import { useChatSession } from "./modules/chat/useChatSession";
 import { ConfigPanel } from "./modules/config/ConfigPanel";
+import { DebatePanel } from "./modules/debate/DebatePanel";
 import { MemoryPanel } from "./modules/memory/MemoryPanel";
 import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
@@ -276,6 +277,20 @@ export default function App() {
           <button
             type="button"
             role="tab"
+            aria-selected={activeWorkspace === "debate"}
+            className={`nav-item ${activeWorkspace === "debate" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("debate")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M7 7h10M7 12h6M5 19l3-3h4a5 5 0 0 0 5-5V7a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v4a5 5 0 0 0 5 5" />
+              <path d="M17 13l2 2l3-4" />
+            </svg>
+            AI 互博
+          </button>
+
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeWorkspace === "config"}
             className={`nav-item ${activeWorkspace === "config" ? "active" : ""}`}
             onClick={() => setActiveWorkspace("config")}
@@ -344,6 +359,15 @@ export default function App() {
         {activeWorkspace === "memory" && (
           <section className="panel panel-memory" role="tabpanel" aria-label="memory workspace">
             <MemoryPanel onNavigate={(nav) => setActiveWorkspace(nav)} />
+          </section>
+        )}
+
+        {activeWorkspace === "debate" && (
+          <section className="panel panel-debate" role="tabpanel" aria-label="debate workspace">
+            <DebatePanel
+              disabled={!canChat}
+              disabledReason="请先到配置中心保存 model / baseURL / apiKey"
+            />
           </section>
         )}
 

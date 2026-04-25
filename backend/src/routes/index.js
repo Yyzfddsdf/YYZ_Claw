@@ -3,6 +3,7 @@ import { Router } from "express";
 import { createChatRoutes } from "./chatRoutes.js";
 import { createConfigRoutes } from "./configRoutes.js";
 import { createAutomationRoutes } from "./automationRoutes.js";
+import { createDebateRoutes } from "./debateRoutes.js";
 import { createRemoteControlRoutes } from "../integrations/remote-control/api/remoteControlRoutes.js";
 import { createMemoryRoutes } from "./memoryRoutes.js";
 import { createMcpRoutes } from "./mcpRoutes.js";
@@ -21,6 +22,7 @@ export function createApiRouter(services) {
   router.use(createTtsRoutes(services));
   router.use(createRemoteControlRoutes(services));
   router.use(createAutomationRoutes(services));
+  router.use(createDebateRoutes(services));
   router.use(createChatRoutes(services));
 
   return router;

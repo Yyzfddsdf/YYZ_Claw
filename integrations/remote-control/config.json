@@ -3,6 +3,7 @@
   "workspacePath": "D:\\Work\\AntiFraud-AI-Assistant",
   "developerPrompt": "",
   "activeSkillNames": [
-    "global:yyz_greeting"
+    "global:yyz_greeting",
+    "global:session-memory"
   ]
 }

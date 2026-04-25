@@ -14,6 +14,7 @@ import {
   REMOTE_CONTROL_TOOLS_DIR,
   MEMORY_SUMMARY_FILE,
   MEMORY_SUMMARY_DIR,
+  DEBATE_DB_FILE,
   HISTORY_DB_FILE,
   HISTORY_DIR,
   MEMORY_DB_FILE,
@@ -37,6 +38,8 @@ import { FeishuLongConnectionService } from "../im/feishu/runtime/FeishuLongConn
 import { FeishuRuntimeService } from "../im/feishu/runtime/FeishuRuntimeService.js";
 import { FeishuWebhookIngestService } from "../im/feishu/ingest/FeishuWebhookIngestService.js";
 import { FeishuOpenApiClient } from "../im/feishu/transport/FeishuOpenApiClient.js";
+import { DebateService } from "../services/debate/DebateService.js";
+import { SqliteDebateStore } from "../services/debate/SqliteDebateStore.js";
 import { RemoteControlConfigStore } from "../integrations/remote-control/config/RemoteControlConfigStore.js";
 import { RemoteControlHistoryStore } from "../integrations/remote-control/history/RemoteControlHistoryStore.js";
 import { RemoteHookBlockBuilder } from "../integrations/remote-control/hooks/RemoteHookBlockBuilder.js";
@@ -158,6 +161,11 @@ export async function createServices() {
     dirPath: HISTORY_DIR
   });
   await automationTaskStore.initialize();
+  const debateStore = new SqliteDebateStore({
+    dbFilePath: DEBATE_DB_FILE,
+    dirPath: HISTORY_DIR
+  });
+  await debateStore.initialize();
 
   const memoryStore = new SqliteLongTermMemoryStore({
     dbFilePath: MEMORY_DB_FILE
@@ -176,6 +184,10 @@ export async function createServices() {
     configStore,
     historyStore,
     compressionService
+  });
+  const debateService = new DebateService({
+    store: debateStore,
+    configStore
   });
   const hookBlockBuilder = new HookBlockBuilder({
     hookRegistry,
@@ -383,6 +395,8 @@ export async function createServices() {
     historyStore,
     automationTaskStore,
     automationSchedulerService,
+    debateStore,
+    debateService,
     remoteControlHistoryStore,
     memoryStore,
     longTermMemoryRecallService,

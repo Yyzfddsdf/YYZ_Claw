@@ -22,10 +22,17 @@
 - 已修复压缩期间插入消息的后端漏洞：`chatController` 新增压缩活跃态判断，`manual_compression` run 或最近 run event 为 `compression_started` 且未 `compression_completed` 时，普通新消息和中途插入消息都会直接 409，不再进入 scheduler queue。
 - 已调整 workspace Markdown 记忆写入提示词：鼓励 `Workspace Info`、`Architecture & Surfaces`、`Invariants & Stable Rules`、`Architectural Decisions`、`Handoff Context` 等软结构；要求 Handoff 写成长期可接手方向，易变状态加 `as last observed/currently observed`，避免一次性 TODO 和临时状态污染。
 - 已在前端历史会话列表增加运行中旋转圈：主会话 `agentBusy` 显示“运行中”，子智能体会话 `agentBusy` 显示“运行中”，父会话在存在运行中子智能体时显示“子运行中”。
+- 已实现第一版 AI 互博功能：完全隔离现有 chat/orchestrator/subagent/queue/memory，新增独立 `/api/debates` 后端模块、独立 `History/ai_debates.sqlite` 落库、前端 `AI 互博` 面板。
+- AI 互博已改为后台运行：`POST /api/debates` 创建 running 记录后立即返回，后端后台逐轮执行并在每个完整 turn 后更新 `History/ai_debates.sqlite`；前端轮询展示实时进度，不做 token/SSE 流式。
+- AI 互博最大轮数已提高到 20；已从“无状态接力”改成 A/B 两个独立持续 messages 会话，`topic + description + 解析后的文件文本` 作为各自 system，上一个对手输出作为下一条 user 循环传入。
+- AI 互博文件入口已复用 `/api/chat/files/parse` 和 `AttachmentParserService`，前端不再 `file.text()`；数据库只保存解析后的文本 `materialsText` 和 A/B messages，不保存原始文件格式/附件对象。
+- AI 互博内置私有 `agree` tool：一方调用后，后端给被认同方追加 user“对方已认同，请给最终总结”，最终总结作为独立 final turn 渲染；完成后只支持查看/删除，不支持继续对话。
+- 已验证 AI 互博相关后端 ESM import、`npm run build:backend`、`npm run build:frontend` 通过，并用临时 SQLite 库跑过 create/update/delete 最小存储测试；临时测试库已清理。
 
 ## 下一步打算做什么
 - 做一次真实服务下的手工联调：前端排队消息点“插入”后是否进入后端 queue、在 assistant/tool 检查点是否以普通 user 消息 append 到聊天流、刷新后是否仍可见、等待插入栏是否消失。
 - 真实跑一次摘要记忆刷新，确认 global/workspace Markdown 会被模型更新，且下一轮主会话 system prompt 注入内容符合预期。
+- 用真实模型跑一次后台 AI 互博：确认创建请求会立即返回、前端可轮询看到 turn 增长、文件解析文本进入 system、`agree` tool 能正常终止、最终总结由被同意方生成。
 
 ## 关键约束 / 风险
 - 代码仓库当前仍是脏工作区，存在用户此前未提交改动：`config/config.json`。
@@ -36,3 +43,4 @@
 - 压缩期间禁插入修复已通过 `chatController` import 和 `npm run build:backend`，但还未在真实前端压缩窗口里手工点插入验证 409 展示。
 - workspace Markdown 提示词调整已通过 `MemorySummaryService` import 和 `npm run build:backend`，还未真实调用模型观察下一次自动记忆输出。
 - 历史会话列表运行中旋转圈已通过 `npm run build:frontend`，还未做浏览器视觉回归截图。
+- AI 互博不做 token/SSE 流式展示，实时性粒度是“每个完整 turn 落库后前端轮询看到”；如果服务进程重启，内存后台任务不会自动恢复；A/B messages 可能随 20 轮增长较快，后续如要省 token 需要再做会话摘要/裁剪。

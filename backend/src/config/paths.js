@@ -22,6 +22,7 @@ export const REMOTE_CONTROL_DIR = path.join(IM_ROOT_DIR, "remote-control");
 export const REMOTE_CONTROL_CONFIG_FILE = path.join(REMOTE_CONTROL_DIR, "config.json");
 export const HISTORY_DIR = path.join(PROJECT_ROOT, "History");
 export const HISTORY_DB_FILE = path.join(HISTORY_DIR, "chat_history.sqlite");
+export const DEBATE_DB_FILE = path.join(HISTORY_DIR, "ai_debates.sqlite");
 export const REMOTE_CONTROL_HISTORY_DB_FILE = path.join(HISTORY_DIR, "remote_control_history.sqlite");
 export const MEMORY_DB_FILE = path.join(PROJECT_ROOT, "memory.sqlite");
 export const TOOLS_DIR = path.join(BACKEND_ROOT, "src", "services", "tools");

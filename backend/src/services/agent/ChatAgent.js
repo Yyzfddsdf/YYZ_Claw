@@ -89,6 +89,75 @@ function clipRuntimeText(text, maxChars = MAX_RUNTIME_TOOL_EVENT_CONTENT_CHARS) 
   return `${source.slice(0, headChars)}\n...[truncated]...\n${source.slice(-tailChars)}`;
 }
 
+function sanitizeToolArgumentsJson(rawArguments) {
+  if (rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)) {
+    try {
+      return JSON.stringify(rawArguments);
+    } catch {
+      return "{}";
+    }
+  }
+
+  const text = String(rawArguments ?? "").trim();
+  if (!text) {
+    return "{}";
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return JSON.stringify(parsed);
+    }
+  } catch {
+    return "{}";
+  }
+
+  return "{}";
+}
+
+function sanitizeToolCallsForModel(toolCalls) {
+  if (!Array.isArray(toolCalls)) {
+    return [];
+  }
+
+  return toolCalls
+    .map((toolCall) => {
+      if (!toolCall || typeof toolCall !== "object") {
+        return null;
+      }
+
+      return {
+        ...toolCall,
+        type: String(toolCall.type ?? "function").trim() || "function",
+        id: String(toolCall.id ?? "").trim(),
+        function: {
+          name: String(toolCall?.function?.name ?? "").trim(),
+          arguments: sanitizeToolArgumentsJson(toolCall?.function?.arguments)
+        }
+      };
+    })
+    .filter((toolCall) => toolCall && toolCall.function.name);
+}
+
+function sanitizeConversationForModel(conversation = []) {
+  return Array.isArray(conversation)
+    ? conversation.map((message) => {
+        if (!message || typeof message !== "object" || Array.isArray(message)) {
+          return message;
+        }
+
+        if (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
+          return message;
+        }
+
+        return {
+          ...message,
+          tool_calls: sanitizeToolCallsForModel(message.tool_calls)
+        };
+      })
+    : [];
+}
+
 function normalizeToolImageAttachments(attachments) {
   if (!Array.isArray(attachments)) {
     return [];
@@ -153,7 +222,7 @@ export class ChatAgent {
   createChatCompletionRequest(validatedConfig, conversation) {
     const request = {
       model: validatedConfig.model,
-      messages: conversation,
+      messages: sanitizeConversationForModel(conversation),
       tools: this.toolRegistry.getOpenAITools(),
       stream_options: {
         include_usage: true
@@ -677,10 +746,10 @@ export class ChatAgent {
       toolName: pendingToolCall?.function?.name ?? "",
       toolApprovalGroup: approvalGroupName,
       toolApprovalSection: approvalSection,
-      toolArguments: pendingToolCall?.function?.arguments ?? "{}",
-      toolCalls: assistantRound.toolCalls,
+      toolArguments: sanitizeToolArgumentsJson(pendingToolCall?.function?.arguments),
+      toolCalls: sanitizeToolCallsForModel(assistantRound.toolCalls),
       assistantMessage: assistantRound.assistantMessage,
-      conversationSnapshot: conversation,
+      conversationSnapshot: sanitizeConversationForModel(conversation),
       runtimeConfig,
       executionContext: serializedExecutionContext,
       approvalMode
@@ -694,10 +763,10 @@ export class ChatAgent {
       toolName: pendingToolCall?.function?.name ?? "",
       toolApprovalGroup: approvalGroupName,
       toolApprovalSection: approvalSection,
-      toolArguments: pendingToolCall?.function?.arguments ?? "{}",
-      toolCalls: assistantRound.toolCalls,
+      toolArguments: sanitizeToolArgumentsJson(pendingToolCall?.function?.arguments),
+      toolCalls: sanitizeToolCallsForModel(assistantRound.toolCalls),
       assistantMessage: assistantRound.assistantMessage,
-      conversationSnapshot: conversation,
+      conversationSnapshot: sanitizeConversationForModel(conversation),
       approvalMode
     };
   }

@@ -916,9 +916,10 @@ export function useChatSession(maxContextWindow = 0) {
   const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
   const [tokenUsageRecords, setTokenUsageRecords] = useState([]);
   const [compressionState, setCompressionState] = useState(EMPTY_COMPRESSION_STATE);
+  const [foregroundStreamingConversationIds, setForegroundStreamingConversationIds] = useState([]);
   const compressionStateRef = useRef(EMPTY_COMPRESSION_STATE);
 
-  const abortRef = useRef(null);
+  const abortControllersByConversationRef = useRef(new Map());
   const hydratedRef = useRef(false);
   const lastPersistedSignatureRef = useRef("");
   const selectedSkillsRef = useRef([]);
@@ -926,18 +927,18 @@ export function useChatSession(maxContextWindow = 0) {
   const activeConversationIdRef = useRef("");
   const queuedUserMessagesRef = useRef([]);
   const pendingApprovalsByConversationRef = useRef({});
-  const streamLoopActiveRef = useRef(false);
+  const foregroundStreamLoopConversationIdsRef = useRef(new Set());
   const conversationListRef = useRef([]);
   const draftConversationRef = useRef(null);
   const conversationMessageCacheRef = useRef(new Map());
   const conversationRuntimeReplyErrorsRef = useRef({});
-  const streamingConversationIdRef = useRef("");
+  const foregroundStreamingConversationIdsRef = useRef(new Set());
   const externalStreamStatesRef = useRef(new Map());
   const externalAgentEventHandlerRef = useRef(null);
   const activeAgentRunConversationIdsRef = useRef(new Set());
   const processedRunEventSeqByRunIdRef = useRef(new Map());
 
-  const isStreaming = status === "streaming";
+  const isStreaming = foregroundStreamingConversationIds.length > 0;
   const isCompressing =
     compressionState.inProgress &&
     String(compressionState.conversationId ?? "").trim() === String(activeConversationId ?? "").trim();
@@ -1089,12 +1090,12 @@ export function useChatSession(maxContextWindow = 0) {
 
   const activeConversationHasForegroundStream = useMemo(() => {
     const normalizedConversationId = String(activeConversationId ?? "").trim();
-    if (!normalizedConversationId || !isStreaming) {
+    if (!normalizedConversationId) {
       return false;
     }
 
-    return String(streamingConversationIdRef.current ?? "").trim() === normalizedConversationId;
-  }, [activeConversationId, isStreaming]);
+    return foregroundStreamingConversationIds.includes(normalizedConversationId);
+  }, [activeConversationId, foregroundStreamingConversationIds]);
 
   const activeConversationIsRunning =
     activeConversationHasForegroundStream || activeConversationAgentBusy;
@@ -1478,6 +1479,39 @@ export function useChatSession(maxContextWindow = 0) {
     return normalizedValue;
   }
 
+  function isConversationForegroundStreaming(conversationId) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    return (
+      Boolean(normalizedConversationId) &&
+      foregroundStreamingConversationIdsRef.current.has(normalizedConversationId)
+    );
+  }
+
+  function setConversationForegroundStreaming(conversationId, isActive) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return;
+    }
+
+    const nextIds = new Set(foregroundStreamingConversationIdsRef.current);
+    const hadConversation = nextIds.has(normalizedConversationId);
+
+    if (isActive) {
+      if (hadConversation) {
+        return;
+      }
+      nextIds.add(normalizedConversationId);
+    } else {
+      if (!hadConversation) {
+        return;
+      }
+      nextIds.delete(normalizedConversationId);
+    }
+
+    foregroundStreamingConversationIdsRef.current = nextIds;
+    setForegroundStreamingConversationIds([...nextIds]);
+  }
+
   function markConversationRunEndedLocally(conversationId, nextStatus = "idle") {
     const normalizedConversationId = String(conversationId ?? "").trim();
     if (!normalizedConversationId) {
@@ -1503,10 +1537,9 @@ export function useChatSession(maxContextWindow = 0) {
       )
     );
 
-    if (String(streamingConversationIdRef.current ?? "").trim() === normalizedConversationId) {
-      streamingConversationIdRef.current = "";
-      setStatus("idle");
-    }
+    foregroundStreamLoopConversationIdsRef.current.delete(normalizedConversationId);
+    abortControllersByConversationRef.current.delete(normalizedConversationId);
+    setConversationForegroundStreaming(normalizedConversationId, false);
   }
 
   function shouldProcessAgentEvent(event) {
@@ -1641,7 +1674,6 @@ export function useChatSession(maxContextWindow = 0) {
 
     if (
       activeConversationIsRunning ||
-      streamLoopActiveRef.current ||
       pendingApproval ||
       activeConversationAgentBusy
     ) {
@@ -1734,11 +1766,9 @@ export function useChatSession(maxContextWindow = 0) {
       Boolean(
         conversationListRef.current.find((item) => item.id === normalizedConversationId)?.agentBusy
       );
-    const targetHasForegroundStream =
-      isStreaming &&
-      String(streamingConversationIdRef.current ?? "").trim() === normalizedConversationId;
+    const targetHasForegroundStream = isConversationForegroundStreaming(normalizedConversationId);
     const preserveStreamingState =
-      targetConversationBusy || targetHasForegroundStream || streamLoopActiveRef.current;
+      targetConversationBusy || targetHasForegroundStream || foregroundStreamingConversationIdsRef.current.size > 0;
 
     if (!normalizedConversationId) {
       return;
@@ -3043,7 +3073,10 @@ export function useChatSession(maxContextWindow = 0) {
         setPendingApprovalValue(null, { conversationId: normalizedTargetConversationId });
       }
       streamState.activeAssistantMessageId = null;
-      if (!streamLoopActiveRef.current && status !== "streaming") {
+      if (
+        !foregroundStreamLoopConversationIdsRef.current.has(normalizedTargetConversationId) &&
+        !isConversationForegroundStreaming(normalizedTargetConversationId)
+      ) {
         const nextQueued = queuedUserMessagesRef.current.find(
           (item) => String(item?.conversationId ?? "").trim() === normalizedTargetConversationId
         );
@@ -3356,8 +3389,8 @@ export function useChatSession(maxContextWindow = 0) {
 
     const ignoreCompressionGate = options.ignoreCompressionGate === true;
     if (
-      streamLoopActiveRef.current ||
-      isStreaming ||
+      foregroundStreamLoopConversationIdsRef.current.has(normalizedConversationId) ||
+      isConversationForegroundStreaming(normalizedConversationId) ||
       hasPendingApprovalValue(normalizedConversationId) ||
       activeAgentRunConversationIdsRef.current.has(normalizedConversationId) ||
       (!ignoreCompressionGate && isConversationCompressionActive(normalizedConversationId))
@@ -3413,17 +3446,18 @@ export function useChatSession(maxContextWindow = 0) {
   }
 
   async function runConversationStreamLoop(initialPlan) {
+    const normalizedInitialConversationId = String(initialPlan?.conversationId ?? "").trim();
     if (
-      streamLoopActiveRef.current ||
       !initialPlan ||
+      !normalizedInitialConversationId ||
       !Array.isArray(initialPlan.messages) ||
-      initialPlan.messages.length === 0
+      initialPlan.messages.length === 0 ||
+      foregroundStreamLoopConversationIdsRef.current.has(normalizedInitialConversationId)
     ) {
       return;
     }
 
-    streamLoopActiveRef.current = true;
-    setStatus("streaming");
+    foregroundStreamLoopConversationIdsRef.current.add(normalizedInitialConversationId);
     setError("");
     setRetryNotice("");
 
@@ -3439,8 +3473,9 @@ export function useChatSession(maxContextWindow = 0) {
           pendingReasoningBuffer: "",
           flushFrameId: null
         };
-        abortRef.current = controller;
-        streamingConversationIdRef.current = String(currentPlan.conversationId ?? "").trim();
+        const currentConversationId = String(currentPlan.conversationId ?? "").trim();
+        abortControllersByConversationRef.current.set(currentConversationId, controller);
+        setConversationForegroundStreaming(currentConversationId, true);
 
         try {
           await streamChat({
@@ -3471,7 +3506,8 @@ export function useChatSession(maxContextWindow = 0) {
             break;
           }
         } finally {
-          abortRef.current = null;
+          abortControllersByConversationRef.current.delete(currentConversationId);
+          setConversationForegroundStreaming(currentConversationId, false);
         }
 
         await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -3480,30 +3516,16 @@ export function useChatSession(maxContextWindow = 0) {
           break;
         }
 
-        nextPlan = null;
-        while (!nextPlan) {
-          const nextQueued = queuedUserMessagesRef.current[0];
-          if (!nextQueued) {
-            break;
-          }
-
-          const nextQueuedConversationId = String(nextQueued?.conversationId ?? "").trim();
-          if (
-            nextQueuedConversationId &&
-            activeAgentRunConversationIdsRef.current.has(nextQueuedConversationId)
-          ) {
-            break;
-          }
-
-          nextPlan = buildQueuedRunPlan(nextQueued.messageId);
-        }
+        const nextQueued = queuedUserMessagesRef.current.find(
+          (item) => String(item?.conversationId ?? "").trim() === currentConversationId
+        );
+        nextPlan = nextQueued ? buildQueuedRunPlan(nextQueued.messageId) : null;
       }
     } finally {
-      streamLoopActiveRef.current = false;
-      streamingConversationIdRef.current = "";
-      setStatus("idle");
-      abortRef.current = null;
-      refreshHistoryTitleWithRetry(initialPlan.conversationId, 4);
+      foregroundStreamLoopConversationIdsRef.current.delete(normalizedInitialConversationId);
+      abortControllersByConversationRef.current.delete(normalizedInitialConversationId);
+      setConversationForegroundStreaming(normalizedInitialConversationId, false);
+      refreshHistoryTitleWithRetry(normalizedInitialConversationId, 4);
     }
   }
 
@@ -3540,11 +3562,14 @@ export function useChatSession(maxContextWindow = 0) {
       imageAttachments,
       parsedFileAttachments
     };
+    const activeConversationQueuedCount = queuedUserMessagesRef.current.filter(
+      (item) => String(item?.conversationId ?? "").trim() === String(targetConversationId ?? "").trim()
+    ).length;
     const shouldQueueMessage =
       isConversationCompressionActive(targetConversationId) ||
-      isStreaming ||
-      streamLoopActiveRef.current ||
-      queuedUserMessagesRef.current.length > 0 ||
+      isConversationForegroundStreaming(targetConversationId) ||
+      foregroundStreamLoopConversationIdsRef.current.has(targetConversationId) ||
+      activeConversationQueuedCount > 0 ||
       activeAgentRunConversationIdsRef.current.has(targetConversationId);
     const userMessage = buildUserMessage(normalizedPayload, {
       localQueueState: shouldQueueMessage ? "queued" : ""
@@ -3611,24 +3636,21 @@ export function useChatSession(maxContextWindow = 0) {
   async function confirmPendingApproval(options = {}) {
     const approvalId = String(pendingApproval?.approvalId ?? "").trim();
     const targetConversationId = String(pendingApproval?.conversationId ?? "").trim();
-    const foregroundConversationId = String(streamingConversationIdRef.current ?? "").trim();
-    const targetHasForegroundStream =
-      Boolean(foregroundConversationId) && foregroundConversationId === targetConversationId;
-    const canBindForegroundStream = !foregroundConversationId || targetHasForegroundStream;
+    const targetHasForegroundStream = isConversationForegroundStreaming(targetConversationId);
+    const canBindForegroundStream = !targetHasForegroundStream;
 
     if (!approvalId || !targetConversationId || isCompressing || targetHasForegroundStream) {
       return;
     }
 
     if (canBindForegroundStream) {
-      setStatus("streaming");
-      streamingConversationIdRef.current = targetConversationId;
+      setConversationForegroundStreaming(targetConversationId, true);
     }
     setPendingApprovalValue(null, { conversationId: targetConversationId });
 
     const controller = new AbortController();
     if (canBindForegroundStream) {
-      abortRef.current = controller;
+      abortControllersByConversationRef.current.set(targetConversationId, controller);
     }
     const streamState = {
       activeAssistantMessageId: null,
@@ -3664,28 +3686,16 @@ export function useChatSession(maxContextWindow = 0) {
       }
     } finally {
       if (canBindForegroundStream) {
-        if (String(streamingConversationIdRef.current ?? "").trim() === targetConversationId) {
-          streamingConversationIdRef.current = "";
-        }
-        if (abortRef.current === controller) {
-          abortRef.current = null;
-        }
-        if (!streamLoopActiveRef.current) {
-          setStatus("idle");
-        }
+        abortControllersByConversationRef.current.delete(targetConversationId);
+        setConversationForegroundStreaming(targetConversationId, false);
       }
 
       if (!hasPendingApprovalValue(targetConversationId)) {
-        const nextQueued = queuedUserMessagesRef.current[0];
-        const nextQueuedConversationId = String(nextQueued?.conversationId ?? "").trim();
+        const nextQueued = queuedUserMessagesRef.current.find(
+          (item) => String(item?.conversationId ?? "").trim() === targetConversationId
+        );
         const nextPlan = nextQueued ? buildQueuedRunPlan(nextQueued.messageId) : null;
-        if (
-          nextPlan &&
-          (
-            !nextQueuedConversationId ||
-            !activeAgentRunConversationIdsRef.current.has(nextQueuedConversationId)
-          )
-        ) {
+        if (nextPlan && !activeAgentRunConversationIdsRef.current.has(targetConversationId)) {
           void runConversationStreamLoop(nextPlan);
         }
       }
@@ -3713,16 +3723,16 @@ export function useChatSession(maxContextWindow = 0) {
   async function stopStream() {
     setRetryNotice("");
     const targetConversationId = String(activeConversationIdRef.current ?? "").trim();
-    const activeAbortController = abortRef.current;
+    const activeAbortController = abortControllersByConversationRef.current.get(targetConversationId) ?? null;
     const localRunLikelyActive =
       Boolean(activeAbortController) ||
-      Boolean(streamLoopActiveRef.current) ||
+      foregroundStreamLoopConversationIdsRef.current.has(targetConversationId) ||
       Boolean(hasPendingApprovalValue(targetConversationId)) ||
       Boolean(
         targetConversationId &&
         (
           activeAgentRunConversationIdsRef.current.has(targetConversationId) ||
-          String(streamingConversationIdRef.current ?? "").trim() === targetConversationId
+          isConversationForegroundStreaming(targetConversationId)
         )
       );
     let shouldFinalizeLocally = false;
@@ -3747,7 +3757,9 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (shouldFinalizeLocally || localRunLikelyActive) {
-      abortRef.current = null;
+      abortControllersByConversationRef.current.delete(targetConversationId);
+      foregroundStreamLoopConversationIdsRef.current.delete(targetConversationId);
+      setConversationForegroundStreaming(targetConversationId, false);
       setPendingApprovalValue(null, { conversationId: targetConversationId });
       clearConversationRuntimeReplyError(targetConversationId);
       markConversationRunEndedLocally(targetConversationId, "aborted");

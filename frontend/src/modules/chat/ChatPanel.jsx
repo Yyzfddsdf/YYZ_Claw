@@ -54,6 +54,42 @@ const GENERAL_FILE_ACCEPT = [
   ".ps1"
 ].join(",");
 
+function BubbleCopyIcon({ copied = false }) {
+  if (copied) {
+    return (
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="m5 12 4 4L19 6" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="9" y="9" width="10" height="10" rx="2" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+    </svg>
+  );
+}
+
+function BubbleSpeakIcon({ playing = false }) {
+  if (playing) {
+    return (
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+        <rect x="6" y="6" width="4.5" height="12" rx="1.2" />
+        <rect x="13.5" y="6" width="4.5" height="12" rx="1.2" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.5 9.5a4 4 0 0 1 0 5" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18 7a8 8 0 0 1 0 10" />
+    </svg>
+  );
+}
+
 function estimateDataUrlBytes(dataUrl) {
   const normalized = String(dataUrl ?? "").trim();
   if (!normalized.startsWith("data:")) {
@@ -2092,9 +2128,16 @@ export function ChatPanel({
               const isSpeakDisabled = !speakText;
               const isPlayingThisMessage = ttsPlayingMessageId === String(message.id ?? "").trim();
               const isLoadingThisMessage = ttsLoadingMessageId === String(message.id ?? "").trim();
+              const isCopiedThisMessage = copiedMessageId === String(message.id ?? "").trim();
               const copyText = String(message.content ?? "").trim() || speakText;
               const canCopyMessage = copyText.length > 0;
               const showBubbleActionRow = canCopyMessage || !isSpeakDisabled;
+              const copyButtonLabel = isCopiedThisMessage ? "已复制" : "复制消息";
+              const speakButtonLabel = isPlayingThisMessage
+                ? "停止朗读"
+                : isLoadingThisMessage
+                  ? "语音加载中..."
+                  : "朗读消息";
               const deleteButton = (
                 <button
                   type="button"
@@ -2385,32 +2428,26 @@ export function ChatPanel({
                         <div className="bubble-action-row">
                           <button
                             type="button"
-                            className="bubble-action-btn"
+                            className="bubble-action-btn bubble-action-btn-icon"
                             onClick={() => handleCopyMessageClick(message.id, copyText)}
                             disabled={!canCopyMessage}
-                            title={copiedMessageId === String(message.id ?? "").trim() ? "已复制" : "复制消息"}
+                            title={copyButtonLabel}
+                            aria-label={copyButtonLabel}
                           >
-                            {copiedMessageId === String(message.id ?? "").trim() ? "已复制" : "复制"}
+                            <BubbleCopyIcon copied={isCopiedThisMessage} />
                           </button>
                           <button
                             type="button"
-                            className={`bubble-action-btn ${isPlayingThisMessage ? "is-playing" : ""}`}
+                            className={`bubble-action-btn bubble-action-btn-icon ${isPlayingThisMessage ? "is-playing" : ""}`}
                             onClick={() => handleBubbleSpeakClick(message.id, speakText)}
                             disabled={isSpeakDisabled}
-                            title={
-                              isPlayingThisMessage
-                                ? "停止朗读"
-                                : isLoadingThisMessage
-                                  ? "语音加载中..."
-                                  : "朗读消息"
-                            }
+                            title={speakButtonLabel}
+                            aria-label={speakButtonLabel}
                           >
                             {isLoadingThisMessage ? (
                               <span className="bubble-tts-spinner" aria-hidden="true" />
-                            ) : isPlayingThisMessage ? (
-                              "停止"
                             ) : (
-                              "朗读"
+                              <BubbleSpeakIcon playing={isPlayingThisMessage} />
                             )}
                           </button>
                         </div>
@@ -2752,29 +2789,6 @@ export function ChatPanel({
                   </svg>
                 </button>
 
-                {/* 语音输入 */}
-                <button
-                  type="button"
-                  className={`upload-file voice-input-trigger ${isVoiceRecording ? "is-recording" : ""}`}
-                  onClick={handleVoiceInputClick}
-                  disabled={voiceInputDisabled}
-                  aria-label={isVoiceRecording ? "停止录音并转文字" : "开始语音输入"}
-                  title={
-                    isVoiceTranscribing
-                      ? "语音转写中..."
-                      : isVoiceRecording
-                        ? "停止录音并转文字"
-                        : "语音输入"
-                  }
-                >
-                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4a3 3 0 0 1 3 3v5a3 3 0 1 1-6 0V7a3 3 0 0 1 3-3Z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 0 1-14 0" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v3" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 21h6" />
-                  </svg>
-                </button>
-
                 {/* 图片上传 */}
                 <button
                   type="button"
@@ -2865,6 +2879,28 @@ export function ChatPanel({
                     ></path>
                   </svg>
                 )}
+              </button>
+
+              <button
+                type="button"
+                className={`composer-voice-action voice-input-trigger ${isVoiceRecording ? "is-recording" : ""}`}
+                onClick={handleVoiceInputClick}
+                disabled={voiceInputDisabled}
+                aria-label={isVoiceRecording ? "停止录音并转文字" : "开始语音输入"}
+                title={
+                  isVoiceTranscribing
+                    ? "语音转写中..."
+                    : isVoiceRecording
+                      ? "停止录音并转文字"
+                      : "语音输入"
+                }
+              >
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4a3 3 0 0 1 3 3v5a3 3 0 1 1-6 0V7a3 3 0 0 1 3-3Z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 0 1-14 0" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v3" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 21h6" />
+                </svg>
               </button>
 
               <input

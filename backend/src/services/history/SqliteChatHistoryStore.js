@@ -1662,6 +1662,7 @@ export class SqliteChatHistoryStore {
   }
 
   appendMessages(conversationId, messages = [], options = {}) {
+    const db = this.ensureDb();
     const existing = this.getConversation(conversationId);
     if (!existing) {
       return null;
@@ -1672,23 +1673,126 @@ export class SqliteChatHistoryStore {
       return existing;
     }
 
+    const normalizedConversationId = String(conversationId ?? "").trim();
     const updatedAt = Number(options.updatedAt ?? Date.now());
+    const normalizedMessages = appendedMessages.map((item, index) => normalizeMessage(item, index));
+    const maxSortRow = db
+      .prepare(
+        `
+          SELECT MAX(sort_index) AS max_sort_index
+          FROM conversation_messages
+          WHERE conversation_id = ?
+        `
+      )
+      .get(normalizedConversationId);
+    let nextSortIndex = Number(maxSortRow?.max_sort_index ?? -1) + 1;
 
-    return this.mergeConversation({
-      conversationId: existing.id,
-      title: existing.title,
-      workplacePath: existing.workplacePath,
-      parentConversationId: existing.parentConversationId,
-      source: existing.source,
-      model: existing.model,
-      approvalMode: existing.approvalMode,
-      skills: existing.skills,
-      developerPrompt: existing.developerPrompt,
-      memorySummaryPrompt: existing.memorySummaryPrompt,
-      createdAt: existing.createdAt,
-      updatedAt,
-      messages: appendedMessages
-    });
+    const insertStmt = db.prepare(
+      `
+        INSERT INTO conversation_messages
+        (conversation_id, id, role, content, reasoning_content, tool_call_id, tool_name, tool_calls_json, meta_json, token_usage_json, timestamp, sort_index)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    );
+    const selectExistingStmt = db.prepare(
+      `
+        SELECT seq, sort_index
+        FROM conversation_messages
+        WHERE conversation_id = ? AND id = ?
+        ORDER BY seq DESC
+        LIMIT 1
+      `
+    );
+    const updateExistingStmt = db.prepare(
+      `
+        UPDATE conversation_messages
+        SET
+          role = ?,
+          content = ?,
+          reasoning_content = ?,
+          tool_call_id = ?,
+          tool_name = ?,
+          tool_calls_json = ?,
+          meta_json = ?,
+          token_usage_json = ?,
+          timestamp = ?
+        WHERE conversation_id = ? AND id = ?
+      `
+    );
+
+    db.exec("BEGIN TRANSACTION");
+    try {
+      for (const message of normalizedMessages) {
+        const messageId = String(message.id ?? "").trim();
+        if (!messageId) {
+          throw new Error("message.id is required");
+        }
+
+        const existingRow = selectExistingStmt.get(normalizedConversationId, messageId);
+        if (existingRow) {
+          updateExistingStmt.run(
+            message.role,
+            message.content,
+            message.reasoningContent,
+            message.toolCallId,
+            message.toolName,
+            message.toolCalls.length > 0 ? JSON.stringify(message.toolCalls) : "",
+            Object.keys(message.meta).length > 0 ? JSON.stringify(message.meta) : "",
+            message.tokenUsage ? JSON.stringify(message.tokenUsage) : "",
+            message.timestamp,
+            normalizedConversationId,
+            messageId
+          );
+
+          upsertConversationMessageFtsRow(db, Number(existingRow.seq ?? 0), {
+            conversationId: normalizedConversationId,
+            role: message.role,
+            content: message.content,
+            meta: message.meta
+          });
+          continue;
+        }
+
+        const insertResult = insertStmt.run(
+          normalizedConversationId,
+          messageId,
+          message.role,
+          message.content,
+          message.reasoningContent,
+          message.toolCallId,
+          message.toolName,
+          message.toolCalls.length > 0 ? JSON.stringify(message.toolCalls) : "",
+          Object.keys(message.meta).length > 0 ? JSON.stringify(message.meta) : "",
+          message.tokenUsage ? JSON.stringify(message.tokenUsage) : "",
+          message.timestamp,
+          nextSortIndex
+        );
+
+        upsertConversationMessageFtsRow(db, Number(insertResult.lastInsertRowid ?? 0), {
+          conversationId: normalizedConversationId,
+          role: message.role,
+          content: message.content,
+          meta: message.meta
+        });
+
+        nextSortIndex += 1;
+      }
+
+      db.prepare(
+        `
+          UPDATE conversations
+          SET updated_at = ?
+          WHERE id = ?
+        `
+      ).run(updatedAt, normalizedConversationId);
+
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+
+    return this.getConversation(normalizedConversationId);
   }
 
   upsertConversationMessage(conversationId, message = {}, options = {}) {

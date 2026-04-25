@@ -174,6 +174,92 @@ function normalizeMessageMeta(meta) {
   return meta && typeof meta === "object" && !Array.isArray(meta) ? { ...meta } : {};
 }
 
+function buildRunSummary(run) {
+  if (!run || typeof run !== "object") {
+    return null;
+  }
+
+  return {
+    runId: String(run.runId ?? "").trim(),
+    sessionId: String(run.sessionId ?? "").trim(),
+    agentId: String(run.agentId ?? "").trim(),
+    conversationId: String(run.conversationId ?? "").trim(),
+    mode: String(run.mode ?? "").trim(),
+    status: String(run.status ?? "").trim(),
+    stepId: String(run.stepId ?? "").trim(),
+    startedAt: Number(run.startedAt ?? 0),
+    lastEventAt: Number(run.lastEventAt ?? 0),
+    eventSeq: Number(run.eventSeq ?? 0)
+  };
+}
+
+function buildRuntimeStatusPayload({
+  conversationId,
+  history,
+  sessionInfo,
+  agentRecord,
+  sessionSnapshot,
+  activeRun
+}) {
+  const normalizedConversationId = String(conversationId ?? "").trim();
+  const sessionId = String(sessionInfo?.sessionId ?? normalizedConversationId).trim();
+  const targetAgentId = String(agentRecord?.agentId ?? sessionInfo?.primaryAgentId ?? "").trim();
+  const messageStats = {
+    total: 0,
+    user: 0,
+    assistant: 0,
+    tool: 0,
+    other: 0
+  };
+  const historyMessages = Array.isArray(history?.messages) ? history.messages : [];
+  for (const message of historyMessages) {
+    const role = String(message?.role ?? "").trim().toLowerCase();
+    messageStats.total += 1;
+    if (role === "user" || role === "assistant" || role === "tool") {
+      messageStats[role] += 1;
+    } else {
+      messageStats.other += 1;
+    }
+  }
+  const agents = Array.isArray(sessionSnapshot?.agents) ? sessionSnapshot.agents : [];
+  const currentAgent = agents.find(
+    (agent) => String(agent?.agentId ?? "").trim() === targetAgentId
+  ) ?? null;
+  const queueByAgent =
+    sessionSnapshot?.queueByAgent instanceof Map
+      ? Object.fromEntries(sessionSnapshot.queueByAgent.entries())
+      : sessionSnapshot?.queueByAgent && typeof sessionSnapshot.queueByAgent === "object"
+        ? sessionSnapshot.queueByAgent
+        : {};
+  const isActiveQueueEntry = (item) => String(item?.status ?? "").trim() !== "consumed";
+  const currentQueue = Array.isArray(queueByAgent[targetAgentId])
+    ? queueByAgent[targetAgentId].filter(isActiveQueueEntry)
+    : [];
+  const queueSize = Object.values(queueByAgent).reduce(
+    (total, queue) =>
+      total + (Array.isArray(queue) ? queue.filter(isActiveQueueEntry).length : 0),
+    0
+  );
+
+  return {
+    conversationId: normalizedConversationId,
+    sessionId,
+    source: String(history?.source ?? "chat").trim() || "chat",
+    targetAgentId,
+    primaryAgentId: String(sessionInfo?.primaryAgentId ?? "").trim(),
+    activeRun: buildRunSummary(activeRun),
+    currentAgent,
+    agents,
+    messageStats,
+    queue: currentQueue,
+    queueSize,
+    publicPool: Array.isArray(sessionSnapshot?.publicPool)
+      ? sessionSnapshot.publicPool.slice(-12)
+      : [],
+    updatedAt: Date.now()
+  };
+}
+
 function parseJsonIfString(value) {
   if (typeof value === "string") {
     const normalized = value.trim();
@@ -710,6 +796,37 @@ function isManualCompressionRun(run) {
   return String(run.agentId ?? "").trim() === "manual_compression";
 }
 
+function isCompressionActiveRun(run) {
+  if (!run || typeof run !== "object") {
+    return false;
+  }
+
+  if (isManualCompressionRun(run)) {
+    return true;
+  }
+
+  const replayEvents = Array.isArray(run.replayEvents) ? run.replayEvents : [];
+  for (let index = replayEvents.length - 1; index >= 0; index -= 1) {
+    const eventType = String(replayEvents[index]?.type ?? "").trim();
+    if (eventType === "compression_completed") {
+      return false;
+    }
+    if (eventType === "compression_started") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function createCompressionInProgressError(action = "message") {
+  const error = createValidationError(
+    `conversation compression is in progress; ${action} is temporarily disabled until compression completes`
+  );
+  error.statusCode = 409;
+  return error;
+}
+
 export function createChatController({
   chatAgent,
   toolRegistry,
@@ -733,6 +850,71 @@ export function createChatController({
   orchestratorSupervisorService,
   wakeDispatcher
 }) {
+  const createForegroundQueuedInsertionFlusher = ({
+    conversationId,
+    sessionId,
+    agentId,
+    foregroundRun,
+    recorder,
+    res
+  } = {}) => async ({ checkpoint } = {}) => {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    const normalizedSessionId = String(sessionId ?? "").trim();
+    const normalizedAgentId = String(agentId ?? "").trim();
+    if (
+      !normalizedConversationId ||
+      !normalizedSessionId ||
+      !normalizedAgentId ||
+      !orchestratorSchedulerService ||
+      typeof orchestratorSchedulerService.flushReadyInsertions !== "function"
+    ) {
+      return [];
+    }
+
+    const normalizedCheckpoint = String(checkpoint ?? "").trim();
+    const readyInsertions = orchestratorSchedulerService.flushReadyInsertions(
+      normalizedSessionId,
+      normalizedAgentId,
+      {
+        force: true,
+        checkpoint: normalizedCheckpoint
+      }
+    );
+    const messages = Array.isArray(readyInsertions)
+      ? readyInsertions
+          .map((item) => item?.message)
+          .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      : [];
+
+    if (messages.length === 0) {
+      return [];
+    }
+
+    const recorderMessages =
+      recorder && typeof recorder.getMessages === "function"
+        ? recorder.getMessages()
+        : [];
+    if (Array.isArray(recorderMessages) && recorderMessages.length > 0) {
+      historyStore.appendMessages(normalizedConversationId, recorderMessages, {
+        updatedAt: Date.now()
+      });
+    }
+
+    historyStore.appendMessages(normalizedConversationId, messages, {
+      updatedAt: Date.now()
+    });
+
+    const payload = {
+      type: "conversation_messages_appended",
+      messages,
+      checkpoint: normalizedCheckpoint
+    };
+    recorder?.applyEvent?.(payload);
+    emitRunEvent(foregroundRun, payload, conversationRunCoordinator, res);
+
+    return messages;
+  };
+
   return {
     parseUploadedFiles: async (req, res) => {
       const uploadedFiles = Array.isArray(req.files) ? req.files : [];
@@ -855,6 +1037,168 @@ export function createChatController({
         success: true,
         stopped: true,
         runId: String(activeRun.runId ?? "").trim()
+      });
+    },
+
+    getRuntimeStatusById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const sessionInfo = orchestratorSupervisorService?.ensureSession?.(conversationId) ?? {
+        sessionId: conversationId,
+        primaryAgentId: ""
+      };
+      const agentRecord = orchestratorStore?.findAgentByConversationId?.(conversationId) ?? null;
+      const sessionSnapshot =
+        orchestratorSchedulerService?.getSessionSnapshot?.(sessionInfo.sessionId) ??
+        orchestratorStore?.loadSessionSnapshot?.(sessionInfo.sessionId) ??
+        null;
+      const activeRun =
+        conversationRunCoordinator?.getRunByConversationId?.(conversationId) ??
+        (agentRecord?.agentId
+          ? conversationRunCoordinator?.getRunByAgent?.(sessionInfo.sessionId, agentRecord.agentId)
+          : null);
+
+      res.json({
+        runtime: buildRuntimeStatusPayload({
+          conversationId,
+          history,
+          sessionInfo,
+          agentRecord,
+          sessionSnapshot,
+          activeRun
+        })
+      });
+    },
+
+    queueConversationInsertionById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+      const content = String(req.body?.content ?? "").trim();
+      const clientInsertionId =
+        String(req.body?.clientInsertionId ?? "").trim() ||
+        `client_insertion_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+      const sourceMessageId = String(req.body?.sourceMessageId ?? "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+      if (!content) {
+        throw createValidationError("content is required");
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const sessionInfo = orchestratorSupervisorService?.ensureSession?.(conversationId) ?? {
+        sessionId: conversationId,
+        primaryAgentId: ""
+      };
+      const agentRecord = orchestratorStore?.findAgentByConversationId?.(conversationId) ?? null;
+      const targetAgentId = String(agentRecord?.agentId ?? sessionInfo.primaryAgentId ?? "").trim();
+      const sourceAgentId = String(sessionInfo.primaryAgentId ?? targetAgentId).trim();
+      if (!targetAgentId) {
+        throw createValidationError("target agent is unavailable");
+      }
+      const activeRun =
+        conversationRunCoordinator?.getRunByConversationId?.(conversationId) ??
+        conversationRunCoordinator?.getRunByAgent?.(sessionInfo.sessionId, targetAgentId) ??
+        null;
+      if (isCompressionActiveRun(activeRun)) {
+        throw createCompressionInProgressError("message insertion");
+      }
+      const activeRunStatus = String(activeRun?.status ?? "").trim();
+
+      const insertionMessage = {
+        id: `msg_${Date.now()}_${randomUUID()}`,
+        role: "user",
+        content,
+        timestamp: Date.now()
+      };
+
+      const queued = orchestratorSchedulerService.queueMessage({
+        sessionId: sessionInfo.sessionId,
+        targetAgentId,
+        sourceAgentId,
+        subtype: "user_correction",
+        deliveryMode: "queued_after_atomic",
+        broadcastMode: "direct",
+        message: insertionMessage,
+        payload: {
+          content,
+          clientInsertionId,
+          sourceMessageId
+        },
+        metadata: {
+          userCorrection: true,
+          clientInsertionId,
+          sourceMessageId
+        }
+      });
+
+      let flushedInsertions = [];
+      const shouldFlushImmediately =
+        !activeRun || activeRunStatus === "waiting_approval";
+      if (shouldFlushImmediately) {
+        flushedInsertions = orchestratorSchedulerService.flushReadyInsertions(
+          sessionInfo.sessionId,
+          targetAgentId,
+          {
+            force: activeRunStatus === "waiting_approval"
+          }
+        );
+        if (typeof wakeDispatcher?.handleReadyInsertions === "function") {
+          await wakeDispatcher.handleReadyInsertions(conversationId, {
+            readyInsertions: flushedInsertions
+          });
+        } else if (flushedInsertions.length > 0) {
+          const messages = flushedInsertions
+            .map((item) => item?.message)
+            .filter((item) => item && typeof item === "object" && !Array.isArray(item));
+          if (messages.length > 0) {
+            historyStore.appendMessages(conversationId, messages, {
+              updatedAt: Date.now()
+            });
+          }
+        }
+
+        if (!activeRun && flushedInsertions.length > 0) {
+          void wakeDispatcher?.startBackgroundRun?.(sessionInfo.sessionId, targetAgentId);
+        }
+      } else {
+        await wakeDispatcher?.wakeAgentIfNeeded?.({
+          sessionId: sessionInfo.sessionId,
+          agentId: targetAgentId
+        });
+      }
+
+      const wasFlushed = flushedInsertions.some(
+        (item) => String(item?.id ?? "").trim() === String(queued?.id ?? "").trim()
+      );
+
+      res.json({
+        queued: {
+          queueId: String(queued?.id ?? "").trim(),
+          status: wasFlushed ? "consumed" : String(queued?.status ?? "").trim(),
+          messageId: String(queued?.message?.id ?? "").trim(),
+          clientInsertionId,
+          sourceMessageId,
+          conversationId,
+          targetAgentId,
+          flushed: wasFlushed
+        }
       });
     },
 
@@ -1609,7 +1953,15 @@ export function createChatController({
           ).trim(),
           orchestratorStore,
           orchestratorSchedulerService,
-          orchestratorSupervisorService
+          orchestratorSupervisorService,
+          flushQueuedInsertions: createForegroundQueuedInsertionFlusher({
+            conversationId: resolvedPendingApproval.conversationId,
+            sessionId: resolvedRuntime?.sessionId,
+            agentId: resolvedRuntime?.agentId,
+            foregroundRun,
+            recorder,
+            res
+          })
         };
 
         runResult = await runtimeChatAgent.resumePendingApproval({
@@ -1796,12 +2148,8 @@ export function createChatController({
       }
       const activeConversationRun =
         conversationRunCoordinator?.getRunByConversationId?.(streamConversationId) ?? null;
-      if (isManualCompressionRun(activeConversationRun)) {
-        const compressionInProgressError = createValidationError(
-          "conversation compression is in progress; queue message and retry after compression completes"
-        );
-        compressionInProgressError.statusCode = 409;
-        throw compressionInProgressError;
+      if (isCompressionActiveRun(activeConversationRun)) {
+        throw createCompressionInProgressError("new messages");
       }
 
       const configValidation = configSchema.safeParse(await configStore.read());
@@ -2100,7 +2448,15 @@ export function createChatController({
           developerPrompt: String(resolvedRuntime?.developerPrompt ?? "").trim(),
           orchestratorStore,
           orchestratorSchedulerService,
-          orchestratorSupervisorService
+          orchestratorSupervisorService,
+          flushQueuedInsertions: createForegroundQueuedInsertionFlusher({
+            conversationId,
+            sessionId: resolvedRuntime?.sessionId,
+            agentId: resolvedRuntime?.agentId,
+            foregroundRun,
+            recorder,
+            res
+          })
         };
 
         runResult = await runtimeChatAgent.run({

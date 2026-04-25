@@ -350,7 +350,41 @@ export class ConversationAgentRuntimeService {
       developerPrompt: resolved.developerPrompt,
       orchestratorSchedulerService: this.orchestratorSchedulerService,
       orchestratorStore: this.orchestratorStore,
-      orchestratorSupervisorService: this.orchestratorSupervisorService
+      orchestratorSupervisorService: this.orchestratorSupervisorService,
+      flushQueuedInsertions: async ({ checkpoint } = {}) => {
+        if (!this.orchestratorSchedulerService || !this.historyStore) {
+          return [];
+        }
+
+        const readyInsertions = this.orchestratorSchedulerService.flushReadyInsertions(
+          resolved.sessionId,
+          resolved.agentId,
+          {
+            force: true,
+            checkpoint: normalizeText(checkpoint)
+          }
+        );
+        const messages = Array.isArray(readyInsertions)
+          ? readyInsertions
+              .map((item) => item?.message)
+              .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+          : [];
+
+        if (messages.length === 0) {
+          return [];
+        }
+
+        this.historyStore.appendMessages(conversationId, messages, {
+          updatedAt: Date.now()
+        });
+        options.onEvent?.({
+          type: "conversation_messages_appended",
+          messages,
+          checkpoint: normalizeText(checkpoint)
+        });
+
+        return messages;
+      }
     };
 
     const runResult = await resolved.chatAgent.run({

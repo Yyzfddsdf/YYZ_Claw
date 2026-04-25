@@ -7,9 +7,11 @@ import {
   deleteHistoryMessageById,
   fetchHistories,
   fetchHistoryById,
+  fetchConversationRuntimeById,
   forkHistoryById,
   fetchSkills,
   confirmToolApprovalById,
+  queueConversationInsertionById,
   rejectToolApprovalById,
   selectWorkplaceBySystemDialog,
   stopConversationRunById,
@@ -177,6 +179,69 @@ function clearLocalQueueStateFromMeta(meta) {
     delete nextMeta[LOCAL_QUEUE_STATE_KEY];
   }
   return nextMeta;
+}
+
+function collectInsertionMatchKeysFromMessages(messages = []) {
+  const keys = new Set();
+
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const normalized = normalizeChatMessage(message);
+    const messageId = String(normalized.id ?? "").trim();
+    if (messageId) {
+      keys.add(`message:${messageId}`);
+    }
+
+    const orchestrator = normalized?.meta?.orchestrator;
+    const metadata =
+      orchestrator?.metadata && typeof orchestrator.metadata === "object" && !Array.isArray(orchestrator.metadata)
+        ? orchestrator.metadata
+        : {};
+    const payload =
+      orchestrator?.payload && typeof orchestrator.payload === "object" && !Array.isArray(orchestrator.payload)
+        ? orchestrator.payload
+        : {};
+    const queueId = String(orchestrator?.queueId ?? metadata.queueId ?? payload.queueId ?? "").trim();
+    const clientInsertionId = String(
+      metadata.clientInsertionId ?? payload.clientInsertionId ?? ""
+    ).trim();
+
+    if (queueId) {
+      keys.add(`queue:${queueId}`);
+    }
+    if (clientInsertionId) {
+      keys.add(`client:${clientInsertionId}`);
+    }
+  }
+
+  return keys;
+}
+
+function pendingInsertionMatchesKeys(insertion, keys) {
+  if (!insertion || !keys || typeof keys.has !== "function") {
+    return false;
+  }
+
+  const messageId = String(insertion.messageId ?? "").trim();
+  const queueId = String(insertion.queueId ?? "").trim();
+  const clientInsertionId = String(insertion.clientInsertionId ?? "").trim();
+
+  return (
+    (messageId && keys.has(`message:${messageId}`)) ||
+    (queueId && keys.has(`queue:${queueId}`)) ||
+    (clientInsertionId && keys.has(`client:${clientInsertionId}`))
+  );
+}
+
+function appendLimitedTimelineItem(list, item, maxItems = 30) {
+  const current = Array.isArray(list) ? list : [];
+  const nextItem = {
+    id: String(item?.id ?? createId("timeline")),
+    type: String(item?.type ?? "event"),
+    label: String(item?.label ?? ""),
+    detail: String(item?.detail ?? ""),
+    createdAt: Number(item?.createdAt ?? Date.now())
+  };
+  return [...current, nextItem].slice(-maxItems);
 }
 
 function resolveTimestampFromMessageId(messageId) {
@@ -905,6 +970,10 @@ export function useChatSession(maxContextWindow = 0) {
   const [draftConversation, setDraftConversation] = useState(null);
   const [workplaceSelecting, setWorkplaceSelecting] = useState(false);
   const [pendingApprovalsByConversation, setPendingApprovalsByConversation] = useState({});
+  const [pendingInsertionsByConversation, setPendingInsertionsByConversation] = useState({});
+  const [runtimeStatusByConversation, setRuntimeStatusByConversation] = useState({});
+  const [approvalTimelineByConversation, setApprovalTimelineByConversation] = useState({});
+  const [executionAutopsyByConversation, setExecutionAutopsyByConversation] = useState({});
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [retryNotice, setRetryNotice] = useState("");
@@ -927,6 +996,7 @@ export function useChatSession(maxContextWindow = 0) {
   const activeConversationIdRef = useRef("");
   const queuedUserMessagesRef = useRef([]);
   const pendingApprovalsByConversationRef = useRef({});
+  const pendingInsertionsByConversationRef = useRef({});
   const foregroundStreamLoopConversationIdsRef = useRef(new Set());
   const conversationListRef = useRef([]);
   const draftConversationRef = useRef(null);
@@ -1038,6 +1108,26 @@ export function useChatSession(maxContextWindow = 0) {
       ),
     [queuedUserMessages, activeConversationId]
   );
+  const activePendingInsertions = useMemo(() => {
+    const normalizedConversationId = String(activeConversationId ?? "").trim();
+    const list = pendingInsertionsByConversation[normalizedConversationId];
+    return Array.isArray(list) ? list : [];
+  }, [pendingInsertionsByConversation, activeConversationId]);
+  const activeRuntimeStatus = useMemo(() => {
+    const normalizedConversationId = String(activeConversationId ?? "").trim();
+    const value = runtimeStatusByConversation[normalizedConversationId];
+    return value && typeof value === "object" ? value : null;
+  }, [runtimeStatusByConversation, activeConversationId]);
+  const activeApprovalTimeline = useMemo(() => {
+    const normalizedConversationId = String(activeConversationId ?? "").trim();
+    const list = approvalTimelineByConversation[normalizedConversationId];
+    return Array.isArray(list) ? list : [];
+  }, [approvalTimelineByConversation, activeConversationId]);
+  const activeExecutionAutopsy = useMemo(() => {
+    const normalizedConversationId = String(activeConversationId ?? "").trim();
+    const value = executionAutopsyByConversation[normalizedConversationId];
+    return value && typeof value === "object" ? value : null;
+  }, [executionAutopsyByConversation, activeConversationId]);
   const pendingApproval = useMemo(() => {
     const normalizedConversationId = String(activeConversationId ?? "").trim();
     if (!normalizedConversationId) {
@@ -1308,6 +1398,49 @@ export function useChatSession(maxContextWindow = 0) {
   }, [activeConversationWorkplace]);
 
   useEffect(() => {
+    let mounted = true;
+    let timerId = null;
+
+    async function loadRuntimeStatus() {
+      const normalizedConversationId = String(activeConversationIdRef.current ?? "").trim();
+      if (!normalizedConversationId || !hydratedRef.current) {
+        return;
+      }
+
+      try {
+        const response = await fetchConversationRuntimeById(normalizedConversationId);
+        if (!mounted) {
+          return;
+        }
+
+        const runtime = response?.runtime && typeof response.runtime === "object"
+          ? response.runtime
+          : null;
+        if (runtime) {
+          setRuntimeStatusByConversation((prev) => ({
+            ...prev,
+            [normalizedConversationId]: runtime
+          }));
+        }
+      } catch {
+        if (!mounted) {
+          return;
+        }
+      }
+    }
+
+    loadRuntimeStatus();
+    timerId = setInterval(loadRuntimeStatus, 3000);
+
+    return () => {
+      mounted = false;
+      if (timerId) {
+        clearInterval(timerId);
+      }
+    };
+  }, [activeConversationId]);
+
+  useEffect(() => {
     lastPersistedSignatureRef.current = "";
   }, [activeConversationId]);
 
@@ -1348,6 +1481,15 @@ export function useChatSession(maxContextWindow = 0) {
       ? queuedUserMessages.map((item) => ({ ...item }))
       : [];
   }, [queuedUserMessages]);
+
+  useEffect(() => {
+    pendingInsertionsByConversationRef.current =
+      pendingInsertionsByConversation &&
+      typeof pendingInsertionsByConversation === "object" &&
+      !Array.isArray(pendingInsertionsByConversation)
+        ? pendingInsertionsByConversation
+        : {};
+  }, [pendingInsertionsByConversation]);
 
   function updateConversationRuntimeReplyErrors(updater) {
     const currentValue =
@@ -1594,6 +1736,7 @@ export function useChatSession(maxContextWindow = 0) {
     const updatedSummary = toSummary(history);
 
     writeConversationMessages(normalizedConversationId, normalizedMessages);
+    clearResolvedPendingInsertions(normalizedConversationId, normalizedMessages);
     setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
 
     if (activeConversationIdRef.current === normalizedConversationId) {
@@ -2646,11 +2789,26 @@ export function useChatSession(maxContextWindow = 0) {
 
         return nextMessages;
       });
+      clearResolvedPendingInsertions(normalizedTargetConversationId, incomingMessages);
+      return true;
+    }
+
+    if (event?.type === "session_resume") {
+      appendApprovalTimeline(normalizedTargetConversationId, {
+        type: "session_resume",
+        label: "审批恢复",
+        detail: String(event?.approvalId ?? "").trim() || "继续执行"
+      });
       return true;
     }
 
     if (event?.type === "session_start") {
       activeAgentRunConversationIdsRef.current.add(normalizedTargetConversationId);
+      setExecutionAutopsyByConversation((prev) => {
+        const next = { ...prev };
+        delete next[normalizedTargetConversationId];
+        return next;
+      });
       setConversationList((prev) =>
         prev.map((item) =>
           item.id === normalizedTargetConversationId
@@ -2803,6 +2961,11 @@ export function useChatSession(maxContextWindow = 0) {
     }
 
     if (event?.type === "tool_pending_approval") {
+      appendApprovalTimeline(normalizedTargetConversationId, {
+        type: "pending_approval",
+        label: "进入审批",
+        detail: String(event?.toolName ?? "工具调用")
+      });
       setPendingApprovalValue({
         approvalId: String(event.approvalId ?? ""),
         conversationId: String(event.conversationId ?? targetConversationId),
@@ -2894,6 +3057,11 @@ export function useChatSession(maxContextWindow = 0) {
         pendingToolCallId === resultToolCallId
       ) {
         setPendingApprovalValue(null, { conversationId: normalizedTargetConversationId });
+        appendApprovalTimeline(normalizedTargetConversationId, {
+          type: "approval_result",
+          label: "审批工具完成",
+          detail: String(event?.toolName ?? "工具调用")
+        });
       }
 
       return true;
@@ -3054,6 +3222,11 @@ export function useChatSession(maxContextWindow = 0) {
         applyPersistedHistorySnapshot(normalizedTargetConversationId, event.history);
       }
       markConversationRunEndedLocally(normalizedTargetConversationId, "waiting_approval");
+      appendApprovalTimeline(normalizedTargetConversationId, {
+        type: "session_pause",
+        label: "会话暂停",
+        detail: "等待审批或用户输入"
+      });
       streamState.activeAssistantMessageId = null;
       return true;
     }
@@ -3065,6 +3238,13 @@ export function useChatSession(maxContextWindow = 0) {
         applyPersistedHistorySnapshot(normalizedTargetConversationId, event.history);
       }
       const runStatus = String(event?.status ?? "").trim() || "idle";
+      if (runStatus === "aborted") {
+        setExecutionAutopsy(normalizedTargetConversationId, {
+          type: "aborted",
+          title: "执行已停止",
+          detail: "运行被用户或系统中断。"
+        });
+      }
       markConversationRunEndedLocally(
         normalizedTargetConversationId,
         runStatus
@@ -3093,6 +3273,11 @@ export function useChatSession(maxContextWindow = 0) {
       flushBufferedAssistantTokens();
       markConversationRunEndedLocally(normalizedTargetConversationId, "error");
       setPendingApprovalValue(null, { conversationId: normalizedTargetConversationId });
+      setExecutionAutopsy(normalizedTargetConversationId, {
+        type: "error",
+        title: "执行失败",
+        detail: event.message || "流式会话发生错误"
+      });
       attachConversationRuntimeReplyError(
         normalizedTargetConversationId,
         streamState,
@@ -3131,6 +3316,93 @@ export function useChatSession(maxContextWindow = 0) {
     queuedUserMessagesRef.current = normalizedList;
     setQueuedUserMessages(normalizedList);
     return normalizedList;
+  }
+
+  function updatePendingInsertions(conversationId, updater) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return [];
+    }
+
+    const currentMap =
+      pendingInsertionsByConversationRef.current &&
+      typeof pendingInsertionsByConversationRef.current === "object" &&
+      !Array.isArray(pendingInsertionsByConversationRef.current)
+        ? pendingInsertionsByConversationRef.current
+        : {};
+    const currentList = Array.isArray(currentMap[normalizedConversationId])
+      ? currentMap[normalizedConversationId]
+      : [];
+    const nextValue = typeof updater === "function" ? updater(currentList) : updater;
+    const normalizedList = Array.isArray(nextValue)
+      ? nextValue
+          .map((item) =>
+            item && typeof item === "object"
+              ? {
+                  clientInsertionId: String(item.clientInsertionId ?? "").trim(),
+                  queueId: String(item.queueId ?? "").trim(),
+                  messageId: String(item.messageId ?? "").trim(),
+                  sourceMessageId: String(item.sourceMessageId ?? "").trim(),
+                  content: String(item.content ?? ""),
+                  status: String(item.status ?? "queued").trim() || "queued",
+                  createdAt: Number(item.createdAt ?? Date.now())
+                }
+              : null
+          )
+          .filter((item) => item && (item.clientInsertionId || item.queueId || item.messageId))
+      : [];
+    const nextMap = {
+      ...currentMap,
+      [normalizedConversationId]: normalizedList
+    };
+
+    if (normalizedList.length === 0) {
+      delete nextMap[normalizedConversationId];
+    }
+
+    pendingInsertionsByConversationRef.current = nextMap;
+    setPendingInsertionsByConversation(nextMap);
+    return normalizedList;
+  }
+
+  function clearResolvedPendingInsertions(conversationId, messages) {
+    const keys = collectInsertionMatchKeysFromMessages(messages);
+    if (keys.size === 0) {
+      return;
+    }
+
+    updatePendingInsertions(conversationId, (prev) =>
+      prev.filter((item) => !pendingInsertionMatchesKeys(item, keys))
+    );
+  }
+
+  function appendApprovalTimeline(conversationId, item) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return;
+    }
+
+    setApprovalTimelineByConversation((prev) => ({
+      ...prev,
+      [normalizedConversationId]: appendLimitedTimelineItem(prev?.[normalizedConversationId], item)
+    }));
+  }
+
+  function setExecutionAutopsy(conversationId, nextAutopsy) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId || !nextAutopsy) {
+      return;
+    }
+
+    setExecutionAutopsyByConversation((prev) => ({
+      ...prev,
+      [normalizedConversationId]: {
+        type: String(nextAutopsy.type ?? "runtime"),
+        title: String(nextAutopsy.title ?? "执行中断"),
+        detail: String(nextAutopsy.detail ?? ""),
+        createdAt: Number(nextAutopsy.createdAt ?? Date.now())
+      }
+    }));
   }
 
   function updatePendingApprovalsByConversation(updater) {
@@ -3225,6 +3497,65 @@ export function useChatSession(maxContextWindow = 0) {
       prev.filter((item) => String(item?.messageId ?? "").trim() !== normalizedMessageId)
     );
     setError("");
+  }
+
+  async function queueUserMessageAsInsertion(messageId) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    if (!normalizedMessageId) {
+      return;
+    }
+
+    const queuedRecord = queuedUserMessagesRef.current.find(
+      (item) => String(item?.messageId ?? "").trim() === normalizedMessageId
+    );
+    const conversationId = String(queuedRecord?.conversationId ?? "").trim();
+    const queuedMessage = queuedRecord?.message ? normalizeChatMessage(queuedRecord.message) : null;
+    const content = String(queuedMessage?.content ?? "").trim();
+    if (!conversationId || !queuedMessage || !content) {
+      return;
+    }
+
+    const clientInsertionId = createId("client-insertion");
+    updatePendingInsertions(conversationId, (prev) => [
+      ...prev,
+      {
+        clientInsertionId,
+        sourceMessageId: normalizedMessageId,
+        content,
+        status: "submitting",
+        createdAt: Date.now()
+      }
+    ]);
+
+    try {
+      const response = await queueConversationInsertionById(conversationId, {
+        content,
+        clientInsertionId,
+        sourceMessageId: normalizedMessageId
+      });
+      const queued = response?.queued ?? {};
+      updatePendingInsertions(conversationId, (prev) =>
+        prev.map((item) =>
+          String(item.clientInsertionId ?? "") === clientInsertionId
+            ? {
+                ...item,
+                queueId: String(queued.queueId ?? "").trim(),
+                messageId: String(queued.messageId ?? "").trim(),
+                status: String(queued.status ?? "queued").trim() || "queued"
+              }
+            : item
+        )
+      );
+      updateQueuedUserMessageList((prev) =>
+        prev.filter((item) => String(item?.messageId ?? "").trim() !== normalizedMessageId)
+      );
+      setError("");
+    } catch (queueError) {
+      updatePendingInsertions(conversationId, (prev) =>
+        prev.filter((item) => String(item.clientInsertionId ?? "") !== clientInsertionId)
+      );
+      setError(queueError?.message || "插入后端队列失败");
+    }
   }
 
   function reorderQueuedUserMessages(sourceMessageId, targetMessageId, position = "before") {
@@ -3647,6 +3978,11 @@ export function useChatSession(maxContextWindow = 0) {
       setConversationForegroundStreaming(targetConversationId, true);
     }
     setPendingApprovalValue(null, { conversationId: targetConversationId });
+    appendApprovalTimeline(targetConversationId, {
+      type: "approval_confirm",
+      label: "用户确认审批",
+      detail: String(pendingApproval?.toolName ?? "工具调用")
+    });
 
     const controller = new AbortController();
     if (canBindForegroundStream) {
@@ -3711,6 +4047,11 @@ export function useChatSession(maxContextWindow = 0) {
 
     try {
       await rejectToolApprovalById(approvalId);
+      appendApprovalTimeline(String(pendingApproval?.conversationId ?? "").trim(), {
+        type: "approval_reject",
+        label: "用户拒绝审批",
+        detail: String(pendingApproval?.toolName ?? "工具调用")
+      });
       setPendingApprovalValue(null, {
         conversationId: String(pendingApproval?.conversationId ?? "").trim()
       });
@@ -3832,6 +4173,10 @@ export function useChatSession(maxContextWindow = 0) {
       activeConversationRuntimeReplyError,
       queuedUserMessages: activeQueuedUserMessages,
       queuedUserMessageCount: activeQueuedUserMessages.length,
+      pendingInsertions: activePendingInsertions,
+      runtimeStatus: activeRuntimeStatus,
+      approvalTimeline: activeApprovalTimeline,
+      executionAutopsy: activeExecutionAutopsy,
       isStreaming: activeConversationIsRunning,
       canStopStream: activeConversationCanStop,
       historyLoaded,
@@ -3851,6 +4196,7 @@ export function useChatSession(maxContextWindow = 0) {
       compressConversation,
       sendMessage,
       removeQueuedUserMessage,
+      queueUserMessageAsInsertion,
       reorderQueuedUserMessages,
       confirmPendingApproval,
       rejectPendingApproval,
@@ -3888,6 +4234,10 @@ export function useChatSession(maxContextWindow = 0) {
       activeConversationRuntimeReplyError,
       activeQueuedUserMessages,
       queuedUserMessages.length,
+      activePendingInsertions,
+      activeRuntimeStatus,
+      activeApprovalTimeline,
+      activeExecutionAutopsy,
       activeConversationIsRunning,
       activeConversationCanStop,
       historyLoaded,
@@ -3906,6 +4256,7 @@ export function useChatSession(maxContextWindow = 0) {
       compressConversation,
       sendMessage,
       removeQueuedUserMessage,
+      queueUserMessageAsInsertion,
       reorderQueuedUserMessages,
       confirmPendingApproval,
       rejectPendingApproval,

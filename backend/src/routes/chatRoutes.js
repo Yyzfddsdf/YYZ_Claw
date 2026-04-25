@@ -24,6 +24,14 @@ export function createChatRoutes(services) {
     "/chat/histories/:conversationId/stop",
     asyncHandler(controller.stopRunByConversationId)
   );
+  router.get(
+    "/chat/histories/:conversationId/runtime",
+    asyncHandler(controller.getRuntimeStatusById)
+  );
+  router.post(
+    "/chat/histories/:conversationId/insertions",
+    asyncHandler(controller.queueConversationInsertionById)
+  );
   router.get("/chat/histories", asyncHandler(controller.listHistories));
   router.get("/chat/histories/:conversationId", asyncHandler(controller.getHistoryById));
   router.post("/chat/histories/:conversationId/fork", asyncHandler(controller.forkHistoryById));

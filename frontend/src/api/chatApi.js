@@ -77,6 +77,17 @@ export function stopConversationRunById(conversationId) {
   });
 }
 
+export function fetchConversationRuntimeById(conversationId) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/runtime`);
+}
+
+export function queueConversationInsertionById(conversationId, payload) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/insertions`, {
+    method: "POST",
+    body: payload
+  });
+}
+
 export function compressHistoryById(conversationId, payload) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/compress`, {
     method: "POST",

@@ -781,7 +781,7 @@ export class SqliteOrchestratorStore {
     for (const agent of agents) {
       queueByAgent.set(
         agent.agentId,
-        this.listQueueEntries(normalizedSessionId, agent.agentId, { includeConsumed: true })
+        this.listQueueEntries(normalizedSessionId, agent.agentId, { includeConsumed: false })
       );
     }
 

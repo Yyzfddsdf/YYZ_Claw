@@ -10,6 +10,7 @@ import {
   sleepWithSignal,
   throwIfAborted
 } from "../runs/runAbort.js";
+import { ToolCallPreflightService } from "../tools/ToolCallPreflightService.js";
 
 const DEFAULT_APPROVAL_MODE = "confirm";
 const MAX_RUNTIME_TOOL_EVENT_CONTENT_CHARS = 1800;
@@ -191,6 +192,9 @@ export class ChatAgent {
   constructor(options) {
     this.toolRegistry = options.toolRegistry;
     this.approvalRulesStore = options.approvalRulesStore ?? null;
+    this.toolCallPreflightService =
+      options.toolCallPreflightService ??
+      new ToolCallPreflightService({ toolRegistry: this.toolRegistry });
     this.longTermMemoryRecallService = options.longTermMemoryRecallService ?? null;
     this.runtimeBlockRuntime = options.runtimeBlockRuntime ?? null;
     this.runtimeInjectionComposer = options.runtimeInjectionComposer ?? null;
@@ -702,6 +706,28 @@ export class ChatAgent {
     turnRuntime.runtimeHookEmittedKeys = Array.from(emittedKeys).slice(-48);
   }
 
+  preflightAssistantToolCalls(assistantRound, onEvent) {
+    const toolCalls = Array.isArray(assistantRound?.toolCalls) ? assistantRound.toolCalls : [];
+    if (toolCalls.length === 0) {
+      return assistantRound;
+    }
+
+    const preflight = this.toolCallPreflightService?.preflightToolCalls?.(toolCalls) ?? {
+      toolCalls,
+      issues: [],
+      repaired: false,
+      hasErrors: false
+    };
+    const sanitizedToolCalls = Array.isArray(preflight.toolCalls) ? preflight.toolCalls : toolCalls;
+
+    assistantRound.toolCalls = sanitizedToolCalls;
+    if (assistantRound.assistantMessage) {
+      assistantRound.assistantMessage.tool_calls = sanitizedToolCalls;
+    }
+
+    return assistantRound;
+  }
+
   createPendingApprovalPayload({
     approvalStore,
     conversationId,
@@ -771,6 +797,58 @@ export class ChatAgent {
     };
   }
 
+  async flushRuntimeInsertionsAtCheckpoint({ conversation, executionContext, checkpoint }) {
+    if (!Array.isArray(conversation)) {
+      return [];
+    }
+
+    const flushQueuedInsertions = executionContext?.flushQueuedInsertions;
+    if (typeof flushQueuedInsertions !== "function") {
+      return [];
+    }
+
+    const messages = await flushQueuedInsertions({ checkpoint });
+    const normalizedMessages = Array.isArray(messages)
+      ? messages.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      : [];
+
+    for (const message of normalizedMessages) {
+      const role = String(message.role ?? "user").trim() || "user";
+      const content = String(message.content ?? "");
+
+      if (role === "tool") {
+        const toolCallId = String(message.toolCallId ?? message.tool_call_id ?? "").trim();
+        if (!toolCallId) {
+          continue;
+        }
+
+        conversation.push({
+          role,
+          tool_call_id: toolCallId,
+          content
+        });
+        continue;
+      }
+
+      if (role !== "user" && role !== "assistant" && role !== "system") {
+        continue;
+      }
+
+      const modelMessage = {
+        role,
+        content
+      };
+      const toolCalls = sanitizeToolCallsForModel(message.toolCalls ?? message.tool_calls);
+      if (role === "assistant" && toolCalls.length > 0) {
+        modelMessage.tool_calls = toolCalls;
+      }
+
+      conversation.push(modelMessage);
+    }
+
+    return normalizedMessages;
+  }
+
   async runConversationLoop({
     client,
     validatedConfig,
@@ -784,7 +862,6 @@ export class ChatAgent {
     approvalRules
   }) {
     const resolvedApprovalRules = await this.resolveApprovalRules(approvalRules);
-    const currentTurnUserIndex = findLastUserMessageIndex(conversation);
     const abortSignal = executionContext?.abortSignal ?? null;
     this.resolveLongTermMemoryRecall(executionContext);
     executionContext.approvalMode = normalizeApprovalMode(approvalMode);
@@ -794,6 +871,7 @@ export class ChatAgent {
       throwIfAborted(abortSignal);
       const runtimeBlocks = this.resolveRuntimeBlocks(conversation, executionContext);
       this.emitRuntimeHookInjectedEvents(runtimeBlocks, executionContext, onEvent, assembler);
+      const currentTurnUserIndex = findLastUserMessageIndex(conversation);
       const apiConversation = this.buildApiConversation(conversation, {
         currentTurnUserIndex,
         runtimeBlocks: runtimeBlocks?.blocksByChannel ?? null
@@ -808,10 +886,13 @@ export class ChatAgent {
         abortSignal
       );
 
-      const assistantRound = await this.consumeAssistantStream(stream, assembler, onEvent, {
+      const assistantRound = this.preflightAssistantToolCalls(
+        await this.consumeAssistantStream(stream, assembler, onEvent, {
         emitReasoning: validatedConfig.enableDeepThinking,
         signal: abortSignal
-      });
+        }),
+        onEvent
+      );
       conversation.push(assistantRound.assistantMessage);
 
       if (assistantRound.usage) {
@@ -827,12 +908,32 @@ export class ChatAgent {
         const assistantContent = getAssistantContentText(assistantRound);
 
         if (!assistantContent) {
+          const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
+            conversation,
+            executionContext,
+            checkpoint: "assistant_empty_end"
+          });
+          if (flushedInsertions.length > 0) {
+            emptyFinalResponseCount = 0;
+            continue;
+          }
+
           emptyFinalResponseCount += 1;
 
           if (emptyFinalResponseCount > this.maxEmptyFinalResponses) {
             throw createStatusError("Model returned empty final response too many times.", 502);
           }
 
+          continue;
+        }
+
+        const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
+          conversation,
+          executionContext,
+          checkpoint: "assistant_content_end"
+        });
+        if (flushedInsertions.length > 0) {
+          emptyFinalResponseCount = 0;
           continue;
         }
 
@@ -939,6 +1040,16 @@ export class ChatAgent {
         });
       }
 
+      const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
+        conversation,
+        executionContext,
+        checkpoint: "tool_results_end"
+      });
+      if (flushedInsertions.length > 0) {
+        emptyFinalResponseCount = 0;
+        continue;
+      }
+
       emptyFinalResponseCount = 0;
     }
   }
@@ -961,7 +1072,6 @@ export class ChatAgent {
     const conversationId = String(executionContext?.conversationId ?? "").trim();
     const abortSignal = executionContext?.abortSignal ?? null;
     const resolvedApprovalRules = await this.resolveApprovalRules(approvalRules);
-    const currentTurnUserIndex = findLastUserMessageIndex(conversation);
     this.resolveLongTermMemoryRecall(executionContext);
     executionContext.approvalMode = normalizedApprovalMode;
     let emptyFinalResponseCount = 0;
@@ -970,6 +1080,7 @@ export class ChatAgent {
       throwIfAborted(abortSignal);
       const runtimeBlocks = this.resolveRuntimeBlocks(conversation, executionContext);
       this.emitRuntimeHookInjectedEvents(runtimeBlocks, executionContext, onEvent, assembler);
+      const currentTurnUserIndex = findLastUserMessageIndex(conversation);
       const apiConversation = this.buildApiConversation(conversation, {
         currentTurnUserIndex,
         runtimeBlocks: runtimeBlocks?.blocksByChannel ?? null
@@ -984,10 +1095,13 @@ export class ChatAgent {
         abortSignal
       );
 
-      const assistantRound = await this.consumeAssistantStream(stream, assembler, onEvent, {
+      const assistantRound = this.preflightAssistantToolCalls(
+        await this.consumeAssistantStream(stream, assembler, onEvent, {
         emitReasoning: validatedConfig.enableDeepThinking,
         signal: abortSignal
-      });
+        }),
+        onEvent
+      );
       conversation.push(assistantRound.assistantMessage);
 
       if (assistantRound.usage) {
@@ -1003,12 +1117,32 @@ export class ChatAgent {
         const assistantContent = getAssistantContentText(assistantRound);
 
         if (!assistantContent) {
+          const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
+            conversation,
+            executionContext,
+            checkpoint: "assistant_empty_end"
+          });
+          if (flushedInsertions.length > 0) {
+            emptyFinalResponseCount = 0;
+            continue;
+          }
+
           emptyFinalResponseCount += 1;
 
           if (emptyFinalResponseCount > this.maxEmptyFinalResponses) {
             throw createStatusError("Model returned empty final response too many times.", 502);
           }
 
+          continue;
+        }
+
+        const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
+          conversation,
+          executionContext,
+          checkpoint: "assistant_content_end"
+        });
+        if (flushedInsertions.length > 0) {
+          emptyFinalResponseCount = 0;
           continue;
         }
 
@@ -1115,6 +1249,16 @@ export class ChatAgent {
         });
       }
 
+      const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
+        conversation,
+        executionContext,
+        checkpoint: "tool_results_end"
+      });
+      if (flushedInsertions.length > 0) {
+        emptyFinalResponseCount = 0;
+        continue;
+      }
+
       emptyFinalResponseCount = 0;
     }
   }
@@ -1145,7 +1289,13 @@ export class ChatAgent {
     };
     executionContext.approvalMode = String(pendingApproval.approvalMode ?? DEFAULT_APPROVAL_MODE).trim();
     const abortSignal = executionContext?.abortSignal ?? null;
-    const toolCalls = Array.isArray(pendingApproval.toolCalls) ? pendingApproval.toolCalls : [];
+    const preflight = this.toolCallPreflightService?.preflightToolCalls?.(
+      Array.isArray(pendingApproval.toolCalls) ? pendingApproval.toolCalls : []
+    ) ?? {
+      toolCalls: Array.isArray(pendingApproval.toolCalls) ? pendingApproval.toolCalls : [],
+      issues: []
+    };
+    const toolCalls = Array.isArray(preflight.toolCalls) ? preflight.toolCalls : [];
 
     for (const toolCall of toolCalls) {
       throwIfAborted(abortSignal);

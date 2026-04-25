@@ -13,6 +13,7 @@ import {
   REMOTE_CONTROL_HISTORY_DB_FILE,
   REMOTE_CONTROL_TOOLS_DIR,
   MEMORY_SUMMARY_FILE,
+  MEMORY_SUMMARY_DIR,
   HISTORY_DB_FILE,
   HISTORY_DIR,
   MEMORY_DB_FILE,
@@ -100,7 +101,10 @@ export async function createServices() {
   const agentsPromptStore = new AgentsPromptStore({
     globalFilePath: GLOBAL_AGENTS_FILE
   });
-  const memorySummaryStore = new MemorySummaryStore(MEMORY_SUMMARY_FILE);
+  const memorySummaryStore = new MemorySummaryStore({
+    rootDir: MEMORY_SUMMARY_DIR,
+    legacyJsonFilePath: MEMORY_SUMMARY_FILE
+  });
   await memorySummaryStore.ensureFile();
 
   const skillCatalog = new SkillCatalog({

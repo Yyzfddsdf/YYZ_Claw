@@ -181,6 +181,10 @@ function queueRecordToSnapshot(record) {
   };
 }
 
+function isActiveQueueRecord(record) {
+  return String(record?.status ?? "").trim() !== "consumed";
+}
+
 function agentRecordToSnapshot(agent) {
   return {
     agentId: agent.agentId,
@@ -422,9 +426,19 @@ export class OrchestratorSchedulerService {
       metadata: cloneValue(sessionState.metadata),
       primaryAgentId: sessionState.primaryAgentId,
       agents: Array.from(sessionState.agents.values()).map((agent) => agentRecordToSnapshot(agent)),
+      publicPool: sessionState.publicPool.map((entry) => cloneValue(entry)),
+      queueByAgent: Object.fromEntries(
+        Array.from(sessionState.queueByAgent.entries()).map(([agentId, queue]) => [
+          agentId,
+          Array.isArray(queue)
+            ? queue.filter(isActiveQueueRecord).map((item) => queueRecordToSnapshot(item))
+            : []
+        ])
+      ),
       publicPoolSize: sessionState.publicPool.length,
       queueSize: Array.from(sessionState.queueByAgent.values()).reduce(
-        (total, queue) => total + queue.length,
+        (total, queue) =>
+          total + (Array.isArray(queue) ? queue.filter(isActiveQueueRecord).length : 0),
         0
       )
     };
@@ -643,7 +657,7 @@ export class OrchestratorSchedulerService {
     });
 
     const queue = Array.isArray(sessionState.queueByAgent.get(targetAgentId))
-      ? sessionState.queueByAgent.get(targetAgentId)
+      ? sessionState.queueByAgent.get(targetAgentId).filter(isActiveQueueRecord)
       : [];
     const queueRecord = createQueueRecord({
       sessionId: sessionState.sessionId,
@@ -656,6 +670,40 @@ export class OrchestratorSchedulerService {
       message,
       metadata: enrichedMetadata
     });
+    const shouldAttachQueueMetadata =
+      queueRecord.message &&
+      typeof queueRecord.message === "object" &&
+      (
+        queueRecord.message.meta?.kind === "orchestrator_message" ||
+        (
+          queueRecord.message.meta?.orchestrator &&
+          typeof queueRecord.message.meta.orchestrator === "object"
+        )
+      );
+    if (shouldAttachQueueMetadata) {
+      const messageMeta =
+        queueRecord.message.meta && typeof queueRecord.message.meta === "object"
+          ? queueRecord.message.meta
+          : {};
+      const orchestratorMeta =
+        messageMeta.orchestrator && typeof messageMeta.orchestrator === "object"
+          ? messageMeta.orchestrator
+          : {};
+      queueRecord.message = {
+        ...queueRecord.message,
+        meta: {
+          ...messageMeta,
+          orchestrator: {
+            ...orchestratorMeta,
+            queueId: queueRecord.id,
+            metadata: {
+              ...(orchestratorMeta.metadata ?? {}),
+              queueId: queueRecord.id
+            }
+          }
+        }
+      };
+    }
 
     if (targetAgent.atomicDepth === 0) {
       queueRecord.status = "ready";
@@ -781,7 +829,7 @@ export class OrchestratorSchedulerService {
     };
   }
 
-  refreshAgentQueue(sessionId, agentId) {
+  refreshAgentQueue(sessionId, agentId, options = {}) {
     const sessionState = this.ensureSession(sessionId);
     const normalizedAgentId = normalizeAgentId(agentId, sessionState.primaryAgentId);
     const agent = sessionState.agents.get(normalizedAgentId);
@@ -792,7 +840,8 @@ export class OrchestratorSchedulerService {
     const queue = Array.isArray(sessionState.queueByAgent.get(normalizedAgentId))
       ? sessionState.queueByAgent.get(normalizedAgentId)
       : [];
-    if (queue.length === 0 || agent.atomicDepth > 0) {
+    const force = Boolean(options.force);
+    if (queue.length === 0 || (!force && agent.atomicDepth > 0)) {
       return queue.map((item) => queueRecordToSnapshot(item));
     }
 
@@ -830,8 +879,8 @@ export class OrchestratorSchedulerService {
       .map((item) => queueRecordToSnapshot(item));
   }
 
-  flushReadyInsertions(sessionId, agentId) {
-    this.refreshAgentQueue(sessionId, agentId);
+  flushReadyInsertions(sessionId, agentId, options = {}) {
+    this.refreshAgentQueue(sessionId, agentId, options);
     const sessionState = this.getSessionState(sessionId);
     if (!sessionState) {
       return [];
@@ -841,20 +890,27 @@ export class OrchestratorSchedulerService {
     const queue = Array.isArray(sessionState.queueByAgent.get(normalizedAgentId))
       ? sessionState.queueByAgent.get(normalizedAgentId)
       : [];
-    const ready = queue
-      .filter((item) => item.status === "ready")
-      .map((item) => {
-        item.status = "consumed";
-        item.consumedAt = Date.now();
-        if (this.store && typeof this.store.updateQueueEntryStatus === "function") {
-          this.store.updateQueueEntryStatus(item.id, "consumed", {
-            metadata: item.metadata
-          });
-        }
-        return queueRecordToSnapshot(item);
-      });
+    const ready = [];
+    for (const item of queue) {
+      if (item.status !== "ready") {
+        continue;
+      }
+
+      item.status = "consumed";
+      item.consumedAt = Date.now();
+      if (this.store && typeof this.store.updateQueueEntryStatus === "function") {
+        this.store.updateQueueEntryStatus(item.id, "consumed", {
+          metadata: item.metadata
+        });
+      }
+      ready.push(queueRecordToSnapshot(item));
+    }
 
     if (ready.length > 0) {
+      sessionState.queueByAgent.set(
+        normalizedAgentId,
+        queue.filter(isActiveQueueRecord)
+      );
       sessionState.updatedAt = Date.now();
     }
 

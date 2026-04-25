@@ -211,6 +211,34 @@ export class AgentConversationRecorder {
       return;
     }
 
+    if (event?.type === "conversation_messages_appended") {
+      const appendedMessages = Array.isArray(event?.messages) ? event.messages : [];
+      if (appendedMessages.length === 0) {
+        return;
+      }
+
+      const existingIds = new Set(
+        this.messages.map((item) => String(item?.id ?? "").trim()).filter(Boolean)
+      );
+      for (const message of appendedMessages) {
+        const normalized = normalizeMessage(message);
+        const messageId = String(normalized.id ?? "").trim();
+        if (messageId && existingIds.has(messageId)) {
+          this.messages = this.messages.map((item) =>
+            String(item?.id ?? "").trim() === messageId ? normalized : item
+          );
+          continue;
+        }
+
+        this.messages.push(normalized);
+        if (messageId) {
+          existingIds.add(messageId);
+        }
+      }
+      this.activeAssistantMessageId = "";
+      return;
+    }
+
     if (event?.type === "tool_call") {
       const toolPayload = createToolMessagePayloadFromCall(event);
       this.messages.push(

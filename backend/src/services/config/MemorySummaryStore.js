@@ -1,64 +1,28 @@
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import { safeJsonParse } from "../../utils/safeJsonParse.js";
 
-const SCHEMA_VERSION = 1;
-const MAX_WORKSPACE_ENTRIES = 24;
-const GLOBAL_LIST_MAX_ITEMS = 8;
-const GLOBAL_ITEM_MAX_CHARS = 180;
-const WORKSPACE_PURPOSE_MAX_CHARS = 220;
-const WORKSPACE_SURFACES_MAX_ITEMS = 5;
-const WORKSPACE_SURFACES_MAX_CHARS = 120;
-const WORKSPACE_INVARIANTS_MAX_ITEMS = 5;
-const WORKSPACE_INVARIANTS_MAX_CHARS = 180;
-const WORKSPACE_ENTRYPOINTS_MAX_ITEMS = 5;
-const WORKSPACE_ENTRYPOINTS_MAX_CHARS = 200;
-const WORKSPACE_GOTCHAS_MAX_ITEMS = 4;
-const WORKSPACE_GOTCHAS_MAX_CHARS = 180;
+const WORKSPACES_DIR_NAME = "workspaces";
+const GLOBAL_MEMORY_FILE_NAME = "global.md";
+const MAX_MEMORY_DOCUMENT_CHARS = 20000;
 
 function normalizeText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function clipText(value, maxChars) {
-  const normalized = normalizeText(value);
-  if (!normalized || normalized.length <= maxChars) {
+function normalizeMarkdown(value) {
+  const normalized = String(value ?? "").replace(/\r\n/g, "\n").trim();
+  if (!normalized || normalized.length <= MAX_MEMORY_DOCUMENT_CHARS) {
     return normalized;
   }
 
-  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  return normalized.slice(0, MAX_MEMORY_DOCUMENT_CHARS).trimEnd();
 }
 
-function normalizeCompareKey(value) {
-  return normalizeText(value).normalize("NFKC").toLowerCase();
-}
-
-function normalizeStringList(value, { maxItems, maxChars }) {
-  const source = Array.isArray(value) ? value : [];
-  const nextValues = [];
-  const seen = new Set();
-
-  for (const item of source) {
-    const clipped = clipText(item, maxChars);
-    if (!clipped) {
-      continue;
-    }
-
-    const compareKey = normalizeCompareKey(clipped);
-    if (!compareKey || seen.has(compareKey)) {
-      continue;
-    }
-
-    seen.add(compareKey);
-    nextValues.push(clipped);
-
-    if (nextValues.length >= maxItems) {
-      break;
-    }
-  }
-
-  return nextValues;
+function hasMarkdownContent(value) {
+  return normalizeMarkdown(value).length > 0;
 }
 
 function normalizeWorkspacePathKey(workspacePath) {
@@ -66,160 +30,65 @@ function normalizeWorkspacePathKey(workspacePath) {
   return normalized ? path.resolve(normalized) : "";
 }
 
-function createEmptyGlobalSummary() {
-  return {
-    userProfile: [],
-    userPreferences: [],
-    generalTips: []
-  };
+function createWorkspaceFileName(workspacePath) {
+  const workspaceKey = normalizeWorkspacePathKey(workspacePath);
+  const baseName = path.basename(workspaceKey) || "workspace";
+  const safeBaseName = baseName
+    .normalize("NFKC")
+    .replace(/[<>:"/\\|?*\x00-\x1F]+/gu, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "workspace";
+  const hash = createHash("sha256").update(workspaceKey).digest("hex").slice(0, 12);
+  return `${safeBaseName}-${hash}.md`;
 }
 
-function createEmptyWorkspaceSummary() {
-  return {
-    purpose: "",
-    surfaces: [],
-    invariants: [],
-    entrypoints: [],
-    gotchas: []
-  };
-}
-
-export function createEmptyMemorySummary() {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    global: createEmptyGlobalSummary(),
-    workspaces: {}
-  };
-}
-
-export function normalizeGlobalSummary(input) {
-  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-
-  return {
-    userProfile: normalizeStringList(source.userProfile, {
-      maxItems: GLOBAL_LIST_MAX_ITEMS,
-      maxChars: GLOBAL_ITEM_MAX_CHARS
-    }),
-    userPreferences: normalizeStringList(source.userPreferences, {
-      maxItems: GLOBAL_LIST_MAX_ITEMS,
-      maxChars: GLOBAL_ITEM_MAX_CHARS
-    }),
-    generalTips: normalizeStringList(source.generalTips, {
-      maxItems: GLOBAL_LIST_MAX_ITEMS,
-      maxChars: GLOBAL_ITEM_MAX_CHARS
-    })
-  };
-}
-
-export function normalizeWorkspaceSummary(input) {
-  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-  const purpose = source.purpose ?? source.scope ?? "";
-  const surfaces = source.surfaces ?? source.appliesTo ?? [];
-  const invariants = source.invariants ?? source.stableRules ?? [];
-  const entrypoints = source.entrypoints ?? source.reusableKnowledge ?? [];
-  const gotchas = source.gotchas ?? source.pitfalls ?? [];
-
-  return {
-    purpose: clipText(purpose, WORKSPACE_PURPOSE_MAX_CHARS),
-    surfaces: normalizeStringList(surfaces, {
-      maxItems: WORKSPACE_SURFACES_MAX_ITEMS,
-      maxChars: WORKSPACE_SURFACES_MAX_CHARS
-    }),
-    invariants: normalizeStringList(invariants, {
-      maxItems: WORKSPACE_INVARIANTS_MAX_ITEMS,
-      maxChars: WORKSPACE_INVARIANTS_MAX_CHARS
-    }),
-    entrypoints: normalizeStringList(entrypoints, {
-      maxItems: WORKSPACE_ENTRYPOINTS_MAX_ITEMS,
-      maxChars: WORKSPACE_ENTRYPOINTS_MAX_CHARS
-    }),
-    gotchas: normalizeStringList(gotchas, {
-      maxItems: WORKSPACE_GOTCHAS_MAX_ITEMS,
-      maxChars: WORKSPACE_GOTCHAS_MAX_CHARS
-    })
-  };
-}
-
-function isWorkspaceSummaryEmpty(summary) {
-  const normalized = normalizeWorkspaceSummary(summary);
-  return (
-    !normalized.purpose &&
-    normalized.surfaces.length === 0 &&
-    normalized.invariants.length === 0 &&
-    normalized.entrypoints.length === 0 &&
-    normalized.gotchas.length === 0
-  );
-}
-
-export function normalizeMemorySummaryPayload(input) {
-  const fallback = createEmptyMemorySummary();
-  const source = input && typeof input === "object" && !Array.isArray(input) ? input : fallback;
-  const normalizedGlobal = normalizeGlobalSummary(source.global);
-  const normalizedWorkspaceEntries = [];
-  const rawWorkspaces =
-    source.workspaces && typeof source.workspaces === "object" && !Array.isArray(source.workspaces)
-      ? source.workspaces
-      : {};
-
-  for (const [rawWorkspacePath, rawEntry] of Object.entries(rawWorkspaces)) {
-    const workspacePath = normalizeWorkspacePathKey(rawWorkspacePath);
-    if (!workspacePath) {
-      continue;
-    }
-
-    const sourceEntry =
-      rawEntry && typeof rawEntry === "object" && !Array.isArray(rawEntry) ? rawEntry : {};
-    const summary = normalizeWorkspaceSummary(sourceEntry.summary);
-    const updatedAt = normalizeText(sourceEntry.updatedAt);
-
-    if (isWorkspaceSummaryEmpty(summary) && !updatedAt) {
-      continue;
-    }
-
-    normalizedWorkspaceEntries.push({
-      workspacePath,
-      summary,
-      updatedAt
-    });
+function appendMarkdownList(sections, title, items = []) {
+  const values = Array.isArray(items)
+    ? items.map((item) => normalizeText(item)).filter(Boolean)
+    : [];
+  if (values.length === 0) {
+    return;
   }
 
-  normalizedWorkspaceEntries.sort((left, right) => {
-    const leftTime = Number.isFinite(Date.parse(left.updatedAt)) ? Date.parse(left.updatedAt) : 0;
-    const rightTime = Number.isFinite(Date.parse(right.updatedAt)) ? Date.parse(right.updatedAt) : 0;
-
-    if (leftTime !== rightTime) {
-      return rightTime - leftTime;
-    }
-
-    return left.workspacePath.localeCompare(right.workspacePath);
-  });
-
-  const nextWorkspaces = {};
-  for (const entry of normalizedWorkspaceEntries.slice(0, MAX_WORKSPACE_ENTRIES)) {
-    nextWorkspaces[entry.workspacePath] = {
-      summary: entry.summary,
-      updatedAt: entry.updatedAt
-    };
+  if (title) {
+    sections.push([title, ...values.map((item) => `- ${item}`)].join("\n"));
+    return;
   }
 
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    global: normalizedGlobal,
-    workspaces: nextWorkspaces
-  };
+  sections.push(values.map((item) => `- ${item}`).join("\n"));
 }
 
-function hasAnyGlobalSummary(globalSummary) {
-  const normalized = normalizeGlobalSummary(globalSummary);
-  return (
-    normalized.userProfile.length > 0 ||
-    normalized.userPreferences.length > 0 ||
-    normalized.generalTips.length > 0
+function convertLegacyGlobalSummaryToMarkdown(globalSummary = {}) {
+  const sections = ["# Global Memory"];
+
+  appendMarkdownList(sections, "## User Profile", globalSummary.userProfile);
+  appendMarkdownList(sections, "## User Preferences", globalSummary.userPreferences);
+  appendMarkdownList(sections, "## General Tips", globalSummary.generalTips);
+
+  return sections.length > 1 ? `${sections.join("\n\n")}\n` : "";
+}
+
+function convertLegacyWorkspaceSummaryToMarkdown(workspacePath, summary = {}) {
+  const sections = ["# Workspace Memory", `Workspace: ${workspacePath}`];
+  const purpose = normalizeText(summary.purpose ?? summary.scope);
+
+  if (purpose) {
+    sections.push("## Purpose");
+    sections.push(purpose);
+  }
+
+  appendMarkdownList(sections, "## Key Surfaces", summary.surfaces ?? summary.appliesTo);
+  appendMarkdownList(sections, "## Invariants", summary.invariants ?? summary.stableRules);
+  appendMarkdownList(
+    sections,
+    "## Entrypoints",
+    summary.entrypoints ?? summary.reusableKnowledge
   );
-}
+  appendMarkdownList(sections, "## Gotchas", summary.gotchas ?? summary.pitfalls);
 
-function hasAnyWorkspaceSummary(summary) {
-  return !isWorkspaceSummaryEmpty(summary);
+  return sections.length > 2 ? `${sections.join("\n\n")}\n` : "";
 }
 
 async function fileExists(filePath) {
@@ -231,58 +100,159 @@ async function fileExists(filePath) {
   }
 }
 
+async function readTextFile(filePath) {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+}
+
+async function writeFileAtomic(filePath, content) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  await fs.writeFile(tempPath, content, "utf8");
+  await fs.rename(tempPath, filePath);
+}
+
+async function getFileUpdatedAt(filePath) {
+  try {
+    const stats = await fs.stat(filePath);
+    return stats.mtime.toISOString();
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+}
+
 export class MemorySummaryStore {
-  constructor(filePath) {
-    this.filePath = path.resolve(String(filePath ?? ""));
+  constructor(options = {}) {
+    const source = typeof options === "string" ? { rootDir: options } : options;
+    this.rootDir = path.resolve(String(source.rootDir ?? ""));
+    this.legacyJsonFilePath = source.legacyJsonFilePath
+      ? path.resolve(String(source.legacyJsonFilePath))
+      : "";
+    this.globalFilePath = path.join(this.rootDir, GLOBAL_MEMORY_FILE_NAME);
+    this.workspacesDir = path.join(this.rootDir, WORKSPACES_DIR_NAME);
   }
 
   async ensureFile() {
-    const dirPath = path.dirname(this.filePath);
-    await fs.mkdir(dirPath, { recursive: true });
+    await fs.mkdir(this.workspacesDir, { recursive: true });
 
-    if (!(await fileExists(this.filePath))) {
-      const payload = JSON.stringify(createEmptyMemorySummary(), null, 2) + "\n";
-      await fs.writeFile(this.filePath, payload, "utf8");
+    if (!(await fileExists(this.globalFilePath))) {
+      await writeFileAtomic(this.globalFilePath, "");
     }
+
+    await this.migrateLegacyJsonIfNeeded();
   }
 
-  async read() {
-    await this.ensureFile();
-    const raw = await fs.readFile(this.filePath, "utf8");
-    return normalizeMemorySummaryPayload(safeJsonParse(raw, createEmptyMemorySummary()));
-  }
+  async migrateLegacyJsonIfNeeded() {
+    if (!this.legacyJsonFilePath || !(await fileExists(this.legacyJsonFilePath))) {
+      return;
+    }
 
-  async save(nextValue) {
-    await this.ensureFile();
-    const normalized = normalizeMemorySummaryPayload(nextValue);
-    await fs.writeFile(this.filePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-    return normalized;
+    const currentGlobal = normalizeMarkdown(await readTextFile(this.globalFilePath));
+    const rawLegacy = await readTextFile(this.legacyJsonFilePath);
+    const legacy = safeJsonParse(rawLegacy, null);
+    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) {
+      return;
+    }
+
+    if (!currentGlobal) {
+      const globalMarkdown = convertLegacyGlobalSummaryToMarkdown(legacy.global);
+      if (globalMarkdown) {
+        await writeFileAtomic(this.globalFilePath, globalMarkdown);
+      }
+    }
+
+    const workspaces =
+      legacy.workspaces && typeof legacy.workspaces === "object" && !Array.isArray(legacy.workspaces)
+        ? legacy.workspaces
+        : {};
+    for (const [workspacePath, entry] of Object.entries(workspaces)) {
+      const workspaceKey = this.resolveWorkspacePathKey(workspacePath);
+      if (!workspaceKey) {
+        continue;
+      }
+
+      const workspaceFilePath = this.resolveWorkspaceFilePath(workspaceKey);
+      if (normalizeMarkdown(await readTextFile(workspaceFilePath))) {
+        continue;
+      }
+
+      const workspaceMarkdown = convertLegacyWorkspaceSummaryToMarkdown(
+        workspaceKey,
+        entry?.summary ?? {}
+      );
+      if (workspaceMarkdown) {
+        await writeFileAtomic(workspaceFilePath, workspaceMarkdown);
+      }
+    }
   }
 
   resolveWorkspacePathKey(workspacePath) {
     return normalizeWorkspacePathKey(workspacePath);
   }
 
-  async getPromptData(workspacePath = "") {
-    const payload = await this.read();
+  resolveWorkspaceFilePath(workspacePath) {
     const workspaceKey = this.resolveWorkspacePathKey(workspacePath);
-    const workspaceEntry = workspaceKey ? payload.workspaces[workspaceKey] ?? null : null;
+    return path.join(this.workspacesDir, createWorkspaceFileName(workspaceKey));
+  }
+
+  async getPromptData(workspacePath = "") {
+    await this.ensureFile();
+
+    const workspaceKey = this.resolveWorkspacePathKey(workspacePath);
+    const workspaceFilePath = workspaceKey ? this.resolveWorkspaceFilePath(workspaceKey) : "";
+    const globalMarkdown = normalizeMarkdown(await readTextFile(this.globalFilePath));
+    const workspaceMarkdown = workspaceFilePath
+      ? normalizeMarkdown(await readTextFile(workspaceFilePath))
+      : "";
 
     return {
-      filePath: this.filePath,
+      rootDir: this.rootDir,
+      globalFilePath: this.globalFilePath,
+      workspaceFilePath,
       workspacePath: workspaceKey,
-      global: payload.global,
-      workspaceSummary: workspaceEntry?.summary ?? createEmptyWorkspaceSummary(),
-      updatedAt: normalizeText(workspaceEntry?.updatedAt)
+      globalMarkdown,
+      workspaceMarkdown,
+      globalUpdatedAt: await getFileUpdatedAt(this.globalFilePath),
+      workspaceUpdatedAt: workspaceFilePath ? await getFileUpdatedAt(workspaceFilePath) : ""
     };
   }
 
   hasPromptContent(promptData = {}) {
     return (
-      hasAnyGlobalSummary(promptData.global) ||
-      hasAnyWorkspaceSummary(promptData.workspaceSummary)
+      hasMarkdownContent(promptData.globalMarkdown) ||
+      hasMarkdownContent(promptData.workspaceMarkdown)
     );
   }
-}
 
-export { hasAnyWorkspaceSummary };
+  async saveGlobalMarkdown(markdown) {
+    await this.ensureFile();
+    const normalized = normalizeMarkdown(markdown);
+    await writeFileAtomic(this.globalFilePath, normalized ? `${normalized}\n` : "");
+    return normalized;
+  }
+
+  async saveWorkspaceMarkdown(workspacePath, markdown) {
+    await this.ensureFile();
+    const workspaceKey = this.resolveWorkspacePathKey(workspacePath);
+    if (!workspaceKey) {
+      return "";
+    }
+
+    const filePath = this.resolveWorkspaceFilePath(workspaceKey);
+    const normalized = normalizeMarkdown(markdown);
+    await writeFileAtomic(filePath, normalized ? `${normalized}\n` : "");
+    return normalized;
+  }
+}

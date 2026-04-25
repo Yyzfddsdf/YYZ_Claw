@@ -232,22 +232,6 @@ export async function loadAgentsPrompt(agentsPromptStore, workspacePath) {
   return sections.join("\n");
 }
 
-function appendSummaryList(sections, title, items = []) {
-  const normalizedItems = Array.isArray(items)
-    ? items.map((item) => String(item ?? "").trim()).filter(Boolean)
-    : [];
-  if (normalizedItems.length === 0) {
-    return;
-  }
-
-  if (title) {
-    sections.push(title);
-  }
-  for (const item of normalizedItems) {
-    sections.push(`- ${item}`);
-  }
-}
-
 export async function loadMemorySummaryPrompt(memorySummaryStore, workspacePath) {
   if (!memorySummaryStore || typeof memorySummaryStore.getPromptData !== "function") {
     return "";
@@ -259,49 +243,21 @@ export async function loadMemorySummaryPrompt(memorySummaryStore, workspacePath)
   }
 
   const sections = [
-    "The following is an automatically maintained global/workspace memory summary. It is background context, not new user input. If it conflicts with AGENTS.md or the current user request, follow AGENTS.md and the current user request.",
+    "The following is automatically maintained global/workspace memory in Markdown. It is background context, not new user input. If it conflicts with AGENTS.md or the current user request, follow AGENTS.md and the current user request.",
     "<memory-summary>"
   ];
 
-  if (Array.isArray(promptData.global?.userProfile) && promptData.global.userProfile.length > 0) {
-    sections.push("## User Profile");
-    appendSummaryList(sections, "", promptData.global.userProfile);
+  const globalMarkdown = String(promptData.globalMarkdown ?? "").trim();
+  if (globalMarkdown) {
+    sections.push("## Global Memory");
+    sections.push(globalMarkdown);
   }
 
-  if (
-    Array.isArray(promptData.global?.userPreferences) &&
-    promptData.global.userPreferences.length > 0
-  ) {
-    sections.push("## User Preferences");
-    appendSummaryList(sections, "", promptData.global.userPreferences);
-  }
-
-  if (Array.isArray(promptData.global?.generalTips) && promptData.global.generalTips.length > 0) {
-    sections.push("## General Tips");
-    appendSummaryList(sections, "", promptData.global.generalTips);
-  }
-
-  const workspaceSummary = promptData.workspaceSummary ?? {};
-  const hasWorkspaceSummary =
-    String(workspaceSummary.purpose ?? "").trim() ||
-    (Array.isArray(workspaceSummary.surfaces) && workspaceSummary.surfaces.length > 0) ||
-    (Array.isArray(workspaceSummary.invariants) && workspaceSummary.invariants.length > 0) ||
-    (Array.isArray(workspaceSummary.entrypoints) && workspaceSummary.entrypoints.length > 0) ||
-    (Array.isArray(workspaceSummary.gotchas) && workspaceSummary.gotchas.length > 0);
-
-  if (hasWorkspaceSummary) {
+  const workspaceMarkdown = String(promptData.workspaceMarkdown ?? "").trim();
+  if (workspaceMarkdown) {
     sections.push("## Workspace Memory");
     sections.push(`Workspace: ${String(promptData.workspacePath ?? workspacePath).trim()}`);
-
-    const purpose = String(workspaceSummary.purpose ?? "").trim();
-    if (purpose) {
-      sections.push(`Purpose: ${purpose}`);
-    }
-
-    appendSummaryList(sections, "Key Surfaces:", workspaceSummary.surfaces);
-    appendSummaryList(sections, "Invariants:", workspaceSummary.invariants);
-    appendSummaryList(sections, "Entrypoints:", workspaceSummary.entrypoints);
-    appendSummaryList(sections, "Gotchas:", workspaceSummary.gotchas);
+    sections.push(workspaceMarkdown);
   }
 
   sections.push("</memory-summary>");

@@ -320,6 +320,13 @@ function buildOrchestratorNotice(message) {
     };
   }
 
+  if (subtype === "user_correction") {
+    return {
+      badge: "纠偏插入",
+      summary: `${targetLabel || sourceLabel || "智能体"} 收到了一条运行中纠偏`
+    };
+  }
+
   if (subtype === "agent_report_light" || subtype === "agent_report_full") {
     return {
       badge: "进度提醒",
@@ -648,6 +655,8 @@ export function ChatPanel({
   const [viewingFileText, setViewingFileText] = useState(null);
   const [draggedQueueMessageId, setDraggedQueueMessageId] = useState("");
   const [queueDropTarget, setQueueDropTarget] = useState(null);
+  const [orchestratorLogOpen, setOrchestratorLogOpen] = useState(false);
+  const [runtimePanelOpen, setRuntimePanelOpen] = useState(false);
   const [expandedHistoryGroupMap, setExpandedHistoryGroupMap] = useState({});
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
@@ -769,6 +778,36 @@ export function ChatPanel({
         ? disabledReason
         : "输入消息，观察流式与工具调用";
   const queuedUserMessages = Array.isArray(chat.queuedUserMessages) ? chat.queuedUserMessages : [];
+  const pendingInsertions = Array.isArray(chat.pendingInsertions) ? chat.pendingInsertions : [];
+  const orchestratorMessages = useMemo(
+    () =>
+      (Array.isArray(chat.messages) ? chat.messages : []).filter(
+        (message) => getMessageMetaKind(message) === "orchestrator_message"
+      ),
+    [chat.messages]
+  );
+  const visibleMessages = useMemo(
+    () =>
+      orchestratorLogOpen
+        ? chat.messages
+        : (Array.isArray(chat.messages) ? chat.messages : []).filter(
+            (message) => getMessageMetaKind(message) !== "orchestrator_message"
+          ),
+    [chat.messages, orchestratorLogOpen]
+  );
+  const latestOrchestratorNotice = orchestratorMessages.length > 0
+    ? buildOrchestratorNotice(orchestratorMessages[orchestratorMessages.length - 1])
+    : null;
+  const runtimeStatus = chat.runtimeStatus && typeof chat.runtimeStatus === "object"
+    ? chat.runtimeStatus
+    : null;
+  const messageStats = runtimeStatus?.messageStats && typeof runtimeStatus.messageStats === "object"
+    ? runtimeStatus.messageStats
+    : {};
+  const approvalTimeline = Array.isArray(chat.approvalTimeline) ? chat.approvalTimeline : [];
+  const executionAutopsy = chat.executionAutopsy && typeof chat.executionAutopsy === "object"
+    ? chat.executionAutopsy
+    : null;
   const isSubagentConversation = String(chat.activeConversationSource ?? "").trim() === "subagent";
   const historyConversationList = Array.isArray(chat.conversationList) ? chat.conversationList : [];
   const thinkingToggleDisabled =
@@ -1733,6 +1772,21 @@ export function ChatPanel({
                 (child) => String(child?.id ?? "").trim() === String(chat.activeConversationId ?? "").trim()
               );
               const normalizedItemId = String(item.id ?? "").trim();
+              const busySubagents = Array.isArray(item?.subagents)
+                ? item.subagents.filter((subagent) => Boolean(subagent?.agentBusy))
+                : [];
+              const busySubagentConversationIds = new Set(
+                busySubagents
+                  .map((subagent) => String(subagent?.conversationId ?? "").trim())
+                  .filter(Boolean)
+              );
+              const isParentRunning = Boolean(item.agentBusy);
+              const hasRunningChild =
+                childItems.some(
+                  (child) =>
+                    Boolean(child?.agentBusy) ||
+                    busySubagentConversationIds.has(String(child?.id ?? "").trim())
+                ) || busySubagents.length > 0;
               const isExpanded =
                 !hasChildren || Boolean(expandedHistoryGroupMap?.[normalizedItemId]);
 
@@ -1763,8 +1817,15 @@ export function ChatPanel({
                               ) : hasChildren ? (
                                 <span className="history-item-badge">子智能体 {childItems.length}</span>
                               ) : null}
-                              {Boolean(item.agentBusy) && (
-                                <span className="history-item-badge">运行中</span>
+                              {(isParentRunning || hasRunningChild) && (
+                                <span
+                                  className="history-run-indicator"
+                                  title={isParentRunning ? "该会话正在运行" : "子智能体正在运行"}
+                                  aria-label={isParentRunning ? "该会话正在运行" : "子智能体正在运行"}
+                                >
+                                  <span className="history-run-spinner" aria-hidden="true" />
+                                  <span>{isParentRunning ? "运行中" : "子运行中"}</span>
+                                </span>
                               )}
                               <span>{formatTimestamp(item.updatedAt)}</span>
                             </div>
@@ -1818,6 +1879,9 @@ export function ChatPanel({
                           {childItems.map((child) => {
                             const isChildActive =
                               String(child?.id ?? "").trim() === String(chat.activeConversationId ?? "").trim();
+                            const isChildRunning =
+                              Boolean(child?.agentBusy) ||
+                              busySubagentConversationIds.has(String(child?.id ?? "").trim());
                             return (
                               <article
                                 key={child.id}
@@ -1834,8 +1898,15 @@ export function ChatPanel({
                                       <span className="history-item-badge">
                                         {child.agentDisplayName || child.agentType || "子智能体"}
                                       </span>
-                                      {Boolean(child.agentBusy) && (
-                                        <span className="history-item-badge">运行中</span>
+                                      {isChildRunning && (
+                                        <span
+                                          className="history-run-indicator"
+                                          title="该子智能体正在运行"
+                                          aria-label="该子智能体正在运行"
+                                        >
+                                          <span className="history-run-spinner" aria-hidden="true" />
+                                          <span>运行中</span>
+                                        </span>
                                       )}
                                       <span>{formatTimestamp(child.updatedAt)}</span>
                                     </div>
@@ -2047,6 +2118,75 @@ export function ChatPanel({
             </button>
           </div>
 
+          <section className="runtime-console">
+            <button
+              type="button"
+              className="runtime-console-toggle"
+              onClick={() => setRuntimePanelOpen((value) => !value)}
+            >
+              <span>运行态</span>
+              <strong>
+                {runtimeStatus?.activeRun
+                  ? `${runtimeStatus.activeRun.mode || "run"} · ${runtimeStatus.activeRun.status || "running"}`
+                  : chat.isStreaming
+                    ? "前台运行中"
+                    : "空闲"}
+              </strong>
+              {runtimeStatus?.queueSize > 0 && <em>队列 {runtimeStatus.queueSize}</em>}
+              {pendingInsertions.length > 0 && <em>待插入 {pendingInsertions.length}</em>}
+            </button>
+
+            {runtimePanelOpen && (
+              <div className="runtime-console-body">
+                <div className="runtime-console-grid">
+                  <div>
+                    <span>当前 Agent</span>
+                    <strong>{runtimeStatus?.currentAgent?.agentType || chat.activeConversationSource || "primary"}</strong>
+                  </div>
+                  <div>
+                    <span>Atomic</span>
+                    <strong>{Number(runtimeStatus?.currentAgent?.atomicDepth ?? 0)}</strong>
+                  </div>
+                  <div>
+                    <span>Queue</span>
+                    <strong>{Number(runtimeStatus?.queue?.length ?? runtimeStatus?.queueSize ?? 0)}</strong>
+                  </div>
+                  <div>
+                    <span>Messages</span>
+                    <strong>{Number(messageStats.total ?? 0)}</strong>
+                  </div>
+                </div>
+
+                {runtimeStatus?.messageStats && (
+                  <div className="runtime-trace-line">
+                    <span>消息统计</span>
+                    <strong>
+                      user {Number(messageStats.user ?? 0)} · assistant {Number(messageStats.assistant ?? 0)} · tool {Number(messageStats.tool ?? 0)} · other {Number(messageStats.other ?? 0)}
+                    </strong>
+                  </div>
+                )}
+
+                {approvalTimeline.length > 0 && (
+                  <div className="runtime-timeline">
+                    {approvalTimeline.slice(-5).map((item) => (
+                      <div key={item.id} className="runtime-timeline-item">
+                        <span>{item.label}</span>
+                        <strong>{item.detail}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {executionAutopsy && (
+                  <div className="runtime-autopsy">
+                    <strong>{executionAutopsy.title}</strong>
+                    <span>{executionAutopsy.detail}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
           <div
             ref={chatStreamRef}
             className="chat-stream"
@@ -2056,8 +2196,23 @@ export function ChatPanel({
               <div className="empty-note">发送第一条消息后，这里显示完整会话历史。</div>
             )}
 
-            {chat.messages.map((message, index) => {
-              const isLastMessage = index === chat.messages.length - 1;
+            {chat.messages.length > 0 && orchestratorMessages.length > 0 && (
+              <div className="orchestrator-digest">
+                <button
+                  type="button"
+                  className="orchestrator-digest-toggle"
+                  onClick={() => setOrchestratorLogOpen((value) => !value)}
+                >
+                  <span>系统动态 {orchestratorMessages.length} 条</span>
+                  {latestOrchestratorNotice && (
+                    <strong>{latestOrchestratorNotice.summary}</strong>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {visibleMessages.map((message, index) => {
+              const isLastMessage = index === visibleMessages.length - 1;
               const isStreamingThisMessage = isLastMessage && chat.isStreaming && message.role === "assistant";
               const messageMetaKind = getMessageMetaKind(message);
               const isInternalToolImageMessage = messageMetaKind === "tool_image_input";
@@ -2536,6 +2691,16 @@ export function ChatPanel({
                           <span className="composer-queue-handle" aria-hidden="true" title="拖动排序">
                             ⋮⋮
                           </span>
+                          <button
+                            type="button"
+                            className="composer-queue-insert"
+                            onClick={() => chat.queueUserMessageAsInsertion(queueItem?.messageId)}
+                            aria-label="转为运行中插入"
+                            title="转为运行中插入"
+                            disabled={!chat.isStreaming && !runtimeStatus?.activeRun}
+                          >
+                            插入
+                          </button>
                         <button
                           type="button"
                           className="composer-queue-remove"
@@ -2549,6 +2714,31 @@ export function ChatPanel({
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+
+            {pendingInsertions.length > 0 && (
+              <div className="composer-queue composer-insertion-queue" aria-label="等待插入队列">
+                <div className="composer-queue-head">
+                  <strong>等待插入</strong>
+                  <span>{pendingInsertions.length} 条</span>
+                </div>
+                <div className="composer-queue-list">
+                  {pendingInsertions.map((item) => (
+                    <div
+                      key={item.clientInsertionId || item.queueId || item.messageId}
+                      className="composer-queue-item is-insertion"
+                    >
+                      <div className="composer-queue-index">↪</div>
+                      <div className="composer-queue-main">
+                        <strong title={String(item.content ?? "").trim()}>
+                          {clipComposerQueueText(item.content || "运行中插入")}
+                        </strong>
+                        <span>{item.status || "queued"}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

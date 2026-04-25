@@ -2,21 +2,14 @@ import { createHash } from "node:crypto";
 
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
 import { safeJsonParse } from "../../utils/safeJsonParse.js";
-import {
-  createEmptyMemorySummary,
-  hasAnyWorkspaceSummary,
-  normalizeGlobalSummary,
-  normalizeWorkspaceSummary
-} from "../config/MemorySummaryStore.js";
 
 const DEFAULT_MEMORY_SUMMARY_MAX_OUTPUT_TOKENS = 1200;
 const DEFAULT_EFFECTIVE_CONTEXT_MAX_CHARS = 24000;
 const DEFAULT_EFFECTIVE_CONTEXT_MESSAGE_MAX_CHARS = 8000;
 const MEMORY_EVIDENCE_TOOL_NAME = "submit_memory_evidence";
-const GLOBAL_SUMMARY_TOOL_NAME = "submit_global_memory";
-const WORKSPACE_SUMMARY_TOOL_NAME = "submit_workspace_memory";
 const SUMMARY_PREFIX = "[CONTEXT COMPACTION]";
 const PHASE_SIGNAL_COOLDOWN_MS = 15 * 60 * 1000;
+const MAX_MEMORY_MARKDOWN_CHARS = 12000;
 const EXPLICIT_REFRESH_PATTERNS = [
   /总结一下/u,
   /更新一下(记忆|总结)/u,
@@ -195,85 +188,17 @@ function createMemoryEvidenceToolDefinition() {
   };
 }
 
-function createGlobalSummaryToolDefinition() {
-  return {
-    type: "function",
-    function: {
-      name: GLOBAL_SUMMARY_TOOL_NAME,
-      description:
-        "Submit global long-term memory fields only. Exclude workspace-specific implementation details.",
-      parameters: {
-        type: "object",
-        properties: {
-          userProfile: {
-            type: "array",
-            items: { type: "string" }
-          },
-          userPreferences: {
-            type: "array",
-            items: { type: "string" }
-          },
-          generalTips: {
-            type: "array",
-            items: { type: "string" }
-          }
-        },
-        required: ["userProfile", "userPreferences", "generalTips"],
-        additionalProperties: false
-      }
-    }
-  };
-}
-
-function createWorkspaceSummaryToolDefinition() {
-  return {
-    type: "function",
-    function: {
-      name: WORKSPACE_SUMMARY_TOOL_NAME,
-      description:
-        "Submit repository-specific workspace memory fields only. Keep entries durable and non-transient.",
-      parameters: {
-        type: "object",
-        properties: {
-          purpose: {
-            type: "string",
-            minLength: 1
-          },
-          surfaces: {
-            type: "array",
-            items: { type: "string" }
-          },
-          invariants: {
-            type: "array",
-            items: { type: "string" }
-          },
-          entrypoints: {
-            type: "array",
-            items: { type: "string" }
-          },
-          gotchas: {
-            type: "array",
-            items: { type: "string" }
-          }
-        },
-        required: ["purpose", "surfaces", "invariants", "entrypoints", "gotchas"],
-        additionalProperties: false
-      }
-    }
-  };
-}
-
 function resolveStageMaxTokens(runtimeConfig = {}, stage = "evidence") {
   const configured = Number(runtimeConfig?.maxOutputTokens ?? 0);
   const fallbackByStage = {
     evidence: 360,
-    global: 420,
-    workspace: 460
+    global: 900,
+    workspace: 1000
   };
   const capByStage = {
     evidence: 520,
-    global: 620,
-    workspace: 680
+    global: 1200,
+    workspace: 1200
   };
   const fallback = Number(fallbackByStage[stage] ?? 420);
   const cap = Number(capByStage[stage] ?? 680);
@@ -453,60 +378,6 @@ function normalizeWorkspaceFieldText(value) {
   return normalizeText(stripMarkdownArtifacts(normalizeListLine(value)));
 }
 
-function sanitizeWorkspaceItems(items = []) {
-  return mergePriorityItems(
-    (Array.isArray(items) ? items : [])
-      .map((item) => normalizeWorkspaceFieldText(item))
-      .filter(Boolean)
-  );
-}
-
-function sanitizeWorkspaceSummaryFields(summary) {
-  const normalized = normalizeWorkspaceSummary(summary);
-  return normalizeWorkspaceSummary({
-    purpose: normalizeWorkspaceFieldText(normalized.purpose),
-    surfaces: sanitizeWorkspaceItems(normalized.surfaces),
-    invariants: sanitizeWorkspaceItems(normalized.invariants),
-    entrypoints: sanitizeWorkspaceItems(normalized.entrypoints),
-    gotchas: sanitizeWorkspaceItems(normalized.gotchas)
-  });
-}
-
-function buildSanitizedGlobalSummary({
-  candidateGlobal,
-  previousGlobal
-}) {
-  return normalizeGlobalSummary({
-    userProfile: mergePriorityItems(
-      candidateGlobal?.userProfile,
-      previousGlobal?.userProfile
-    ),
-    userPreferences: mergePriorityItems(
-      candidateGlobal?.userPreferences,
-      previousGlobal?.userPreferences
-    ),
-    generalTips: mergePriorityItems(
-      candidateGlobal?.generalTips,
-      previousGlobal?.generalTips
-    )
-  });
-}
-
-function buildSanitizedWorkspaceSummary({
-  candidateWorkspace,
-  previousWorkspace
-}) {
-  const normalizedCandidate = sanitizeWorkspaceSummaryFields(candidateWorkspace);
-  const fallback = sanitizeWorkspaceSummaryFields(previousWorkspace);
-  return sanitizeWorkspaceSummaryFields({
-    purpose: normalizedCandidate.purpose || fallback.purpose,
-    surfaces: mergePriorityItems(normalizedCandidate.surfaces, fallback.surfaces),
-    invariants: mergePriorityItems(normalizedCandidate.invariants, fallback.invariants),
-    entrypoints: mergePriorityItems(normalizedCandidate.entrypoints, fallback.entrypoints),
-    gotchas: mergePriorityItems(normalizedCandidate.gotchas, fallback.gotchas)
-  });
-}
-
 function createMemoryEvidencePrompt({
   workspacePath,
   previousGlobal,
@@ -520,10 +391,10 @@ function createMemoryEvidencePrompt({
     `Workspace path context (do not output as a field): ${workspacePath}`,
     "",
     "Previous global memory:",
-    buildPromptPayloadString(previousGlobal),
+    formatMarkdownForPrompt(previousGlobal),
     "",
     "Previous workspace memory:",
-    buildPromptPayloadString(previousWorkspace),
+    formatMarkdownForPrompt(previousWorkspace),
     "",
     "Conversation evidence:",
     conversationContextText || "(none)"
@@ -532,15 +403,21 @@ function createMemoryEvidencePrompt({
 
 function createGlobalSummaryPrompt({ compactEvidence, previousGlobal }) {
   return [
-    "Generate global cross-workspace memory only.",
-    `Do not return prose. Call ${GLOBAL_SUMMARY_TOOL_NAME} exactly once.`,
-    "Never include repository-specific implementation details in global memory.",
+    "Rewrite the complete global memory Markdown document.",
+    "Return Markdown only. Do not return JSON. Do not wrap the answer in a code fence.",
+    "This is soft-structured memory: keep useful headings, concise bullets, and durable facts.",
+    "Scope: global cross-workspace memory only.",
+    "Include stable user profile, communication preferences, reusable operating rules, and durable cross-project tips.",
+    "Never include repository-specific implementation details, transient task progress, tool logs, or one-off debugging noise.",
+    "Prefer preserving existing useful memory and merging new evidence into it. Remove contradictions only when the new evidence is clearly newer or more explicit.",
     "",
     "Compact evidence:",
     buildPromptPayloadString(compactEvidence),
     "",
-    "Previous global memory:",
-    buildPromptPayloadString(previousGlobal)
+    "Previous global memory Markdown:",
+    formatMarkdownForPrompt(previousGlobal),
+    "",
+    "Return the full next global memory Markdown document now."
   ].join("\n");
 }
 
@@ -550,17 +427,46 @@ function createWorkspaceSummaryPrompt({
   previousWorkspace
 }) {
   return [
-    "Generate workspace repository memory only.",
-    `Do not return prose. Call ${WORKSPACE_SUMMARY_TOOL_NAME} exactly once.`,
-    "Focus on durable repository understanding. Exclude transient session status.",
-    `Current workspace path context (do not output as a field): ${workspacePath}`,
+    "Rewrite the complete current workspace memory Markdown document.",
+    "Return Markdown only. Do not return JSON. Do not wrap the answer in a code fence.",
+    "This is soft-structured memory: keep useful headings, concise bullets, and durable facts.",
+    "Scope: only the current workspace/repository.",
+    "Include durable repository purpose, workspace info, architecture surfaces, entrypoints, invariants, stable rules, risks, gotchas, architectural decisions, and reusable handoff context.",
+    "Prefer headings like: Workspace Info, Purpose, Architecture & Surfaces, Entrypoints, Invariants & Stable Rules, Risks & Gotchas, Architectural Decisions, Handoff Context.",
+    "Handoff Context must be phrased as durable near-term handoff direction, not a disposable TODO list. Avoid items that will become wrong immediately after one task is completed.",
+    "For status-like facts that may change, qualify them with phrases like \"as last observed\" or \"currently observed\" instead of stating them as permanent truth.",
+    "Exclude global user preferences, unrelated repositories, raw chat history, tool logs, overly granular one-off debugging details, and temporary task noise.",
+    `Current workspace path: ${workspacePath}`,
+    "Prefer preserving existing useful memory and merging new evidence into it. Remove contradictions only when the new evidence is clearly newer or more explicit.",
     "",
     "Compact evidence:",
     buildPromptPayloadString(compactEvidence),
     "",
-    "Previous workspace memory:",
-    buildPromptPayloadString(previousWorkspace)
+    "Previous workspace memory Markdown:",
+    formatMarkdownForPrompt(previousWorkspace),
+    "",
+    "Return the full next workspace memory Markdown document now."
   ].join("\n");
+}
+
+function formatMarkdownForPrompt(value) {
+  const normalized = normalizeMemoryMarkdown(value);
+  return normalized || "(empty)";
+}
+
+function stripOuterMarkdownFence(value) {
+  const text = String(value ?? "").trim();
+  const match = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/iu);
+  return match ? match[1].trim() : text;
+}
+
+function normalizeMemoryMarkdown(value) {
+  const normalized = stripOuterMarkdownFence(value).replace(/\r\n/g, "\n").trim();
+  if (!normalized || normalized.length <= MAX_MEMORY_MARKDOWN_CHARS) {
+    return normalized;
+  }
+
+  return normalized.slice(0, MAX_MEMORY_MARKDOWN_CHARS).trimEnd();
 }
 
 function extractToolPayload(completion, toolName) {
@@ -629,21 +535,28 @@ async function runToolCompletion({
   return extractToolPayload(completion, toolName);
 }
 
-function sanitizeCandidatePayload({
-  candidate,
-  previousGlobal,
-  previousWorkspace
+async function runMarkdownCompletion({
+  client,
+  runtimeConfig,
+  prompt,
+  stage
 }) {
-  return {
-    global: buildSanitizedGlobalSummary({
-      candidateGlobal: candidate?.global,
-      previousGlobal
-    }),
-    workspace: buildSanitizedWorkspaceSummary({
-      candidateWorkspace: candidate?.workspace,
-      previousWorkspace
-    })
-  };
+  const completion = await client.chat.completions.create({
+    model: runtimeConfig.model,
+    temperature: 0,
+    max_tokens: resolveStageMaxTokens(runtimeConfig, stage),
+    messages: [
+      {
+        role: "user",
+        content: prompt
+      }
+    ],
+    extra_body: {
+      enable_thinking: Boolean(runtimeConfig.enableDeepThinking)
+    }
+  });
+
+  return normalizeMemoryMarkdown(completion?.choices?.[0]?.message?.content ?? "");
 }
 
 export class MemorySummaryService {
@@ -703,10 +616,10 @@ export class MemorySummaryService {
       return null;
     }
 
-    const currentSummary = await this.store.read();
-    const previousWorkspaceEntry = currentSummary.workspaces[workspacePath] ?? null;
-    const previousWorkspaceSummary = previousWorkspaceEntry?.summary ?? {};
-    const previousUpdatedAt = normalizeText(previousWorkspaceEntry?.updatedAt);
+    const currentSummary = await this.store.getPromptData(workspacePath);
+    const previousGlobalMarkdown = normalizeMemoryMarkdown(currentSummary.globalMarkdown);
+    const previousWorkspaceMarkdown = normalizeMemoryMarkdown(currentSummary.workspaceMarkdown);
+    const previousUpdatedAt = normalizeText(currentSummary.workspaceUpdatedAt);
     const refreshReason = resolveRefreshReason(messages, previousUpdatedAt);
 
     if (!refreshReason.shouldRefresh) {
@@ -727,8 +640,8 @@ export class MemorySummaryService {
     );
     const evidencePrompt = createMemoryEvidencePrompt({
       workspacePath,
-      previousGlobal: currentSummary.global,
-      previousWorkspace: previousWorkspaceSummary,
+      previousGlobal: previousGlobalMarkdown,
+      previousWorkspace: previousWorkspaceMarkdown,
       conversationContextText
     });
 
@@ -746,71 +659,55 @@ export class MemorySummaryService {
 
     const globalPrompt = createGlobalSummaryPrompt({
       compactEvidence,
-      previousGlobal: currentSummary.global
+      previousGlobal: previousGlobalMarkdown
     });
     const workspacePrompt = createWorkspaceSummaryPrompt({
       workspacePath,
       compactEvidence,
-      previousWorkspace: previousWorkspaceSummary
+      previousWorkspace: previousWorkspaceMarkdown
     });
-    const globalPayload =
-      (await runToolCompletion({
+    const globalMarkdown =
+      (await runMarkdownCompletion({
         client,
         runtimeConfig,
-        toolDefinition: createGlobalSummaryToolDefinition(),
-        toolName: GLOBAL_SUMMARY_TOOL_NAME,
         prompt: globalPrompt,
         stage: "global"
-      })) ?? {};
-    const workspacePayload =
-      (await runToolCompletion({
+      })) || previousGlobalMarkdown;
+    const workspaceMarkdown =
+      (await runMarkdownCompletion({
         client,
         runtimeConfig,
-        toolDefinition: createWorkspaceSummaryToolDefinition(),
-        toolName: WORKSPACE_SUMMARY_TOOL_NAME,
         prompt: workspacePrompt,
         stage: "workspace"
-      })) ?? {};
-
-    const normalizedCandidate = {
-      global: normalizeGlobalSummary(globalPayload),
-      workspace: normalizeWorkspaceSummary(workspacePayload)
-    };
-    const candidate = sanitizeCandidatePayload({
-      candidate: normalizedCandidate,
-      previousGlobal: currentSummary.global,
-      previousWorkspace: previousWorkspaceSummary
-    });
+      })) || previousWorkspaceMarkdown;
     const previousComparable = {
-      global: normalizeGlobalSummary(currentSummary.global),
-      workspace: normalizeWorkspaceSummary(previousWorkspaceSummary)
+      global: previousGlobalMarkdown,
+      workspace: previousWorkspaceMarkdown
+    };
+    const candidate = {
+      global: globalMarkdown,
+      workspace: workspaceMarkdown
     };
     const previousHash = buildCandidateHash(previousComparable);
     const nextHash = buildCandidateHash(candidate);
-
-    const nextPayload = createEmptyMemorySummary();
-    nextPayload.global = candidate.global;
-    nextPayload.workspaces = {
-      ...currentSummary.workspaces
-    };
-
-    const shouldPersistWorkspaceEntry =
-      hasAnyWorkspaceSummary(candidate.workspace) || Boolean(previousWorkspaceEntry);
-
-    if (shouldPersistWorkspaceEntry) {
-      nextPayload.workspaces[workspacePath] = {
-        summary: candidate.workspace,
-        updatedAt: new Date().toISOString()
-      };
-    } else {
-      delete nextPayload.workspaces[workspacePath];
-    }
 
     if (previousHash === nextHash) {
       return null;
     }
 
-    const saved = await this.store.save(nextPayload);
+    const saved = {
+      global: previousGlobalMarkdown,
+      workspace: previousWorkspaceMarkdown
+    };
+
+    if (previousGlobalMarkdown !== globalMarkdown) {
+      saved.global = await this.store.saveGlobalMarkdown(globalMarkdown);
+    }
+
+    if (previousWorkspaceMarkdown !== workspaceMarkdown) {
+      saved.workspace = await this.store.saveWorkspaceMarkdown(workspacePath, workspaceMarkdown);
+    }
+
     return {
       saved,
       workspacePath,

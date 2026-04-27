@@ -500,19 +500,13 @@ function normalizeSkillCatalog(skills) {
       displayName: String(item?.displayName ?? item?.name ?? ""),
       shortDescription: String(item?.shortDescription ?? item?.description ?? ""),
       defaultPrompt: String(item?.defaultPrompt ?? ""),
+      iconSmall: String(item?.iconSmall ?? ""),
+      iconLarge: String(item?.iconLarge ?? ""),
+      brandColor: String(item?.brandColor ?? ""),
       description: String(item?.description ?? ""),
       version: String(item?.version ?? "1.0.0"),
       author: String(item?.author ?? ""),
       license: String(item?.license ?? ""),
-      platforms: Array.isArray(item?.platforms)
-        ? item.platforms.map((value) => String(value ?? "")).filter(Boolean)
-        : [],
-      prerequisites: Array.isArray(item?.prerequisites)
-        ? item.prerequisites.map((value) => String(value ?? "")).filter(Boolean)
-        : [],
-      requiredEnvironmentVariables: Array.isArray(item?.requiredEnvironmentVariables)
-        ? item.requiredEnvironmentVariables.map((value) => String(value ?? "")).filter(Boolean)
-        : [],
       category: String(item?.category ?? ""),
       relativePath: String(item?.relativePath ?? ""),
       isSystem: Boolean(item?.isSystem),
@@ -530,6 +524,9 @@ function skillCatalogEntrySignature(item) {
     item.name,
     item.displayName,
     item.shortDescription,
+    item.iconSmall,
+    item.iconLarge,
+    item.brandColor,
     item.category,
     item.relativePath,
     item.isSystem ? "1" : "0",

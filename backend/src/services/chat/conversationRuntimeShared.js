@@ -351,12 +351,16 @@ export function buildSubagentGuardPrompt() {
 }
 
 export function createWorkplaceSystemPrompt(workplacePath) {
+  const homeDirectory = String(os.homedir?.() ?? "").trim();
+
   return [
+    "你是 YYZ_CLAW，一个通用智能助手。",
     "你正在本地智能体工作模式。",
     `当前操作系统: ${HOST_SYSTEM_INFO.normalizedSystem}`,
     `系统版本号: ${HOST_SYSTEM_INFO.release}`,
     `系统详细版本: ${HOST_SYSTEM_INFO.version}`,
     `系统平台标识: ${HOST_SYSTEM_INFO.platform}`,
+    `用户主目录(home): ${homeDirectory}`,
     `当前工作区(workplace): ${workplacePath}`,
     "如果涉及文件、目录、命令执行等任务，请默认以该路径作为起点。"
   ].join("\n");

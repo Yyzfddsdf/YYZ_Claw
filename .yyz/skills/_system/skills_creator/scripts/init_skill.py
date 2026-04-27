@@ -57,13 +57,23 @@ def build_skill_md(skill_name: str, display_name: str, short_description: str, d
     ).strip() + "\n"
 
 
-def build_openai_yaml(display_name: str, short_description: str, default_prompt: str) -> str:
+def build_openai_yaml(
+    display_name: str,
+    short_description: str,
+    default_prompt: str,
+    icon_small: str,
+    icon_large: str,
+    brand_color: str
+) -> str:
     return dedent(
         f"""\
         interface:
           display_name: {yaml_quote(display_name)}
           short_description: {yaml_quote(short_description)}
           default_prompt: {yaml_quote(default_prompt)}
+          icon_small: {yaml_quote(icon_small)}
+          icon_large: {yaml_quote(icon_large)}
+          brand_color: {yaml_quote(brand_color)}
         policy:
           allow_implicit_invocation: true
         """
@@ -100,6 +110,9 @@ def main() -> int:
     display_name = interface.get("display_name", skill_name.replace("-", " ").title())
     short_description = interface.get("short_description", f"Create and update {skill_name}")
     default_prompt = interface.get("default_prompt", f"Use ${skill_name} to work on this skill.")
+    icon_small = interface.get("icon_small", "assets/icon-small.svg")
+    icon_large = interface.get("icon_large", "assets/icon-large.svg")
+    brand_color = interface.get("brand_color", "#2563eb")
 
     (skill_root / "SKILL.md").write_text(
       build_skill_md(skill_name, display_name, short_description, default_prompt),
@@ -108,7 +121,7 @@ def main() -> int:
 
     resources = {item.strip() for item in args.resources.split(",") if item.strip()}
     if not resources:
-      resources = {"references", "scripts"}
+      resources = {"references", "scripts", "assets"}
 
     for resource_name in resources:
       (skill_root / resource_name).mkdir(parents=True, exist_ok=True)
@@ -116,7 +129,14 @@ def main() -> int:
     agents_dir = skill_root / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     (agents_dir / "openai.yaml").write_text(
-      build_openai_yaml(display_name, short_description, default_prompt),
+      build_openai_yaml(
+        display_name,
+        short_description,
+        default_prompt,
+        icon_small,
+        icon_large,
+        brand_color
+      ),
       encoding="utf-8"
     )
 

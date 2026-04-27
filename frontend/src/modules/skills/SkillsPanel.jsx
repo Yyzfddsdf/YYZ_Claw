@@ -12,6 +12,79 @@ function normalizeFilePath(filePath) {
   return String(filePath ?? "").trim() || "SKILL.md";
 }
 
+function normalizeBrandColor(value) {
+  const text = String(value ?? "").trim();
+  if (
+    /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(text) ||
+    /^rgba?\([^)]+\)$/i.test(text) ||
+    /^hsla?\([^)]+\)$/i.test(text)
+  ) {
+    return text;
+  }
+
+  return "";
+}
+
+function isDirectIconSource(value) {
+  const text = String(value ?? "").trim();
+  return /^(?:https?:|data:image\/|blob:|\/)/i.test(text);
+}
+
+function buildSkillAssetUrl(skill, iconPath, workspacePath) {
+  const normalizedIconPath = String(iconPath ?? "").trim();
+  if (!normalizedIconPath) {
+    return "";
+  }
+
+  if (isDirectIconSource(normalizedIconPath)) {
+    return normalizedIconPath;
+  }
+
+  const identifier = toSkillIdentifier(skill);
+  if (!identifier) {
+    return "";
+  }
+
+  const query = new URLSearchParams({
+    filePath: normalizedIconPath
+  });
+  const normalizedWorkspacePath = String(workspacePath ?? "").trim();
+  if (normalizedWorkspacePath) {
+    query.set("workspacePath", normalizedWorkspacePath);
+  }
+
+  return `/api/skills/${encodeURIComponent(identifier)}/assets?${query.toString()}`;
+}
+
+function resolveSkillIconSrc(skill, size, workspacePath) {
+  const preferredPath =
+    size === "large"
+      ? String(skill?.iconLarge ?? "").trim() || String(skill?.iconSmall ?? "").trim()
+      : String(skill?.iconSmall ?? "").trim() || String(skill?.iconLarge ?? "").trim();
+
+  return buildSkillAssetUrl(skill, preferredPath, workspacePath);
+}
+
+function getSkillInitial(skill) {
+  const label = String(skill?.displayName || skill?.name || "?").trim();
+  return label.slice(0, 1).toUpperCase() || "?";
+}
+
+function SkillIcon({ skill, size = "small", workspacePath = "" }) {
+  const iconSrc = resolveSkillIconSrc(skill, size, workspacePath);
+  const className = `skill-icon skill-icon-${size}`;
+
+  if (!iconSrc) {
+    return <span className={`${className} is-fallback`}>{getSkillInitial(skill)}</span>;
+  }
+
+  return (
+    <span className={className}>
+      <img src={iconSrc} alt="" loading="lazy" decoding="async" />
+    </span>
+  );
+}
+
 export function SkillsPanel({ chat, onNavigate }) {
   const [activeSkillKey, setActiveSkillKey] = useState("");
   const [skillDetailCache, setSkillDetailCache] = useState({});
@@ -105,8 +178,7 @@ export function SkillsPanel({ chat, onNavigate }) {
         identifier: normalizedIdentifier,
         filePath: String(response?.filePath ?? normalizedFilePath),
         skill: response?.skill ?? null,
-        content: String(response?.content ?? ""),
-        bundleFiles: Array.isArray(response?.bundleFiles) ? response.bundleFiles : []
+        content: String(response?.content ?? "")
       };
 
       if (requestId !== requestIdRef.current) {
@@ -145,10 +217,67 @@ export function SkillsPanel({ chat, onNavigate }) {
     loadSkillDetail(identifier, "SKILL.md");
   }
 
+  function renderSkillCard(skill, fallbackScopeLabel) {
+    const identifier = toSkillIdentifier(skill);
+    const isSelected = selectedSkillKeys.includes(identifier);
+    const isActive = activeSkillKey === identifier;
+    const brandColor = normalizeBrandColor(skill?.brandColor);
+
+    return (
+      <article
+        key={identifier}
+        className={`skill-card ${isSelected ? "is-selected" : ""} ${isActive ? "is-active" : ""} ${skill.isSystem ? "is-system" : ""}`}
+        style={brandColor ? { "--skill-brand": brandColor } : undefined}
+        onClick={() => openSkillDetail(skill)}
+      >
+        <div className="skill-card-accent" />
+        <div className="skill-card-top">
+          <div className="skill-card-title-row">
+            <SkillIcon
+              skill={skill}
+              size="small"
+              workspacePath={chat?.activeConversationWorkplace ?? ""}
+            />
+            <h3 className="skill-card-title">{skill.displayName || skill.name}</h3>
+          </div>
+          <input
+            type="checkbox"
+            className="skill-card-checkbox"
+            checked={isSelected}
+            onChange={(event) => {
+              event.stopPropagation();
+              toggleSkill(identifier);
+            }}
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+        <div className="skill-card-badges">
+          <span className={`skill-badge ${skill.isSystem ? "system" : skill.scope}`}>
+            {skill.isSystem ? "系统" : fallbackScopeLabel}
+          </span>
+          <span className="skill-badge is-meta">点开看全文</span>
+        </div>
+        <div className="skill-card-body">
+          <p className="skill-card-desc">
+            {skill.shortDescription || skill.description || "暂无描述"}
+          </p>
+        </div>
+        {skill.relativePath && !skill.isSystem && (
+          <div className="skill-card-footer">
+            <span className="skill-path" title={skill.relativePath}>
+              {skill.relativePath}
+            </span>
+          </div>
+        )}
+      </article>
+    );
+  }
+
   const activeCatalogSkill = activeSkillKey ? skillByIdentifier.get(activeSkillKey) : null;
   const enabledCount = selectedSkillKeys.length;
   const detailSkill = skillDetail?.skill || activeCatalogSkill || null;
   const detailScope = detailSkill?.scope || activeCatalogSkill?.scope || "";
+  const detailBrandColor = normalizeBrandColor(detailSkill?.brandColor);
 
   return (
     <div className="skills-panel">
@@ -194,51 +323,7 @@ export function SkillsPanel({ chat, onNavigate }) {
                       <span className="skills-section-count">{projectSkills.length}</span>
                     </header>
                     <div className="skills-grid">
-                      {projectSkills.map((skill) => {
-                        const identifier = toSkillIdentifier(skill);
-                        const isSelected = selectedSkillKeys.includes(identifier);
-                        const isActive = activeSkillKey === identifier;
-
-                        return (
-                          <article
-                            key={identifier}
-                            className={`skill-card ${isSelected ? "is-selected" : ""} ${isActive ? "is-active" : ""} ${skill.isSystem ? "is-system" : ""}`}
-                            onClick={() => openSkillDetail(skill)}
-                          >
-                            <div className="skill-card-top">
-                              <h3 className="skill-card-title">{skill.displayName || skill.name}</h3>
-                              <input
-                                type="checkbox"
-                                className="skill-card-checkbox"
-                                checked={isSelected}
-                                onChange={(event) => {
-                                  event.stopPropagation();
-                                  toggleSkill(identifier);
-                                }}
-                                onClick={(event) => event.stopPropagation()}
-                              />
-                            </div>
-                            <div className="skill-card-badges">
-                              <span className={`skill-badge ${skill.scope}`}>
-                                {skill.scope === "project" ? "项目" : skill.scope}
-                              </span>
-                              <span className="skill-badge is-meta">点开看全文</span>
-                            </div>
-                            <div className="skill-card-body">
-                              <p className="skill-card-desc">
-                                {skill.shortDescription || skill.description || "暂无描述"}
-                              </p>
-                            </div>
-                            {skill.relativePath && !skill.isSystem && (
-                              <div className="skill-card-footer">
-                                <span className="skill-path" title={skill.relativePath}>
-                                  {skill.relativePath}
-                                </span>
-                              </div>
-                            )}
-                          </article>
-                        );
-                      })}
+                      {projectSkills.map((skill) => renderSkillCard(skill, "项目"))}
                     </div>
                   </section>
                 )}
@@ -250,51 +335,7 @@ export function SkillsPanel({ chat, onNavigate }) {
                       <span className="skills-section-count">{globalSkills.length}</span>
                     </header>
                     <div className="skills-grid">
-                      {globalSkills.map((skill) => {
-                        const identifier = toSkillIdentifier(skill);
-                        const isSelected = selectedSkillKeys.includes(identifier);
-                        const isActive = activeSkillKey === identifier;
-
-                        return (
-                          <article
-                            key={identifier}
-                            className={`skill-card ${isSelected ? "is-selected" : ""} ${isActive ? "is-active" : ""} ${skill.isSystem ? "is-system" : ""}`}
-                            onClick={() => openSkillDetail(skill)}
-                          >
-                            <div className="skill-card-top">
-                              <h3 className="skill-card-title">{skill.displayName || skill.name}</h3>
-                              <input
-                                type="checkbox"
-                                className="skill-card-checkbox"
-                                checked={isSelected}
-                                onChange={(event) => {
-                                  event.stopPropagation();
-                                  toggleSkill(identifier);
-                                }}
-                                onClick={(event) => event.stopPropagation()}
-                              />
-                            </div>
-                            <div className="skill-card-badges">
-                              <span className={`skill-badge ${skill.scope}`}>
-                                {skill.scope === "global" ? "全局" : skill.scope}
-                              </span>
-                              <span className="skill-badge is-meta">点开看全文</span>
-                            </div>
-                            <div className="skill-card-body">
-                              <p className="skill-card-desc">
-                                {skill.shortDescription || skill.description || "暂无描述"}
-                              </p>
-                            </div>
-                            {skill.relativePath && !skill.isSystem && (
-                              <div className="skill-card-footer">
-                                <span className="skill-path" title={skill.relativePath}>
-                                  {skill.relativePath}
-                                </span>
-                              </div>
-                            )}
-                          </article>
-                        );
-                      })}
+                      {globalSkills.map((skill) => renderSkillCard(skill, "全局"))}
                     </div>
                   </section>
                 )}
@@ -306,42 +347,7 @@ export function SkillsPanel({ chat, onNavigate }) {
                       <span className="skills-section-count">{systemSkills.length}</span>
                     </header>
                     <div className="skills-grid">
-                      {systemSkills.map((skill) => {
-                        const identifier = toSkillIdentifier(skill);
-                        const isSelected = selectedSkillKeys.includes(identifier);
-                        const isActive = activeSkillKey === identifier;
-
-                        return (
-                          <article
-                            key={identifier}
-                            className={`skill-card ${isSelected ? "is-selected" : ""} ${isActive ? "is-active" : ""} ${skill.isSystem ? "is-system" : ""}`}
-                            onClick={() => openSkillDetail(skill)}
-                          >
-                            <div className="skill-card-top">
-                              <h3 className="skill-card-title">{skill.displayName || skill.name}</h3>
-                              <input
-                                type="checkbox"
-                                className="skill-card-checkbox"
-                                checked={isSelected}
-                                onChange={(event) => {
-                                  event.stopPropagation();
-                                  toggleSkill(identifier);
-                                }}
-                                onClick={(event) => event.stopPropagation()}
-                              />
-                            </div>
-                            <div className="skill-card-badges">
-                              <span className="skill-badge system">系统</span>
-                              <span className="skill-badge is-meta">点开看全文</span>
-                            </div>
-                            <div className="skill-card-body">
-                              <p className="skill-card-desc">
-                                {skill.shortDescription || skill.description || "暂无描述"}
-                              </p>
-                            </div>
-                          </article>
-                        );
-                      })}
+                      {systemSkills.map((skill) => renderSkillCard(skill, "系统"))}
                     </div>
                   </section>
                 )}
@@ -360,9 +366,15 @@ export function SkillsPanel({ chat, onNavigate }) {
               >
                 <aside
                   className="skills-detail-modal"
+                  style={detailBrandColor ? { "--skill-brand": detailBrandColor } : undefined}
                   onClick={(event) => event.stopPropagation()}
                 >
                   <header className="skills-detail-head">
+                    <SkillIcon
+                      skill={detailSkill}
+                      size="large"
+                      workspacePath={chat?.activeConversationWorkplace ?? ""}
+                    />
                     <div className="skills-detail-title-wrap">
                       <h3>{detailSkill?.displayName || detailSkill?.name || activeSkillKey}</h3>
                       <div className="skills-detail-tags">
@@ -397,18 +409,18 @@ export function SkillsPanel({ chat, onNavigate }) {
                         <span>路径</span>
                         <strong>{detailSkill?.relativePath || activeSkillKey}</strong>
                       </div>
-                      <div>
-                        <span>平台</span>
-                        <strong>
-                          {Array.isArray(detailSkill?.platforms) && detailSkill.platforms.length > 0
-                            ? detailSkill.platforms.join(" · ")
-                            : "所有平台"}
-                        </strong>
-                      </div>
-                      <div>
-                        <span>相关 skill</span>
-                        <strong>{Array.isArray(detailSkill?.relatedSkills) ? detailSkill.relatedSkills.length : 0}</strong>
-                      </div>
+                      {detailSkill?.category && (
+                        <div>
+                          <span>分类</span>
+                          <strong>{detailSkill.category}</strong>
+                        </div>
+                      )}
+                      {detailSkill?.license && (
+                        <div>
+                          <span>许可证</span>
+                          <strong>{detailSkill.license}</strong>
+                        </div>
+                      )}
                     </div>
 
                     {detailSkill?.defaultPrompt && (

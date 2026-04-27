@@ -64,6 +64,9 @@ def main() -> int:
         "default_prompt",
         f"Use ${skill_name} to work on this skill."
     )
+    icon_small = overrides.get("icon_small", "assets/icon-small.svg")
+    icon_large = overrides.get("icon_large", "assets/icon-large.svg")
+    brand_color = overrides.get("brand_color", "#2563eb")
 
     agents_dir = skill_root / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +77,9 @@ def main() -> int:
               display_name: {yaml_quote(display_name)}
               short_description: {yaml_quote(short_description)}
               default_prompt: {yaml_quote(default_prompt)}
+              icon_small: {yaml_quote(icon_small)}
+              icon_large: {yaml_quote(icon_large)}
+              brand_color: {yaml_quote(brand_color)}
             policy:
               allow_implicit_invocation: true
             """

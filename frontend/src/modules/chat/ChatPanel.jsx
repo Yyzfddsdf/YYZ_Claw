@@ -750,8 +750,7 @@ export function ChatPanel({
   const developerPromptDisabled =
     chat.isStreaming ||
     !chat.historyLoaded ||
-    Boolean(chat.pendingApproval) ||
-    chat.activeConversationSource === "subagent";
+    Boolean(chat.pendingApproval);
   const placeholder = !chat.historyLoaded
     ? "正在从 SQLite 加载历史..."
     : chat.pendingApproval
@@ -1987,16 +1986,18 @@ export function ChatPanel({
               </div>
             <div className="chat-pane-head-right">
               <div className="chat-mode-switch">
-                <button
-                  type="button"
-                  className={`mode-pill skills-toggle ${promptDrawerOpen ? "active" : ""}`}
-                  onClick={() => {
-                    setPromptDrawerOpen((prev) => !prev);
-                  }}
-                  disabled={!chat.historyLoaded}
-                >
-                  Developer Prompt
-                </button>
+                {!isSubagentConversation && (
+                  <button
+                    type="button"
+                    className={`mode-pill skills-toggle ${promptDrawerOpen ? "active" : ""}`}
+                    onClick={() => {
+                      setPromptDrawerOpen((prev) => !prev);
+                    }}
+                    disabled={!chat.historyLoaded}
+                  >
+                    Developer Prompt
+                  </button>
+                )}
                 <button
                   type="button"
                   className="mode-pill skills-toggle"
@@ -2014,34 +2015,24 @@ export function ChatPanel({
             </div>
           </div>
 
-          {promptDrawerOpen && (
+          {promptDrawerOpen && !isSubagentConversation && (
             <section className="chat-developer-panel">
               <div className="chat-developer-panel-head">
                 <div>
                   <h3>Developer 提示词</h3>
                   <p>
-                    {isSubagentConversation
-                      ? "子智能体使用类型定义的固定 prompt，这里只读展示。"
-                      : "当前会话独立保存，修改后会热更新到下一次请求。"}
+                    当前会话独立保存，修改后会热更新到下一次请求。
                   </p>
                 </div>
                 <span className="chat-developer-panel-badge">
-                  {isSubagentConversation
-                    ? "固定"
-                    : chat.activeConversationDeveloperPrompt
-                      ? "已配置"
-                      : "未配置"}
+                  {chat.activeConversationDeveloperPrompt ? "已配置" : "未配置"}
                 </span>
               </div>
               <textarea
                 className="chat-developer-input"
                 value={chat.activeConversationDeveloperPrompt || ""}
                 onChange={handleDeveloperPromptChange}
-                placeholder={
-                  isSubagentConversation
-                    ? "子智能体 prompt 由定义文件决定。"
-                    : "为当前会话写入 developer 指令，例如角色、边界、输出格式或禁忌。"
-                }
+                placeholder="为当前会话写入 developer 指令，例如角色、边界、输出格式或禁忌。"
                 disabled={developerPromptDisabled}
                 rows={4}
               />

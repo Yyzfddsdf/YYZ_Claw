@@ -9,6 +9,7 @@ export function createSkillsRoutes(services) {
 
   router.post("/skills/refresh", asyncHandler(controller.refreshSkills));
   router.get("/skills", asyncHandler(controller.listSkills));
+  router.get("/skills/:skillName/assets", asyncHandler(controller.getSkillAsset));
   router.get("/skills/:skillName", asyncHandler(controller.getSkillByName));
   router.get("/skills/:skillName/validate", asyncHandler(controller.validateSkillByName));
 

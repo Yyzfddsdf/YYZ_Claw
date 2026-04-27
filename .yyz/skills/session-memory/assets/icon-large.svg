@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Session Memory">
+  <defs>
+    <linearGradient id="memoryGradient" x1="18" y1="16" x2="136" y2="146" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14b8a6"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" rx="42" fill="url(#memoryGradient)"/>
+  <path d="M45 38h54a18 18 0 0 1 18 18v61H58a20 20 0 0 1-20-20V45a7 7 0 0 1 7-7z" fill="#f0fdfa"/>
+  <path d="M57 67h43M57 84h31M57 101h20" stroke="#0f766e" stroke-width="9" stroke-linecap="round"/>
+  <path d="M38 45h63" stroke="#99f6e4" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="113" cy="115" r="22" fill="#134e4a"/>
+  <path d="M113 103v12l9 6" stroke="#ccfbf1" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

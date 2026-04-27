@@ -1,7 +1,7 @@
 {
-  "activeProviderKey": "feishu",
+  "activeProviderKey": "",
   "workspacePath": "D:\\Work\\AntiFraud-AI-Assistant",
-  "developerPrompt": "",
+  "developerPrompt": "hytrttyrhtg",
   "activeSkillNames": [
     "global:yyz_greeting",
     "global:session-memory"

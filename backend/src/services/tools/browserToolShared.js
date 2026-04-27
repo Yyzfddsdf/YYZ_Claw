@@ -9,6 +9,8 @@ import { createToolResultHook, normalizeToolResultHooks } from "./toolResultHook
 
 const SESSION_BY_CONVERSATION = new Map();
 const DEFAULT_CONNECT_TIMEOUT_MS = 12000;
+const MAX_DEVTOOLS_ENTRIES = 200;
+const MAX_COMMAND_STEPS = 20;
 
 function normalizeConversationId(executionContext = {}) {
   const conversationId = String(executionContext?.conversationId ?? "").trim();
@@ -16,6 +18,37 @@ function normalizeConversationId(executionContext = {}) {
     throw new Error("conversationId is required for browser tools");
   }
   return conversationId;
+}
+
+function resolveContextWorkingDirectory(executionContext = {}) {
+  const candidate =
+    typeof executionContext.workingDirectory === "string"
+      ? executionContext.workingDirectory.trim()
+      : typeof executionContext.workplacePath === "string"
+        ? executionContext.workplacePath.trim()
+        : "";
+  return candidate ? path.resolve(candidate) : process.cwd();
+}
+
+function sanitizeScreenshotFileName(value) {
+  const normalized = String(value ?? "").trim();
+  const fallback = `browser-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+  const fileName = normalized || fallback;
+  return fileName.toLowerCase().endsWith(".png") ? fileName : `${fileName}.png`;
+}
+
+async function resolveScreenshotPath(args = {}, executionContext = {}) {
+  const cwd = resolveContextWorkingDirectory(executionContext);
+  const outputPath = String(args.outputPath ?? args.filePath ?? "").trim();
+  const fileName = sanitizeScreenshotFileName(args.fileName);
+  const targetPath = outputPath
+    ? path.resolve(cwd, outputPath)
+    : path.resolve(cwd, fileName);
+  const finalPath = targetPath.toLowerCase().endsWith(".png")
+    ? targetPath
+    : path.join(targetPath, fileName);
+  await fs.mkdir(path.dirname(finalPath), { recursive: true });
+  return finalPath;
 }
 
 function normalizeBrowserPreference(value) {
@@ -132,6 +165,94 @@ async function pickActivePage(context) {
   return context.newPage();
 }
 
+function pushLimited(list, entry, maxLength = MAX_DEVTOOLS_ENTRIES) {
+  if (!Array.isArray(list)) {
+    return;
+  }
+  list.push(entry);
+  if (list.length > maxLength) {
+    list.splice(0, list.length - maxLength);
+  }
+}
+
+function trimText(value, maxLength = 4000) {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 16))}\n...[truncated]`;
+}
+
+function escapeCssAttributeValue(value) {
+  return String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function registerPageDiagnostics(session, page) {
+  if (!session || !page || page.__yyzClawDiagnosticsAttached) {
+    return;
+  }
+  page.__yyzClawDiagnosticsAttached = true;
+
+  page.on("console", async (message) => {
+    const args = [];
+    for (const arg of message.args()) {
+      try {
+        const jsonValue = await arg.jsonValue();
+        args.push(typeof jsonValue === "string" ? jsonValue : JSON.stringify(jsonValue));
+      } catch {
+        args.push(String(arg));
+      }
+    }
+
+    pushLimited(session.consoleEntries, {
+      type: message.type(),
+      text: trimText(message.text()),
+      args: args.map((item) => trimText(item, 1000)),
+      location: message.location(),
+      url: page.url(),
+      createdAt: Date.now()
+    });
+  });
+
+  page.on("pageerror", (error) => {
+    pushLimited(session.pageErrors, {
+      message: trimText(error?.message ?? error),
+      stack: trimText(error?.stack ?? ""),
+      url: page.url(),
+      createdAt: Date.now()
+    });
+  });
+
+  page.on("requestfailed", (request) => {
+    pushLimited(session.networkEntries, {
+      type: "requestfailed",
+      method: request.method(),
+      url: request.url(),
+      resourceType: request.resourceType(),
+      failure: request.failure()?.errorText ?? "",
+      createdAt: Date.now()
+    });
+  });
+
+  page.on("response", (response) => {
+    const status = response.status();
+    if (status < 400) {
+      return;
+    }
+
+    const request = response.request();
+    pushLimited(session.networkEntries, {
+      type: "http_error",
+      method: request.method(),
+      url: response.url(),
+      resourceType: request.resourceType(),
+      status,
+      statusText: response.statusText(),
+      createdAt: Date.now()
+    });
+  });
+}
+
 async function launchBrowserSession(conversationId, preference = "auto") {
   const resolved = await resolveExecutable(preference);
   const port = await reservePort();
@@ -167,8 +288,17 @@ async function launchBrowserSession(conversationId, preference = "auto") {
     browser,
     context,
     page,
-    wsEndpoint
+    wsEndpoint,
+    consoleEntries: [],
+    pageErrors: [],
+    networkEntries: []
   };
+
+  registerPageDiagnostics(session, page);
+  context.on("page", (newPage) => {
+    session.page = newPage;
+    registerPageDiagnostics(session, newPage);
+  });
 
   SESSION_BY_CONVERSATION.set(conversationId, session);
   return session;
@@ -221,6 +351,7 @@ async function getCurrentPage(executionContext = {}, options = {}) {
   const session = await ensureSession(executionContext, options);
   const page = session.page?.isClosed?.() ? await pickActivePage(session.context) : session.page;
   session.page = page;
+  registerPageDiagnostics(session, page);
   return { session, page };
 }
 
@@ -372,9 +503,55 @@ export async function browserClick(args = {}, executionContext = {}) {
 
   const attempts = [];
   const frames = [page.mainFrame(), ...page.frames().filter((frame) => frame !== page.mainFrame())];
-  const escapedHrefContains = hrefContains.replace(/"/g, '\\"');
+  const escapedHrefContains = escapeCssAttributeValue(hrefContains);
+  const escapedText = escapeCssAttributeValue(text);
   const quotedText = JSON.stringify(text);
   const candidates = [];
+
+  if (text) {
+    for (const frame of frames) {
+      candidates.push({
+        label: `role-button-name:${text} frame:${frame.url() || "main"}`,
+        locator: frame.getByRole("button", { name: text }).first()
+      });
+      candidates.push({
+        label: `role-link-name:${text} frame:${frame.url() || "main"}`,
+        locator: frame.getByRole("link", { name: text }).first()
+      });
+      candidates.push({
+        label: `role-menuitem-name:${text} frame:${frame.url() || "main"}`,
+        locator: frame.getByRole("menuitem", { name: text }).first()
+      });
+      candidates.push({
+        label: `label:${text} frame:${frame.url() || "main"}`,
+        locator: frame.getByLabel(text).first()
+      });
+      candidates.push({
+        label: `placeholder:${text} frame:${frame.url() || "main"}`,
+        locator: frame.getByPlaceholder(text).first()
+      });
+      candidates.push({
+        label: `title:${text} frame:${frame.url() || "main"}`,
+        locator: frame.getByTitle(text).first()
+      });
+      candidates.push({
+        label: `text-exact:${text} frame:${frame.url() || "main"}`,
+        locator: frame.getByText(text, { exact: true }).first()
+      });
+      candidates.push({
+        label: `aria-label:${text} frame:${frame.url() || "main"}`,
+        locator: frame.locator(`[aria-label*="${escapedText}"]`).first()
+      });
+      candidates.push({
+        label: `text-contains:${text} frame:${frame.url() || "main"}`,
+        locator: frame.locator(`text=${quotedText}`).first()
+      });
+      candidates.push({
+        label: `input-value:${text} frame:${frame.url() || "main"}`,
+        locator: frame.locator(`input[value*="${escapedText}"]`).first()
+      });
+    }
+  }
 
   if (selector) {
     for (const frame of frames) {
@@ -394,27 +571,11 @@ export async function browserClick(args = {}, executionContext = {}) {
     }
   }
 
-  if (text) {
-    for (const frame of frames) {
-      candidates.push({
-        label: `role-link-text:${text} frame:${frame.url() || "main"}`,
-        locator: frame.getByRole("link", { name: text }).first()
-      });
-      candidates.push({
-        label: `role-button-text:${text} frame:${frame.url() || "main"}`,
-        locator: frame.getByRole("button", { name: text }).first()
-      });
-      candidates.push({
-        label: `text-contains:${text} frame:${frame.url() || "main"}`,
-        locator: frame.locator(`text=${quotedText}`).first()
-      });
-    }
-  }
-
   for (const candidate of candidates) {
     try {
       await candidate.locator.waitFor({ state: "visible", timeout: stepTimeoutMs });
       await candidate.locator.scrollIntoViewIfNeeded({ timeout: Math.min(stepTimeoutMs, 5000) }).catch(() => {});
+      await candidate.locator.click({ timeout: stepTimeoutMs, trial: true }).catch(() => {});
       await candidate.locator.click({ timeout: stepTimeoutMs });
       return createEnvelope({
         url: page.url(),
@@ -528,24 +689,26 @@ export async function browserSnapshot(args = {}, executionContext = {}) {
 export async function browserScreenshot(args = {}, executionContext = {}) {
   const fullPage = Boolean(args.fullPage ?? true);
   const { page } = await getCurrentPage(executionContext);
-  const screenshot = await page.screenshot({
+  const filePath = await resolveScreenshotPath(args, executionContext);
+  await page.screenshot({
+    path: filePath,
     fullPage,
     type: "png"
   });
-  const attachment = buildImageAttachmentFromBuffer(screenshot, "browser_screenshot.png");
+  const stat = await fs.stat(filePath);
   return createEnvelope(
     {
       url: page.url(),
       fullPage,
-      bytes: attachment.size
+      filePath,
+      bytes: Number(stat.size ?? 0)
     },
     [
       createToolResultHook({
         level: "info",
-        message: "已生成页面截图"
+        message: `已保存页面截图：${filePath}`
       })
-    ],
-    [attachment]
+    ]
   );
 }
 
@@ -588,4 +751,186 @@ export async function browserClose(_args = {}, executionContext = {}) {
       })
     ]
   );
+}
+
+export async function browserConsole(args = {}, executionContext = {}) {
+  const limit = Math.min(Math.max(Number(args.limit ?? 80) || 80, 1), MAX_DEVTOOLS_ENTRIES);
+  const clear = Boolean(args.clear ?? false);
+  const { session } = await getCurrentPage(executionContext);
+  const entries = session.consoleEntries.slice(-limit);
+  const pageErrors = session.pageErrors.slice(-limit);
+
+  if (clear) {
+    session.consoleEntries.length = 0;
+    session.pageErrors.length = 0;
+  }
+
+  return createEnvelope({
+    entries,
+    pageErrors,
+    count: entries.length,
+    pageErrorCount: pageErrors.length,
+    cleared: clear
+  });
+}
+
+export async function browserNetwork(args = {}, executionContext = {}) {
+  const limit = Math.min(Math.max(Number(args.limit ?? 80) || 80, 1), MAX_DEVTOOLS_ENTRIES);
+  const clear = Boolean(args.clear ?? false);
+  const { session } = await getCurrentPage(executionContext);
+  const entries = session.networkEntries.slice(-limit);
+
+  if (clear) {
+    session.networkEntries.length = 0;
+  }
+
+  return createEnvelope({
+    entries,
+    count: entries.length,
+    cleared: clear
+  });
+}
+
+export async function browserStorage(args = {}, executionContext = {}) {
+  const includeCookies = Boolean(args.cookies ?? true);
+  const includeLocalStorage = Boolean(args.localStorage ?? true);
+  const includeSessionStorage = Boolean(args.sessionStorage ?? true);
+  const { session, page } = await getCurrentPage(executionContext);
+  const [cookies, storage] = await Promise.all([
+    includeCookies ? session.context.cookies().catch(() => []) : Promise.resolve([]),
+    page
+      .evaluate(
+        ({ readLocalStorage, readSessionStorage }) => {
+          function readStorage(storage) {
+            const result = {};
+            for (let index = 0; index < storage.length; index += 1) {
+              const key = storage.key(index);
+              if (key) {
+                result[key] = storage.getItem(key);
+              }
+            }
+            return result;
+          }
+
+          return {
+            localStorage: readLocalStorage ? readStorage(window.localStorage) : {},
+            sessionStorage: readSessionStorage ? readStorage(window.sessionStorage) : {}
+          };
+        },
+        {
+          readLocalStorage: includeLocalStorage,
+          readSessionStorage: includeSessionStorage
+        }
+      )
+      .catch((error) => ({
+        localStorage: {},
+        sessionStorage: {},
+        error: String(error?.message ?? error)
+      }))
+  ]);
+
+  return createEnvelope({
+    url: page.url(),
+    cookies,
+    localStorage: storage.localStorage ?? {},
+    sessionStorage: storage.sessionStorage ?? {},
+    error: storage.error ?? ""
+  });
+}
+
+export async function browserStorageClear(args = {}, executionContext = {}) {
+  const clearCookies = Boolean(args.cookies ?? false);
+  const clearLocalStorage = Boolean(args.localStorage ?? true);
+  const clearSessionStorage = Boolean(args.sessionStorage ?? true);
+  const { session, page } = await getCurrentPage(executionContext);
+
+  if (clearCookies) {
+    await session.context.clearCookies();
+  }
+
+  await page.evaluate(
+    ({ shouldClearLocalStorage, shouldClearSessionStorage }) => {
+      if (shouldClearLocalStorage) {
+        window.localStorage.clear();
+      }
+      if (shouldClearSessionStorage) {
+        window.sessionStorage.clear();
+      }
+    },
+    {
+      shouldClearLocalStorage: clearLocalStorage,
+      shouldClearSessionStorage: clearSessionStorage
+    }
+  );
+
+  return createEnvelope({
+    url: page.url(),
+    cleared: {
+      cookies: clearCookies,
+      localStorage: clearLocalStorage,
+      sessionStorage: clearSessionStorage
+    }
+  });
+}
+
+function normalizeCommandSteps(args = {}) {
+  const steps = Array.isArray(args.steps) ? args.steps : [];
+  if (steps.length === 0) {
+    throw new Error("steps is required");
+  }
+  if (steps.length > MAX_COMMAND_STEPS) {
+    throw new Error(`too many steps; max ${MAX_COMMAND_STEPS}`);
+  }
+  return steps;
+}
+
+export async function browserCommand(args = {}, executionContext = {}) {
+  const steps = normalizeCommandSteps(args);
+  const results = [];
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index] ?? {};
+    const action = String(step.action ?? "").trim();
+    const stepArgs = step.args && typeof step.args === "object" && !Array.isArray(step.args)
+      ? step.args
+      : {};
+
+    if (!action) {
+      throw new Error(`step ${index + 1} action is required`);
+    }
+
+    let resultEnvelope;
+    if (action === "navigate") {
+      resultEnvelope = await browserNavigate(stepArgs, executionContext);
+    } else if (action === "click") {
+      resultEnvelope = await browserClick(stepArgs, executionContext);
+    } else if (action === "type") {
+      resultEnvelope = await browserType(stepArgs, executionContext);
+    } else if (action === "scroll") {
+      resultEnvelope = await browserScroll(stepArgs, executionContext);
+    } else if (action === "wait") {
+      resultEnvelope = await browserWait(stepArgs, executionContext);
+    } else if (action === "console") {
+      resultEnvelope = await browserConsole(stepArgs, executionContext);
+    } else if (action === "network") {
+      resultEnvelope = await browserNetwork(stepArgs, executionContext);
+    } else if (action === "storage") {
+      resultEnvelope = await browserStorage(stepArgs, executionContext);
+    } else if (action === "storage_clear") {
+      resultEnvelope = await browserStorageClear(stepArgs, executionContext);
+    } else {
+      throw new Error(`unsupported browser command action: ${action}`);
+    }
+
+    results.push({
+      index: index + 1,
+      action,
+      result: resultEnvelope?.result ?? resultEnvelope
+    });
+  }
+
+  return createEnvelope({
+    steps: results,
+    count: results.length
+  });
 }

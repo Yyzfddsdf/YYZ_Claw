@@ -11,7 +11,8 @@ export default {
       },
       skillName: {
         type: "string",
-        description: "Skill name, skillKey, relative path, or directory basename."
+        description:
+          "Skill identifier. Prefer the exact skillKey shown in the skills prompt, such as global:session-memory or project:my-skill. Bare skill names are accepted only as a fallback and may be ambiguous."
       },
       filePath: {
         type: "string",
@@ -41,10 +42,6 @@ export default {
       throw new Error(`skill not found: ${String(args.skillName ?? "").trim()}`);
     }
 
-    const bundleFiles = await skillCatalog.listBundleFiles(args.skillName, {
-      workspacePath
-    });
-
     return {
       skill: {
         name: result.skill.name,
@@ -57,19 +54,10 @@ export default {
         description: result.skill.description,
         version: result.skill.version,
         author: result.skill.author,
-        license: result.skill.license,
-        platforms: result.skill.platforms,
-        prerequisites: result.skill.prerequisites,
-        requiredEnvironmentVariables: result.skill.requiredEnvironmentVariables,
-        relatedSkills: result.skill.hermes.relatedSkills,
-        requiresTools: result.skill.hermes.requiresTools,
-        requiresToolsets: result.skill.hermes.requiresToolsets,
-        fallbackForTools: result.skill.hermes.fallbackForTools,
-        fallbackForToolsets: result.skill.hermes.fallbackForToolsets
+        license: result.skill.license
       },
       filePath: result.filePath,
-      content: result.content,
-      bundleFiles
+      content: result.content
     };
   }
 };

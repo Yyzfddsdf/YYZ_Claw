@@ -57,6 +57,9 @@ function normalizeSkillCatalog(skills) {
       name: String(item?.name ?? ""),
       displayName: String(item?.displayName ?? item?.name ?? ""),
       shortDescription: String(item?.shortDescription ?? item?.description ?? ""),
+      iconSmall: String(item?.iconSmall ?? ""),
+      iconLarge: String(item?.iconLarge ?? ""),
+      brandColor: String(item?.brandColor ?? ""),
       description: String(item?.description ?? ""),
       relativePath: String(item?.relativePath ?? ""),
       isSystem: Boolean(item?.isSystem)

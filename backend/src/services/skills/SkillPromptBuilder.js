@@ -1,20 +1,16 @@
 function toSkillLines(skill) {
-  const labelParts = [skill.name];
-  const scope = String(skill.scope ?? "").trim();
+  const skillKey = String(skill.skillKey ?? "").trim();
+  const labelParts = [skillKey || skill.name];
   const category = String(skill.category ?? "").trim();
   const description = String(skill.description ?? "").trim();
   const defaultPrompt = String(skill.defaultPrompt ?? "").trim();
   const allowImplicitInvocation = skill.allowImplicitInvocation === true;
 
-  if (scope) {
-    labelParts.push(`<${scope}>`);
-  }
-
   if (category) {
     labelParts.push(`[${category}]`);
   }
 
-  const lines = [`- ${labelParts.join(" ")}${description ? ` - ${description}` : ""}`];
+  const lines = [`- ${labelParts.join(" ")} (name: ${skill.name})${description ? ` - ${description}` : ""}`];
   if (allowImplicitInvocation && defaultPrompt) {
     lines.push(`  default prompt: ${defaultPrompt}`);
   }
@@ -67,6 +63,7 @@ export class SkillPromptBuilder {
       "你正在使用 skills 协议。skills 是可按需加载的知识包，不是工具本体。",
       "只使用当前会话已启用的 skills；未启用的 skills 不可默认可见。",
       "需要查看某个已启用 skill 的完整内容时，直接调用 skill_view。",
+      "调用 skill_view 时优先使用列表中的 skillKey（例如 global:session-memory），不要优先使用裸 name；裸 name 只作为兼容兜底。",
       "<skills>",
       ...sections,
       "</skills>",

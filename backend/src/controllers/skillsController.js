@@ -76,34 +76,62 @@ export function createSkillsController({ skillCatalog, skillValidator }) {
         throw notFoundError;
       }
 
-      const bundleFiles = await skillCatalog.listBundleFiles(skillName, { workspacePath });
-
       res.json({
         skill: {
           name: result.skill.name,
           displayName: result.skill.displayName,
           shortDescription: result.skill.shortDescription,
           defaultPrompt: result.skill.defaultPrompt,
+          iconSmall: result.skill.iconSmall,
+          iconLarge: result.skill.iconLarge,
+          brandColor: result.skill.brandColor,
           category: result.skill.category,
           relativePath: result.skill.relativePath,
           isSystem: result.skill.isSystem,
           description: result.skill.description,
           version: result.skill.version,
           author: result.skill.author,
-          license: result.skill.license,
-          platforms: result.skill.platforms,
-          prerequisites: result.skill.prerequisites,
-          requiredEnvironmentVariables: result.skill.requiredEnvironmentVariables,
-          relatedSkills: result.skill.hermes.relatedSkills,
-          requiresTools: result.skill.hermes.requiresTools,
-          requiresToolsets: result.skill.hermes.requiresToolsets,
-          fallbackForTools: result.skill.hermes.fallbackForTools,
-          fallbackForToolsets: result.skill.hermes.fallbackForToolsets
+          license: result.skill.license
         },
         filePath: result.filePath,
-        content: result.content,
-        bundleFiles
+        content: result.content
       });
+    },
+
+    getSkillAsset: async (req, res) => {
+      const skillName = String(req.params.skillName ?? "").trim();
+      const filePath = String(req.query?.filePath ?? "").trim();
+      const workspacePath = String(
+        req.query?.workspacePath ??
+          req.query?.workplacePath ??
+          req.query?.workingDirectory ??
+          ""
+      ).trim();
+
+      if (!skillName) {
+        throw createValidationError("skillName is required");
+      }
+
+      if (!filePath) {
+        throw createValidationError("filePath is required");
+      }
+
+      if (!skillCatalog || typeof skillCatalog.getSkillAsset !== "function") {
+        throw createValidationError("skill catalog is not available");
+      }
+
+      const result = await skillCatalog.getSkillAsset(skillName, filePath, {
+        workspacePath
+      });
+      if (!result) {
+        const notFoundError = createValidationError("skill not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.setHeader("Content-Type", result.mimeType);
+      res.setHeader("Cache-Control", "public, max-age=300");
+      res.send(result.content);
     },
 
     validateSkillByName: async (req, res) => {

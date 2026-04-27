@@ -36,6 +36,12 @@ function safeRelativePath(rootDir, fullPath) {
   return path.relative(rootDir, fullPath).replace(/\\/g, "/");
 }
 
+function isPathInside(rootDir, candidatePath) {
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedCandidate = path.resolve(candidatePath);
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
 function normalizeCatalogKey(scope, relativePath) {
   return normalizeName(`${scope}:${String(relativePath ?? "").trim()}`);
 }
@@ -164,7 +170,9 @@ export class SkillCatalog {
 
       for (const skillRootDir of skillRoots) {
         const skillFilePath = path.join(skillRootDir, "SKILL.md");
+        const agentFilePath = path.join(skillRootDir, "agents", "openai.yaml");
         const stats = await readFileStats(skillFilePath);
+        const agentStats = (await fileExists(agentFilePath)) ? await readFileStats(agentFilePath) : null;
 
         fingerprint.push({
           scope: rootEntry.scope,
@@ -172,7 +180,10 @@ export class SkillCatalog {
           relativePath: safeRelativePath(rootEntry.rootDir, skillRootDir),
           skillFilePath: safeRelativePath(rootEntry.rootDir, skillFilePath),
           size: stats.size,
-          mtimeMs: stats.mtimeMs
+          mtimeMs: stats.mtimeMs,
+          agentFilePath: agentStats ? safeRelativePath(rootEntry.rootDir, agentFilePath) : "",
+          agentSize: agentStats ? agentStats.size : 0,
+          agentMtimeMs: agentStats ? agentStats.mtimeMs : 0
         });
       }
     }
@@ -308,6 +319,9 @@ export class SkillCatalog {
     const displayName = String(parsed.ui?.displayName ?? "").trim();
     const shortDescription = String(parsed.ui?.shortDescription ?? "").trim();
     const defaultPrompt = String(parsed.ui?.defaultPrompt ?? "").trim();
+    const iconSmall = String(parsed.ui?.iconSmall ?? "").trim();
+    const iconLarge = String(parsed.ui?.iconLarge ?? "").trim();
+    const brandColor = String(parsed.ui?.brandColor ?? "").trim();
     const allowImplicitInvocation = parsed.ui?.allowImplicitInvocation !== false;
     const skillKey = `${scope}:${relativePath}`;
 
@@ -321,6 +335,9 @@ export class SkillCatalog {
       displayName: displayName || name,
       shortDescription: shortDescription || description,
       defaultPrompt,
+      iconSmall,
+      iconLarge,
+      brandColor,
       allowImplicitInvocation,
       description,
       version,
@@ -506,19 +523,14 @@ export class SkillCatalog {
         displayName: skill.displayName,
         shortDescription: skill.shortDescription,
         defaultPrompt: skill.defaultPrompt,
+        iconSmall: skill.iconSmall,
+        iconLarge: skill.iconLarge,
+        brandColor: skill.brandColor,
         allowImplicitInvocation: skill.allowImplicitInvocation !== false,
         description: skill.description,
         version: skill.version,
         author: skill.author,
         license: skill.license,
-        platforms: [...skill.platforms],
-        requiredEnvironmentVariables: [...skill.requiredEnvironmentVariables],
-        prerequisites: [...skill.prerequisites],
-        relatedSkills: [...skill.hermes.relatedSkills],
-        requiresTools: [...skill.hermes.requiresTools],
-        requiresToolsets: [...skill.hermes.requiresToolsets],
-        fallbackForTools: [...skill.hermes.fallbackForTools],
-        fallbackForToolsets: [...skill.hermes.fallbackForToolsets],
         category: skill.category,
         relativePath: skill.relativePath,
         isSystem: skill.isSystem,
@@ -586,6 +598,42 @@ export class SkillCatalog {
       skill,
       filePath: safeRelativePath(skill.rootDir, resolvedPath),
       content
+    };
+  }
+
+  async getSkillAsset(identifier, filePath = "", options = {}) {
+    const skill = await this.findSkill(identifier, options);
+    if (!skill) {
+      return null;
+    }
+
+    const normalizedFilePath = String(filePath ?? "").trim();
+    if (!normalizedFilePath) {
+      throw new Error("filePath is required");
+    }
+
+    const extension = path.extname(normalizedFilePath).toLowerCase();
+    const mimeType =
+      extension === ".svg"
+        ? "image/svg+xml; charset=utf-8"
+        : extension === ".png"
+          ? "image/png"
+          : "";
+    if (!mimeType) {
+      throw new Error("only svg and png skill assets are allowed");
+    }
+
+    const resolvedPath = path.resolve(skill.rootDir, normalizedFilePath);
+    if (!isPathInside(skill.rootDir, resolvedPath)) {
+      throw new Error("filePath escapes skill root");
+    }
+
+    const content = await fs.readFile(resolvedPath);
+    return {
+      skill,
+      filePath: safeRelativePath(skill.rootDir, resolvedPath),
+      content,
+      mimeType
     };
   }
 

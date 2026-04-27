@@ -61,11 +61,14 @@ skill-name/
 
 ### `agents/openai.yaml`
 
-- Use this for optional UI-facing metadata and invocation hints.
+- Use this for optional UI-facing metadata, brand presentation, and invocation hints.
 - If it exists, use it.
 - If it is missing, fall back to `SKILL.md` frontmatter and folder defaults.
 - Do not make the skill depend on this file.
 - The bundled generator is `scripts/generate_openai_yaml.py`.
+- `icon_small` and `icon_large` are not auto-discovered. They must be explicitly specified in `openai.yaml`.
+- Recommended icon paths are `assets/icon-small.svg` and `assets/icon-large.svg`; `.svg` and `.png` are both supported.
+- `brand_color` is a UI accent color for skill cards/details. It is not model behavior and should not be used as an instruction.
 
 Minimal template:
 
@@ -74,11 +77,24 @@ interface:
   display_name: "Your Skill Name"
   short_description: "One-line summary of what this skill does"
   default_prompt: "Use $your-skill-name to complete this task."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#2563eb"
 policy:
   allow_implicit_invocation: true
 ```
 
 ### Bundled Resources
+
+Bundled resources are lazy-loaded. Do not rely on directory discovery or hidden bundle file lists.
+When adding any important bundled file, `SKILL.md` must mention it by relative path and explain
+when to use it.
+
+Examples:
+
+- `references/schema.md`: read when validating the config format.
+- `scripts/quick_validate.py`: run after editing the skill.
+- `assets/template.docx`: copy when generating the deliverable.
 
 #### `scripts/`
 
@@ -98,6 +114,8 @@ optional in the skill contract.
 - Expected default output is `<home>/.yyz/skills/<skill-name>` with no extra middle folder.
 - Optional project scope is workplace-level: `--path <workplace>/.yyz/skills`.
 - Expected workplace output is `<workplace>/.yyz/skills/<skill-name>`.
+- System skills live under `_system`: `<home>/.yyz/skills/_system/<skill-name>` or `<workplace>/.yyz/skills/_system/<skill-name>`.
+- Only use `_system/` for built-in or platform-level skills. Do not place ordinary user/project skills under `_system/`.
 - Category nesting is optional (for example `<home>/.yyz/skills/user` or `<workplace>/.yyz/skills/user`).
 - Do not add folders like `user/` unless category nesting is intentionally required.
 
@@ -108,7 +126,11 @@ describes the UI metadata format.
 
 #### `assets/`
 
-Use assets for files that the skill may copy, render, or emit in final output.
+Use assets for files that the skill may copy, render, or emit in final output. For UI icons, prefer:
+
+- `assets/icon-small.svg` or `assets/icon-small.png` for skill lists.
+- `assets/icon-large.svg` or `assets/icon-large.png` for detail views.
+- Always reference these icons explicitly from `agents/openai.yaml`; there is no implicit default path.
 
 ## What Not To Include
 

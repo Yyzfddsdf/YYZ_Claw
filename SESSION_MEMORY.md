@@ -1,46 +1,20 @@
 # SESSION MEMORY
 
 ## 上一步实际完成了什么
-- 已按 1-7 收敛方案实现第一版：调度器消息收纳层、运行态控制台、轻量隐藏上下文解释器、工具参数预检器、中途纠偏后端插入、执行尸检、审批恢复时间线。
-- 后端新增 `GET /api/chat/histories/:conversationId/runtime` 和 `POST /api/chat/histories/:conversationId/insertions`，用于运行态只读查询和把前端排队消息转为后端 orchestrator queue 插入。
-- 已修复“插入消息刷新后看不到”：中途纠偏插入现在显式生成普通 `role: "user"` 消息进入调度队列，调度器不再给普通 user 插入消息附加 `orchestrator_message` 包装；队列只负责原子级延迟，落库后就是正常用户消息。
-- 新增 `ToolCallPreflightService`，`ChatAgent` 主链路、子智能体和 remote 独立 `ChatAgent` 都会共享预检能力；坏 JSON arguments 会被修成 `{}` 并发出 `tool_preflight` 事件。
-- 已移除无意义的 `runtime_context_trace`/隐藏上下文统计；运行态面板现在改为从 runtime API 返回的库内消息统计 `messageStats` 展示 total/user/assistant/tool/other 数量，不再展示长期为 0 的 system。
-- 前端新增运行态折叠面板、调度器消息“系统动态”收纳条、等待插入栏、审批时间线和失败摘要；等待插入会通过 `messageId/queueId/clientInsertionId` 在 append event 或 history snapshot 出现后移除。
-- 已验证 `npm run build:frontend` 通过，后端 ESM import 校验通过，`ToolCallPreflightService` 坏 JSON 最小校验通过。
-- 已修复运行态插入粒度：foreground run 内部现在在 `assistant_content_end` / `assistant_empty_end` / `tool_results_end` 检查点强制 flush scheduler queue，插入消息会立即 append 落库并进入下一次模型请求，而不是等整轮会话结束。
-- 已补齐非活跃态插入：无 active run 时插入会立即 append 落库并启动后台 run；`waiting_approval` 时插入会立即 append 落库但不会绕过审批启动新 run。
-- 已修复前台 SSE 真实会话不插入的问题：`chatController` 前台 normal run / approval resume run 现在都会给 `executionContext` 注入 `flushQueuedInsertions`，checkpoint flush 会同步落库、发 `conversation_messages_appended` SSE，并写入 recorder。
-- 已修复前台 checkpoint 插入刷新后顺序跑到前面的问题：flush 前会先把 recorder 当前 assistant/tool 快照 `appendMessages` 到历史，再 append 插入消息，确保 SQLite `sort_index` 顺序稳定。
-- 已修正运行态 queue 统计口径：`GET /runtime` 现在只返回/统计 `status !== "consumed"` 的队列项，已消费插入不会继续让 `queueSize` 非 0。
-- 已进一步收紧 scheduler 活跃队列语义：`flushReadyInsertions` 消费后会从内存 `queueByAgent` 移除 consumed 项；持久化 SQLite 仍保留 consumed 状态用于审计，session restore 只加载未 consumed 队列。
-- 已按用户要求彻底移除 `tool_preflight` 运行时事件：后端工具参数预检仍会静默修复坏 arguments，但不再发 SSE，前端也不再处理该事件。
-- 已用内联测试验证：assistant 内容结束后插入会触发下一次模型请求；tool 场景下顺序稳定为 assistant tool_call -> 完整 tool result -> user 插入 -> 下一次模型请求。
-- 已将自动摘要记忆从 `.yyz/memory_summary.json` 改为 Markdown 存储：`.yyz/memory/global.md` 保存全局记忆，`.yyz/memory/workspaces/<workspace>-<hash>.md` 保存每个工作区记忆；运行时仍自动注入全局 + 当前工作区两层 Markdown 记忆。
-- `MemorySummaryService` 保留前置 `submit_memory_evidence` 概要工具不动，后续全局/工作区两个写入阶段改为直接生成完整 Markdown 文档，不再用 `submit_global_memory` / `submit_workspace_memory` 的 JSON function schema。
-- 已做旧 `.yyz/memory_summary.json` 到 Markdown 的一次性迁移兼容；`memory.sqlite` 长期图谱记忆、`memory_*` 工具和前端记忆面板没有纳入本次改动。
-- 已修复压缩期间插入消息的后端漏洞：`chatController` 新增压缩活跃态判断，`manual_compression` run 或最近 run event 为 `compression_started` 且未 `compression_completed` 时，普通新消息和中途插入消息都会直接 409，不再进入 scheduler queue。
-- 已调整 workspace Markdown 记忆写入提示词：鼓励 `Workspace Info`、`Architecture & Surfaces`、`Invariants & Stable Rules`、`Architectural Decisions`、`Handoff Context` 等软结构；要求 Handoff 写成长期可接手方向，易变状态加 `as last observed/currently observed`，避免一次性 TODO 和临时状态污染。
-- 已在前端历史会话列表增加运行中旋转圈：主会话 `agentBusy` 显示“运行中”，子智能体会话 `agentBusy` 显示“运行中”，父会话在存在运行中子智能体时显示“子运行中”。
-- 已实现第一版 AI 互博功能：完全隔离现有 chat/orchestrator/subagent/queue/memory，新增独立 `/api/debates` 后端模块、独立 `History/ai_debates.sqlite` 落库、前端 `AI 互博` 面板。
-- AI 互博已改为后台运行：`POST /api/debates` 创建 running 记录后立即返回，后端后台逐轮执行并在每个完整 turn 后更新 `History/ai_debates.sqlite`；前端轮询展示实时进度，不做 token/SSE 流式。
-- AI 互博最大轮数已提高到 20；已从“无状态接力”改成 A/B 两个独立持续 messages 会话，`topic + description + 解析后的文件文本` 作为各自 system，上一个对手输出作为下一条 user 循环传入。
-- AI 互博文件入口已复用 `/api/chat/files/parse` 和 `AttachmentParserService`，前端不再 `file.text()`；数据库只保存解析后的文本 `materialsText` 和 A/B messages，不保存原始文件格式/附件对象。
-- AI 互博内置私有 `agree` tool：一方调用后，后端给被认同方追加 user“对方已认同，请给最终总结”，最终总结作为独立 final turn 渲染；完成后只支持查看/删除，不支持继续对话。
-- 已验证 AI 互博相关后端 ESM import、`npm run build:backend`、`npm run build:frontend` 通过，并用临时 SQLite 库跑过 create/update/delete 最小存储测试；临时测试库已清理。
+- 已完成一批 agent/前后端能力：运行态插入与 queue 落库修复、工具参数预检静默修复、运行态面板与消息统计收敛、Markdown 摘要记忆迁移、压缩期间禁插入、运行中会话旋转圈、AI 互博后台运行、浏览器工具收敛与 `browser_command`、skills UI 元数据与 prompt 收敛。
+- 已在共享 workplace system prompt 中加入 `你是 YYZ_CLAW，一个通用智能助手。` 和用户 home 路径；主智能体、子智能体、remote-control 都通过同一条 workplace prompt 注入。
+- 已隐藏子智能体会话里的 `Developer Prompt` 前端入口；子智能体没有主会话那种可编辑 developerPrompt，真实提示词来自 agent type definition。
+- 已确认主会话 developerPrompt 机制：只编辑不发送不会落库，编辑后发送消息会通过 `mergeConversation()` 保存到 `conversations.developer_prompt`。
+- 新增 `AGENT_IDEAS.md`，单独记录和 skills 无关的 agent 趣味化创意。
 
 ## 下一步打算做什么
-- 做一次真实服务下的手工联调：前端排队消息点“插入”后是否进入后端 queue、在 assistant/tool 检查点是否以普通 user 消息 append 到聊天流、刷新后是否仍可见、等待插入栏是否消失。
-- 真实跑一次摘要记忆刷新，确认 global/workspace Markdown 会被模型更新，且下一轮主会话 system prompt 注入内容符合预期。
-- 用真实模型跑一次后台 AI 互博：确认创建请求会立即返回、前端可轮询看到 turn 增长、文件解析文本进入 system、`agree` tool 能正常终止、最终总结由被同意方生成。
+- 如继续做趣味化 agent 功能，先看 `AGENT_IDEAS.md`。
+- 如继续做工程验证，真实服务下手工联调：中途插入刷新可见、压缩期间插入 409、AI 互博后台轮询、浏览器 command/diagnostic 工具、Markdown 摘要记忆真实写入质量。
+- 如继续修 developerPrompt，主会话可以改成编辑时 debounce 调用已有 `/chat/histories/:conversationId/developer-prompt` 接口，实现不发送也保存。
 
 ## 关键约束 / 风险
-- 代码仓库当前仍是脏工作区，存在用户此前未提交改动：`config/config.json`。
-- 本次改动跨前后端和调度器，构建通过且内联循环测试通过，但还未做浏览器 UI 截图回归，也未做真实模型运行中的纠偏插入回归。
-- 中途插入消息现在不带 `meta.kind=orchestrator_message`；前端等待插入清理主要依赖后端返回的落库 `messageId`。
-- 8 上下文预算仪表和 9 会话健康度按用户要求暂不做。
-- 新 Markdown 摘要记忆目前已通过后端 import、prompt 注入最小校验和 `npm run build:backend`；还未真实调用模型验证 Markdown 写入质量。
-- 压缩期间禁插入修复已通过 `chatController` import 和 `npm run build:backend`，但还未在真实前端压缩窗口里手工点插入验证 409 展示。
-- workspace Markdown 提示词调整已通过 `MemorySummaryService` import 和 `npm run build:backend`，还未真实调用模型观察下一次自动记忆输出。
-- 历史会话列表运行中旋转圈已通过 `npm run build:frontend`，还未做浏览器视觉回归截图。
-- AI 互博不做 token/SSE 流式展示，实时性粒度是“每个完整 turn 落库后前端轮询看到”；如果服务进程重启，内存后台任务不会自动恢复；A/B messages 可能随 20 轮增长较快，后续如要省 token 需要再做会话摘要/裁剪。
+- 仓库仍是脏工作区，存在用户自己的 `config/config.json` 和 `integrations/remote-control/config.json` 改动，不能回退。
+- `.agents/skills/...` 在 git status 中显示大量删除，当前项目本地 `.agents` 目录缺失；不要擅自恢复。
+- 之前大量跨前后端改动已通过 `npm run build:backend` / `npm run build:frontend`，但部分能力仍缺真实模型和浏览器手工回归。
+- AI 互博实时性粒度是“每个完整 turn 落库后前端轮询看到”，不是 token/SSE 流式；服务进程重启时内存后台任务不会自动恢复。
+- 浏览器 `browser_command` 是白名单组合命令，不是任意 JS 执行器；截图工具保存 PNG 文件，视觉判断仍走 `browser_vision`。

@@ -9,4 +9,4 @@ memory.sqlite
 memory.sqlite-*
 .yyz/memory/
 models/
-config/config.json
+config/

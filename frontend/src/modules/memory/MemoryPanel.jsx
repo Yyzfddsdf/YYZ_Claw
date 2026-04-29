@@ -27,6 +27,7 @@ import {
   createTopicSelection,
   getSelectionKey
 } from "./memoryShared";
+import { confirmAction } from "../../shared/feedback";
 import "./memory.css";
 
 function createPlaceholderBranch(key, label, subtitle = "") {
@@ -473,9 +474,11 @@ export function MemoryPanel({ onNavigate }) {
   }
 
   async function handleDeleteTopic(topicToDelete) {
-    const confirmed = window.confirm(
-      `确定删除主题“${topicToDelete?.name ?? ""}”吗？其下内容块和记忆节点会一起删除。`
-    );
+    const confirmed = await confirmAction({
+      title: "删除记忆主题",
+      message: `确定删除主题“${topicToDelete?.name ?? ""}”吗？其下内容块和记忆节点会一起删除。`,
+      confirmLabel: "删除"
+    });
     if (!confirmed) {
       return;
     }
@@ -551,9 +554,11 @@ export function MemoryPanel({ onNavigate }) {
   }
 
   async function handleDeleteContent(contentToDelete) {
-    const confirmed = window.confirm(
-      `确定删除内容块“${contentToDelete?.name ?? ""}”吗？其下记忆节点会一起删除。`
-    );
+    const confirmed = await confirmAction({
+      title: "删除内容块",
+      message: `确定删除内容块“${contentToDelete?.name ?? ""}”吗？其下记忆节点会一起删除。`,
+      confirmLabel: "删除"
+    });
     if (!confirmed) {
       return;
     }
@@ -633,7 +638,11 @@ export function MemoryPanel({ onNavigate }) {
   }
 
   async function handleDeleteNode(nodeToDelete) {
-    const confirmed = window.confirm(`确定删除记忆节点“${nodeToDelete?.name ?? ""}”吗？`);
+    const confirmed = await confirmAction({
+      title: "删除记忆节点",
+      message: `确定删除记忆节点“${nodeToDelete?.name ?? ""}”吗？`,
+      confirmLabel: "删除"
+    });
     if (!confirmed) {
       return;
     }

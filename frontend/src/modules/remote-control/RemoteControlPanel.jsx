@@ -9,6 +9,7 @@ import {
 import { fetchSkills, selectWorkplaceBySystemDialog } from "../../api/chatApi";
 import { fetchPersonas } from "../../api/personasApi";
 import { formatTimestamp } from "../../shared/formatTimestamp";
+import { confirmAction } from "../../shared/feedback";
 import { MarkdownMessage } from "../chat/MarkdownMessage";
 import { parseToolMessagePayload } from "../chat/toolMessageCodec";
 import "./remote-control.css";
@@ -682,7 +683,11 @@ export function RemoteControlPanel() {
       return;
     }
 
-    const confirmed = window.confirm("确认清空远程控制历史记录吗？此操作不可恢复。");
+    const confirmed = await confirmAction({
+      title: "清空远程控制历史",
+      message: "确认清空远程控制历史记录吗？此操作不可恢复。",
+      confirmLabel: "清空"
+    });
     if (!confirmed) {
       return;
     }

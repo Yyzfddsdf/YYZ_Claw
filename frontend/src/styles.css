@@ -158,6 +158,12 @@ body {
   overflow: hidden;
 }
 
+.panel-automation {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 /* SVG icon helpers */
 .icon {
   width: 1em;

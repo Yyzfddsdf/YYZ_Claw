@@ -1,10 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 
-import {
-  fetchAutomationTasks,
-  runAutomationTaskNow,
-  updateAutomationTask
-} from "./api/automationApi";
 import { fetchConfig, saveConfig } from "./api/configApi";
 import { fetchMcpConfig, saveMcpConfig } from "./api/mcpApi";
 import { AutomationPanel } from "./modules/automation/AutomationPanel";
@@ -16,6 +11,7 @@ import { MemoryPanel } from "./modules/memory/MemoryPanel";
 import { PersonaPanel } from "./modules/personas/PersonaPanel";
 import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
+import { GlobalFeedbackHost } from "./shared/GlobalFeedbackHost";
 
 function createEmptyConfig() {
   return {
@@ -59,8 +55,6 @@ export default function App() {
   const [mcpLoading, setMcpLoading] = useState(true);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [activeWorkspace, setActiveWorkspace] = useState("chat");
-  const [automationConversationId, setAutomationConversationId] = useState("");
-  const [automationTask, setAutomationTask] = useState(null);
 
   const chat = useChatSession(Number(config.maxContextWindow || 0));
 
@@ -174,73 +168,21 @@ export default function App() {
     }
   }
 
-  async function loadAutomationTaskByConversationId(conversationId) {
-    const normalizedConversationId = String(conversationId ?? "").trim();
-    if (!normalizedConversationId) {
-      setAutomationTask(null);
-      return null;
-    }
-
-    const response = await fetchAutomationTasks();
-    const list = Array.isArray(response?.tasks) ? response.tasks : [];
-    const matchedTask =
-      list.find(
-        (item) =>
-          String(item?.conversationId ?? "").trim() === normalizedConversationId
-      ) ?? null;
-    setAutomationTask(matchedTask);
-    return matchedTask;
-  }
-
   async function handleOpenAutomationConversation(history) {
     const conversationId = String(history?.id ?? "").trim();
     if (!conversationId) {
       return;
     }
-    const conversationSource = String(history?.source ?? "").trim().toLowerCase();
-    const automationRootConversationId =
-      conversationSource === "subagent"
-        ? String(history?.parentConversationId ?? "").trim() || conversationId
-        : conversationId;
 
     await chat.loadConversation(conversationId);
-    await loadAutomationTaskByConversationId(automationRootConversationId);
-    setAutomationConversationId(conversationId);
-    setActiveWorkspace("automation-chat");
-  }
-
-  async function handleAutomationScheduleToggle(nextEnabled) {
-    if (!automationTask?.id) {
-      return;
-    }
-    await updateAutomationTask(automationTask.id, {
-      enabled: Boolean(nextEnabled)
-    });
-    await loadAutomationTaskByConversationId(automationConversationId);
-  }
-
-  async function handleAutomationScheduleRunNow() {
-    if (!automationTask?.id) {
-      return;
-    }
-    await runAutomationTaskNow(automationTask.id);
-    await loadAutomationTaskByConversationId(automationConversationId);
-  }
-
-  async function handleAutomationScheduleChangeTime(nextTimeOfDay) {
-    if (!automationTask?.id) {
-      return;
-    }
-    await updateAutomationTask(automationTask.id, {
-      timeOfDay: String(nextTimeOfDay ?? "").trim()
-    });
-    await loadAutomationTaskByConversationId(automationConversationId);
+    setActiveWorkspace("chat");
   }
 
   const canChat = useMemo(() => hasRuntimeConfig(config), [config]);
 
   return (
     <div className="app-shell">
+      <GlobalFeedbackHost />
       <aside className="app-sidebar">
         <header className="app-sidebar-header">
           <h1>Agent Console</h1>
@@ -320,10 +262,8 @@ export default function App() {
           <button
             type="button"
             role="tab"
-            aria-selected={activeWorkspace === "automation" || activeWorkspace === "automation-chat"}
-            className={`nav-item ${
-              activeWorkspace === "automation" || activeWorkspace === "automation-chat" ? "active" : ""
-            }`}
+            aria-selected={activeWorkspace === "automation"}
+            className={`nav-item ${activeWorkspace === "automation" ? "active" : ""}`}
             onClick={() => setActiveWorkspace("automation")}
           >
             <svg className="icon" viewBox="0 0 24 24">
@@ -410,30 +350,6 @@ export default function App() {
           </section>
         )}
 
-        {activeWorkspace === "automation-chat" && (
-          <section className="panel panel-chat" role="tabpanel" aria-label="automation chat workspace">
-            <ChatPanel
-              chat={chat}
-              modelContextWindow={Number(config.maxContextWindow ?? 0)}
-              disabled={!canChat}
-              disabledReason="请先到配置中心保存 model / baseURL / apiKey"
-              onNavigate={(nav) => setActiveWorkspace(nav)}
-              showHistoryPane={false}
-              onBack={() => setActiveWorkspace("automation")}
-              automationSchedule={
-                automationTask
-                  ? {
-                      ...automationTask,
-                      onToggleEnabled: handleAutomationScheduleToggle,
-                      onRunNow: handleAutomationScheduleRunNow,
-                      onChangeTime: handleAutomationScheduleChangeTime
-                    }
-                  : null
-              }
-            />
-          </section>
-        )}
-
         {activeWorkspace === "remote-control" && (
           <section className="panel panel-remote-control" role="tabpanel" aria-label="remote control workspace">
             <RemoteControlPanel />
@@ -447,9 +363,7 @@ export default function App() {
                 void handleOpenAutomationConversation(history);
               }}
               activeConversationId={
-                activeWorkspace === "automation-chat"
-                  ? String(chat.activeConversationId ?? "").trim()
-                  : String(automationConversationId ?? "").trim()
+                String(chat.activeConversationId ?? "").trim()
               }
             />
           </section>

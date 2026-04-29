@@ -1,8 +1,16 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  deleteAutomationBinding,
+  fetchAutomationBindings,
+  fetchAutomationTasks,
+  updateAutomationBinding,
+  upsertAutomationBinding
+} from "../../api/automationApi";
 import { createTtsStreamUrl, parseChatFiles, transcribeAudioBytes } from "../../api/chatApi";
 import { formatTimestamp } from "../../shared/formatTimestamp";
 import { TimePickerDropdown } from "../../shared/TimePickerDropdown";
+import { notify } from "../../shared/feedback";
 import { MarkdownMessage } from "./MarkdownMessage";
 import "./chat.css";
 import { parseToolMessagePayload } from "./toolMessageCodec";
@@ -627,6 +635,11 @@ function normalizeWorkplaceGroupLabel(workplacePath) {
   return normalized || "未设置工作区";
 }
 
+function normalizeAutomationTime(value) {
+  const normalized = String(value ?? "").trim();
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(normalized) ? normalized : "09:00";
+}
+
 export function ChatPanel({
   chat,
   modelContextWindow = 0,
@@ -634,8 +647,7 @@ export function ChatPanel({
   disabledReason,
   onNavigate,
   showHistoryPane = true,
-  onBack,
-  automationSchedule = null
+  onBack
 }) {
   const [draft, setDraft] = useState("");
   const [pendingImages, setPendingImages] = useState([]);
@@ -650,6 +662,18 @@ export function ChatPanel({
   const [contextPopupOpen, setContextPopupOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
+  const [automationTemplateMenuOpen, setAutomationTemplateMenuOpen] = useState(false);
+  const [automationConfigOpen, setAutomationConfigOpen] = useState(false);
+  const [automationTemplates, setAutomationTemplates] = useState([]);
+  const [automationBindings, setAutomationBindings] = useState([]);
+  const [automationLoading, setAutomationLoading] = useState(false);
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationError, setAutomationError] = useState("");
+  const [automationMessage, setAutomationMessage] = useState("");
+  const [automationDraft, setAutomationDraft] = useState({
+    templateId: "",
+    timeOfDay: "09:00"
+  });
   const [clarifySelectedOption, setClarifySelectedOption] = useState("");
   const [clarifyAdditionalText, setClarifyAdditionalText] = useState("");
   const [viewingImage, setViewingImage] = useState(null);
@@ -680,6 +704,7 @@ export function ChatPanel({
   const contextPopupRef = useRef(null);
   const approvalMenuRef = useRef(null);
   const personaMenuRef = useRef(null);
+  const automationTemplateMenuRef = useRef(null);
 
   useEffect(() => {
     setHistoryPaneOpen(Boolean(showHistoryPane));
@@ -731,10 +756,77 @@ export function ChatPanel({
       if (personaMenuRef.current && !personaMenuRef.current.contains(event.target)) {
         setPersonaMenuOpen(false);
       }
+      if (
+        automationTemplateMenuRef.current &&
+        !automationTemplateMenuRef.current.contains(event.target)
+      ) {
+        setAutomationTemplateMenuOpen(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  async function loadAutomationState({ quiet = false } = {}) {
+    if (!quiet) {
+      setAutomationLoading(true);
+    }
+    setAutomationError("");
+    try {
+      const [taskResponse, bindingResponse] = await Promise.all([
+        fetchAutomationTasks(),
+        fetchAutomationBindings()
+      ]);
+      setAutomationTemplates(Array.isArray(taskResponse?.tasks) ? taskResponse.tasks : []);
+      setAutomationBindings(Array.isArray(bindingResponse?.bindings) ? bindingResponse.bindings : []);
+    } catch (error) {
+      setAutomationError(String(error?.message ?? "加载自动化配置失败"));
+    } finally {
+      if (!quiet) {
+        setAutomationLoading(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function run() {
+      setAutomationLoading(true);
+      setAutomationError("");
+      try {
+        const [taskResponse, bindingResponse] = await Promise.all([
+          fetchAutomationTasks(),
+          fetchAutomationBindings()
+        ]);
+        if (!mounted) {
+          return;
+        }
+        setAutomationTemplates(Array.isArray(taskResponse?.tasks) ? taskResponse.tasks : []);
+        setAutomationBindings(Array.isArray(bindingResponse?.bindings) ? bindingResponse.bindings : []);
+      } catch (error) {
+        if (mounted) {
+          setAutomationError(String(error?.message ?? "加载自动化配置失败"));
+        }
+      } finally {
+        if (mounted) {
+          setAutomationLoading(false);
+        }
+      }
+    }
+
+    run();
+    const timerId = setInterval(() => {
+      if (mounted) {
+        void loadAutomationState({ quiet: true });
+      }
+    }, 15000);
+
+    return () => {
+      mounted = false;
+      clearInterval(timerId);
     };
   }, []);
 
@@ -826,6 +918,26 @@ export function ChatPanel({
     : null;
   const isSubagentConversation = String(chat.activeConversationSource ?? "").trim() === "subagent";
   const historyConversationList = Array.isArray(chat.conversationList) ? chat.conversationList : [];
+  const automationTemplateList = Array.isArray(automationTemplates) ? automationTemplates : [];
+  const automationBindingByConversationId = useMemo(() => {
+    const result = new Map();
+    for (const binding of automationBindings) {
+      const conversationId = String(binding?.conversationId ?? "").trim();
+      if (conversationId) {
+        result.set(conversationId, binding);
+      }
+    }
+    return result;
+  }, [automationBindings]);
+  const activeAutomationBinding = automationBindingByConversationId.get(
+    String(chat.activeConversationId ?? "").trim()
+  ) ?? null;
+  const activeAutomationTemplate = automationTemplateList.find(
+    (template) => String(template?.id ?? "").trim() === String(activeAutomationBinding?.templateId ?? "").trim()
+  ) ?? null;
+  const selectedAutomationTemplate = automationTemplateList.find(
+    (template) => String(template?.id ?? "").trim() === String(automationDraft.templateId ?? "").trim()
+  ) ?? activeAutomationTemplate;
   const thinkingToggleDisabled =
     chat.isStreaming || !chat.historyLoaded || Boolean(chat.pendingApproval);
   const messageDeleteDisabled =
@@ -938,6 +1050,35 @@ export function ChatPanel({
 
     return activeConversationId;
   }, [activeHistoryConversation]);
+
+  useEffect(() => {
+    const fallbackTemplateId = String(automationTemplateList[0]?.id ?? "").trim();
+    setAutomationDraft({
+      templateId: String(activeAutomationBinding?.templateId ?? fallbackTemplateId).trim(),
+      timeOfDay: normalizeAutomationTime(activeAutomationBinding?.timeOfDay)
+    });
+    setAutomationError("");
+    setAutomationMessage("");
+  }, [
+    chat.activeConversationId,
+    activeAutomationBinding?.id,
+    activeAutomationBinding?.templateId,
+    activeAutomationBinding?.timeOfDay,
+    automationTemplateList
+  ]);
+
+  useEffect(() => {
+    if (isSubagentConversation) {
+      setAutomationConfigOpen(false);
+    }
+  }, [isSubagentConversation]);
+
+  useEffect(() => {
+    if (!automationConfigOpen) {
+      setAutomationTemplateMenuOpen(false);
+    }
+  }, [automationConfigOpen]);
+
   function resetQueueDragState() {
     setDraggedQueueMessageId("");
     setQueueDropTarget(null);
@@ -1174,15 +1315,6 @@ export function ChatPanel({
     maxContextWindow > 0 ? Math.min(1, latestTokenTotal / maxContextWindow) : 0;
   const contextWindowUsagePercent = Math.round(contextWindowUsageRatio * 100);
   const contextWindowRemainder = maxContextWindow > 0 ? maxContextWindow - latestTokenTotal : 0;
-  const automationScheduleEnabled =
-    automationSchedule && typeof automationSchedule === "object"
-      ? Boolean(automationSchedule.enabled)
-      : false;
-  const automationScheduleTime = useMemo(() => {
-    const normalized = String(automationSchedule?.timeOfDay ?? "").trim();
-    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(normalized) ? normalized : "09:00";
-  }, [automationSchedule?.timeOfDay]);
-
   function toggleToolResult(messageId) {
     setExpandedToolMap((prev) => ({
       ...prev,
@@ -1211,6 +1343,63 @@ export function ChatPanel({
       : [...current, normalizedSkillName];
 
     chat.setConversationSkills(next);
+  }
+
+  async function handleSaveAutomationBinding() {
+    const conversationId = String(chat.activeConversationId ?? "").trim();
+    const templateId = String(automationDraft.templateId ?? "").trim();
+    if (!conversationId || isSubagentConversation) {
+      return;
+    }
+    if (!templateId) {
+      setAutomationError("请先选择一个自动化任务模板");
+      return;
+    }
+
+    setAutomationSaving(true);
+    setAutomationError("");
+    setAutomationMessage("");
+    try {
+      const payload = {
+        templateId,
+        timeOfDay: normalizeAutomationTime(automationDraft.timeOfDay)
+      };
+
+      if (activeAutomationBinding?.id) {
+        await updateAutomationBinding(activeAutomationBinding.id, payload);
+        setAutomationMessage("当前会话自动化已更新");
+      } else {
+        await upsertAutomationBinding({
+          ...payload,
+          conversationId
+        });
+        setAutomationMessage("当前会话已绑定自动化");
+      }
+      await loadAutomationState({ quiet: true });
+    } catch (error) {
+      setAutomationError(String(error?.message ?? "保存自动化绑定失败"));
+    } finally {
+      setAutomationSaving(false);
+    }
+  }
+
+  async function handleDeleteAutomationBinding() {
+    if (!activeAutomationBinding?.id) {
+      return;
+    }
+
+    setAutomationSaving(true);
+    setAutomationError("");
+    setAutomationMessage("");
+    try {
+      await deleteAutomationBinding(activeAutomationBinding.id);
+      await loadAutomationState({ quiet: true });
+      setAutomationMessage("当前会话已解绑自动化");
+    } catch (error) {
+      setAutomationError(String(error?.message ?? "解绑自动化失败"));
+    } finally {
+      setAutomationSaving(false);
+    }
   }
 
   function handleDraftChange(event) {
@@ -1326,7 +1515,7 @@ export function ChatPanel({
         voiceChunksRef.current = [];
         setIsVoiceRecording(false);
         setIsVoiceTranscribing(false);
-        window.alert(error?.message || "语音转写失败");
+        notify({ tone: "error", title: "语音转写失败", message: error?.message || "语音转写失败" });
       }
       return;
     }
@@ -1341,7 +1530,7 @@ export function ChatPanel({
       typeof navigator.mediaDevices.getUserMedia !== "function" ||
       typeof MediaRecorder === "undefined"
     ) {
-      window.alert("当前浏览器不支持语音录音");
+      notify({ tone: "warning", message: "当前浏览器不支持语音录音" });
       return;
     }
 
@@ -1368,7 +1557,7 @@ export function ChatPanel({
       voiceRecorderRef.current = null;
       voiceChunksRef.current = [];
       setIsVoiceRecording(false);
-      window.alert(error?.message || "无法启动录音，请检查麦克风权限");
+      notify({ tone: "error", title: "无法启动录音", message: error?.message || "请检查麦克风权限" });
     }
   }
 
@@ -1440,7 +1629,7 @@ export function ChatPanel({
         }
         setTtsLoadingMessageId("");
         setTtsPlayingMessageId("");
-        window.alert("语音朗读失败，请稍后重试");
+        notify({ tone: "error", message: "语音朗读失败，请稍后重试" });
       };
 
       await audio.play();
@@ -1449,7 +1638,7 @@ export function ChatPanel({
         return;
       }
       stopTtsPlayback();
-      window.alert(error?.message || "语音朗读失败，请稍后重试");
+      notify({ tone: "error", message: error?.message || "语音朗读失败，请稍后重试" });
     }
   }
 
@@ -1479,7 +1668,7 @@ export function ChatPanel({
         setCopiedMessageId((prev) => (prev === normalizedMessageId ? "" : prev));
       }, 1200);
     } catch {
-      window.alert("复制失败，请重试");
+      notify({ tone: "error", message: "复制失败，请重试" });
     }
   }
 
@@ -1579,11 +1768,11 @@ export function ChatPanel({
         }
 
         if (failedCount > 0) {
-          window.alert(`${failedCount} 张图片因体积过大，未能加入本次消息`);
+          notify({ tone: "warning", message: `${failedCount} 张图片因体积过大，未能加入本次消息` });
         }
       })
       .catch(() => {
-        window.alert("图片过大，在不缩小尺寸的前提下压缩质量后仍无法上传");
+        notify({ tone: "error", message: "图片过大，在不缩小尺寸的前提下压缩质量后仍无法上传" });
       })
       .finally(() => {
         if (imageInputRef.current) {
@@ -1607,7 +1796,7 @@ export function ChatPanel({
     );
 
     if (nonImageFiles.length === 0) {
-      window.alert("请使用文件按钮选择文档类文件，图片请使用图片按钮上传。");
+      notify({ tone: "warning", message: "请使用文件按钮选择文档类文件，图片请使用图片按钮上传。" });
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -1616,7 +1805,7 @@ export function ChatPanel({
 
     const remainingSlots = Math.max(0, MAX_UPLOAD_FILE_COUNT - pendingFiles.length);
     if (remainingSlots <= 0) {
-      window.alert(`每次最多上传 ${MAX_UPLOAD_FILE_COUNT} 个文件，请先移除部分文件。`);
+      notify({ tone: "warning", message: `每次最多上传 ${MAX_UPLOAD_FILE_COUNT} 个文件，请先移除部分文件。` });
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -1639,12 +1828,12 @@ export function ChatPanel({
     }
 
     if (invalidSizeFiles.length > 0) {
-      window.alert(`${invalidSizeFiles.length} 个文件超过 20MB，已忽略。`);
+      notify({ tone: "warning", message: `${invalidSizeFiles.length} 个文件超过 20MB，已忽略。` });
     }
 
     const filesToParse = selectedNow.slice(0, remainingSlots).map((item) => item.file).filter(Boolean);
     if (selectedNow.length > filesToParse.length) {
-      window.alert(`每次最多上传 ${MAX_UPLOAD_FILE_COUNT} 个文件，已自动截断。`);
+      notify({ tone: "warning", message: `每次最多上传 ${MAX_UPLOAD_FILE_COUNT} 个文件，已自动截断。` });
     }
 
     if (filesToParse.length === 0) {
@@ -1680,7 +1869,7 @@ export function ChatPanel({
       setPendingFiles((prev) => [...prev, ...normalizedFiles].slice(0, MAX_UPLOAD_FILE_COUNT));
     } catch (error) {
       if (activeConversationIdRef.current === parsingConversationId) {
-        window.alert(error?.message || "文件解析失败");
+        notify({ tone: "error", title: "文件解析失败", message: error?.message || "文件解析失败" });
       }
     } finally {
       if (activeConversationIdRef.current === parsingConversationId) {
@@ -1801,6 +1990,7 @@ export function ChatPanel({
                 ) || busySubagents.length > 0;
               const isExpanded =
                 !hasChildren || Boolean(expandedHistoryGroupMap?.[normalizedItemId]);
+              const automationBinding = automationBindingByConversationId.get(normalizedItemId) ?? null;
 
                   return (
                     <article
@@ -1828,6 +2018,19 @@ export function ChatPanel({
                                 <span className="history-item-badge">Fork</span>
                               ) : hasChildren ? (
                                 <span className="history-item-badge">子智能体 {childItems.length}</span>
+                              ) : null}
+                              {automationBinding ? (
+                                <span
+                                  className={`history-automation-badge ${automationBinding.enabled ? "" : "is-paused"}`}
+                                  title={`自动化：${automationBinding.templateName || automationBinding.templateId || "未命名"}`}
+                                >
+                                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l3 2" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 5l-2 2M19 5l2 2" />
+                                    <circle cx="12" cy="13" r="7" />
+                                  </svg>
+                                  {automationBinding.enabled ? "自动化" : "暂停"}
+                                </span>
                               ) : null}
                               {(isParentRunning || hasRunningChild) && (
                                 <span
@@ -2015,6 +2218,23 @@ export function ChatPanel({
                     {activePersona?.name || "选择身份"}
                   </button>
                 )}
+                {!isSubagentConversation && (
+                  <button
+                    type="button"
+                    className={`mode-pill automation-toggle ${automationConfigOpen ? "active" : ""} ${
+                      activeAutomationBinding ? "is-bound" : ""
+                    }`}
+                    onClick={() => setAutomationConfigOpen((prev) => !prev)}
+                    disabled={!chat.historyLoaded || !chat.activeConversationId}
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l3 2" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 5l-2 2M19 5l2 2" />
+                      <circle cx="12" cy="13" r="7" />
+                    </svg>
+                    {activeAutomationBinding ? "自动化已绑" : "自动化"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="mode-pill skills-toggle"
@@ -2153,36 +2373,136 @@ export function ChatPanel({
             </section>
           )}
 
-          {automationSchedule ? (
-            <section className="chat-automation-schedule">
-              <div className="chat-automation-schedule-meta">
-                <strong>{automationSchedule.name || "自动化调度"}</strong>
-                <span>
-                  {automationScheduleEnabled ? "启用中" : "已停用"}
-                  {automationSchedule?.nextRunAt ? ` · 下次 ${formatTimestamp(automationSchedule.nextRunAt)}` : ""}
+          {automationConfigOpen && !isSubagentConversation ? (
+            <section className="chat-automation-panel">
+              <div className="chat-automation-panel-head">
+                <div>
+                  <h3>会话自动化</h3>
+                  <p>给当前普通会话绑定一个通用任务模板；到点后作为正常 user 消息进入本会话。</p>
+                </div>
+                <span className={`chat-automation-state ${activeAutomationBinding?.enabled ? "is-enabled" : ""}`}>
+                  {activeAutomationBinding
+                    ? activeAutomationBinding.enabled
+                      ? "启用中"
+                      : "已暂停"
+                    : "未绑定"}
                 </span>
               </div>
-              <div className="chat-automation-schedule-controls">
-                <div className="chat-automation-time-picker">
-                  <TimePickerDropdown
-                    value={automationScheduleTime}
-                    onChange={(nextValue) => automationSchedule.onChangeTime?.(nextValue)}
-                    ariaLabel="自动化执行时间"
-                  />
+
+              {automationLoading ? <p className="chat-automation-note">自动化配置加载中...</p> : null}
+              {automationError ? <p className="chat-automation-error">{automationError}</p> : null}
+              {automationMessage ? <p className="chat-automation-message">{automationMessage}</p> : null}
+
+              <div className="chat-automation-grid">
+                <div
+                  className="chat-automation-template-field"
+                  ref={automationTemplateMenuRef}
+                >
+                  <span className="chat-automation-field-label">任务模板</span>
+                  <button
+                    type="button"
+                    className={`chat-automation-template-trigger ${automationTemplateMenuOpen ? "open" : ""}`}
+                    onClick={() => setAutomationTemplateMenuOpen((prev) => !prev)}
+                    disabled={automationSaving || automationTemplateList.length === 0}
+                    aria-haspopup="listbox"
+                    aria-expanded={automationTemplateMenuOpen}
+                  >
+                    <span className="chat-automation-template-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 6h13M8 12h13M8 18h13" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h.01M3 12h.01M3 18h.01" />
+                      </svg>
+                    </span>
+                    <span className="chat-automation-template-copy">
+                      <strong>{selectedAutomationTemplate?.name || "选择任务模板"}</strong>
+                      <small>
+                        {selectedAutomationTemplate?.prompt || "暂无模板，先去自动化页面创建"}
+                      </small>
+                    </span>
+                    <span className="chat-automation-template-arrow" aria-hidden="true">v</span>
+                  </button>
+
+                  {automationTemplateMenuOpen ? (
+                    <div className="chat-automation-template-menu" role="listbox">
+                      {automationTemplateList.map((template) => {
+                        const selected =
+                          String(template?.id ?? "").trim() === String(automationDraft.templateId ?? "").trim();
+                        return (
+                          <button
+                            type="button"
+                            key={template.id}
+                            className={`chat-automation-template-option ${selected ? "active" : ""}`}
+                            onClick={() => {
+                              setAutomationTemplateMenuOpen(false);
+                              setAutomationDraft((prev) => ({
+                                ...prev,
+                                templateId: template.id
+                              }));
+                            }}
+                            role="option"
+                            aria-selected={selected}
+                          >
+                            <span className="chat-automation-template-option-dot" aria-hidden="true" />
+                            <span>
+                              <strong>{template.name}</strong>
+                              <small>{template.prompt}</small>
+                            </span>
+                            {selected ? <em>已选</em> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
+
+                <label>
+                  执行时间
+                  <span className="chat-automation-time-picker">
+                    <TimePickerDropdown
+                      value={automationDraft.timeOfDay}
+                      onChange={(nextValue) =>
+                        setAutomationDraft((prev) => ({
+                          ...prev,
+                          timeOfDay: normalizeAutomationTime(nextValue)
+                        }))
+                      }
+                      ariaLabel="当前会话自动化执行时间"
+                    />
+                  </span>
+                </label>
+
+              </div>
+
+              <div className="chat-automation-template-preview">
+                <strong>{selectedAutomationTemplate?.name || "模板预览"}</strong>
+                <p>{selectedAutomationTemplate?.prompt || "选择模板后，这里会显示到点发送的 user 消息。"}</p>
+              </div>
+
+              <div className="chat-automation-actions">
                 <button
                   type="button"
-                  className="mode-pill"
-                  onClick={() => automationSchedule.onToggleEnabled?.(!automationScheduleEnabled)}
+                  className="mode-pill automation-save"
+                  onClick={() => void handleSaveAutomationBinding()}
+                  disabled={automationSaving || automationTemplateList.length === 0 || !chat.activeConversationId}
                 >
-                  {automationScheduleEnabled ? "停用调度" : "启用调度"}
+                  {automationSaving ? "保存中..." : activeAutomationBinding ? "更新绑定" : "绑定到当前会话"}
                 </button>
+                {activeAutomationBinding ? (
+                  <button
+                    type="button"
+                    className="mode-pill automation-unbind"
+                    onClick={() => void handleDeleteAutomationBinding()}
+                    disabled={automationSaving}
+                  >
+                    解绑
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="mode-pill"
-                  onClick={() => automationSchedule.onRunNow?.()}
+                  onClick={() => onNavigate?.("automation")}
                 >
-                  立即执行
+                  管理模板
                 </button>
               </div>
             </section>

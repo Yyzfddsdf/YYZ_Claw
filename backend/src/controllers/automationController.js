@@ -1,4 +1,6 @@
 import {
+  automationBindingPayloadSchema,
+  automationBindingUpdateSchema,
   automationTaskPayloadSchema,
   automationTaskUpdateSchema
 } from "../schemas/automationSchema.js";
@@ -26,34 +28,16 @@ function mapHistorySummary(history) {
   };
 }
 
-function collectDescendantConversations(historyStore, rootConversationId) {
-  const rootId = String(rootConversationId ?? "").trim();
-  if (!rootId) {
-    return [];
+function mapBinding(binding, historyStore) {
+  if (!binding) {
+    return null;
   }
 
-  const queue = [rootId];
-  const visited = new Set();
-  const collected = [];
-
-  while (queue.length > 0) {
-    const currentId = String(queue.shift() ?? "").trim();
-    if (!currentId || visited.has(currentId)) {
-      continue;
-    }
-    visited.add(currentId);
-    collected.push(currentId);
-
-    const children = historyStore?.listChildConversations?.(currentId) ?? [];
-    for (const child of children) {
-      const childId = String(child?.id ?? "").trim();
-      if (childId && !visited.has(childId)) {
-        queue.push(childId);
-      }
-    }
-  }
-
-  return collected;
+  const conversation = historyStore?.getConversation?.(binding.conversationId) ?? null;
+  return {
+    ...binding,
+    conversation: conversation ? mapHistorySummary(conversation) : null
+  };
 }
 
 export function createAutomationController({
@@ -113,95 +97,91 @@ export function createAutomationController({
       res.json({ success: true, taskId });
     },
 
-    runTaskNowById: async (req, res) => {
-      const taskId = String(req.params.taskId ?? "").trim();
-      if (!taskId) {
-        throw createValidationError("taskId is required");
-      }
-
-      const task = automationSchedulerService.runTaskNow(taskId);
-      if (!task) {
-        const notFoundError = createValidationError("automation task not found");
-        notFoundError.statusCode = 404;
-        throw notFoundError;
-      }
-
-      res.status(202).json({ accepted: true, task });
-    },
-
-    listAutomationHistories: async (_req, res) => {
-      const rootHistories = historyStore
-        .listConversations({
-          includeSources: ["automation"],
-          includeChildren: false
-        })
-        .map((history) => mapHistorySummary(history));
-
-      const historyMap = new Map(rootHistories.map((item) => [item.id, item]));
-      for (const rootHistory of rootHistories) {
-        const descendants = collectDescendantConversations(historyStore, rootHistory.id);
-        for (const conversationId of descendants) {
-          if (historyMap.has(conversationId)) {
-            continue;
-          }
-          const conversation = historyStore.getConversation(conversationId);
-          if (!conversation) {
-            continue;
-          }
-          historyMap.set(conversationId, mapHistorySummary(conversation));
-        }
-      }
-
-      const histories = Array.from(historyMap.values()).sort(
-        (left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0)
-      );
-
-      res.json({ histories });
-    },
-
-    deleteAutomationHistoryById: async (req, res) => {
-      const conversationId = String(req.params.conversationId ?? "").trim();
-      if (!conversationId) {
-        throw createValidationError("conversationId is required");
-      }
-
-      const conversation = historyStore.getConversation(conversationId);
-      if (!conversation) {
-        const notFoundError = createValidationError("automation history not found");
-        notFoundError.statusCode = 404;
-        throw notFoundError;
-      }
-
-      const rootConversationId =
-        String(conversation.source ?? "").trim() === "subagent"
-          ? String(conversation.parentConversationId ?? "").trim() || conversationId
-          : conversationId;
-      const lineage = collectDescendantConversations(historyStore, rootConversationId);
-      const orderedForDelete = lineage
-        .map((item) => String(item ?? "").trim())
-        .filter(Boolean)
-        .reverse();
-
-      for (const id of orderedForDelete) {
-        historyStore.deleteConversation(id);
-      }
-
-      const tasks = automationSchedulerService?.listTasks?.() ?? [];
-      for (const task of tasks) {
-        const taskConversationId = String(task?.conversationId ?? "").trim();
-        if (taskConversationId && lineage.includes(taskConversationId)) {
-          automationSchedulerService?.updateTask?.(task.id, {
-            conversationId: "",
-            updatedAt: Date.now()
-          });
-        }
-      }
-
+    listBindings: async (_req, res) => {
+      const bindings = automationSchedulerService?.listBindings?.() ?? [];
       res.json({
-        success: true,
-        deletedConversationIds: orderedForDelete,
-        rootConversationId
+        bindings: bindings.map((binding) => mapBinding(binding, historyStore)).filter(Boolean)
       });
+    },
+
+    upsertBinding: async (req, res) => {
+      const validation = automationBindingPayloadSchema.safeParse(req.body ?? {});
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const conversation = historyStore.getConversation(validation.data.conversationId);
+      if (!conversation) {
+        const notFoundError = createValidationError("conversation not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      if (String(conversation.source ?? "").trim() === "subagent") {
+        throw createValidationError("subagent conversation cannot bind automation");
+      }
+
+      const binding = automationSchedulerService.upsertBinding(validation.data);
+      if (!binding) {
+        const notFoundError = createValidationError("automation template not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.status(201).json({ binding: mapBinding(binding, historyStore) });
+    },
+
+    updateBindingById: async (req, res) => {
+      const bindingId = String(req.params.bindingId ?? "").trim();
+      if (!bindingId) {
+        throw createValidationError("bindingId is required");
+      }
+
+      const validation = automationBindingUpdateSchema.safeParse(req.body ?? {});
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const binding = automationSchedulerService.updateBinding(bindingId, validation.data);
+      if (!binding) {
+        const notFoundError = createValidationError("automation binding not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.json({ binding: mapBinding(binding, historyStore) });
+    },
+
+    deleteBindingById: async (req, res) => {
+      const bindingId = String(req.params.bindingId ?? "").trim();
+      if (!bindingId) {
+        throw createValidationError("bindingId is required");
+      }
+
+      const deleted = automationSchedulerService.deleteBinding(bindingId);
+      if (!deleted) {
+        const notFoundError = createValidationError("automation binding not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.json({ success: true, bindingId });
+    },
+
+    runBindingNowById: async (req, res) => {
+      const bindingId = String(req.params.bindingId ?? "").trim();
+      if (!bindingId) {
+        throw createValidationError("bindingId is required");
+      }
+
+      const binding = automationSchedulerService.runBindingNow(bindingId);
+      if (!binding) {
+        const notFoundError = createValidationError("automation binding not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      res.status(202).json({ accepted: true, binding: mapBinding(binding, historyStore) });
     }
   };
 }

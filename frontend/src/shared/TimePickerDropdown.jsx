@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import "./time-picker-dropdown.css";
 
@@ -49,7 +50,9 @@ export function TimePickerDropdown({
   ariaLabel = "时间选择"
 }) {
   const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState(null);
   const rootRef = useRef(null);
+  const popoverRef = useRef(null);
   const normalized = useMemo(() => normalizeTime(value), [value]);
   const [hour, minute] = normalized.split(":");
 
@@ -59,7 +62,10 @@ export function TimePickerDropdown({
     }
 
     function handlePointerDown(event) {
-      if (!rootRef.current?.contains(event.target)) {
+      if (
+        !rootRef.current?.contains(event.target) &&
+        !popoverRef.current?.contains(event.target)
+      ) {
         setOpen(false);
       }
     }
@@ -67,6 +73,67 @@ export function TimePickerDropdown({
     window.addEventListener("mousedown", handlePointerDown);
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPopoverStyle(null);
+      return undefined;
+    }
+
+    let frameId = 0;
+
+    function updatePosition() {
+      const trigger = rootRef.current;
+      const popover = popoverRef.current;
+      if (!trigger || !popover) {
+        return;
+      }
+
+      const viewportPadding = 12;
+      const triggerRect = trigger.getBoundingClientRect();
+      const popoverRect = popover.getBoundingClientRect();
+      const popoverWidth = popoverRect.width || 170;
+      const popoverHeight = popoverRect.height || 238;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const spaceBelow = viewportHeight - triggerRect.bottom - viewportPadding;
+      const spaceAbove = triggerRect.top - viewportPadding;
+      const shouldOpenAbove = spaceBelow < popoverHeight && spaceAbove > spaceBelow;
+      const availableHeight = Math.max(
+        120,
+        shouldOpenAbove ? spaceAbove - 8 : spaceBelow - 8
+      );
+
+      const preferredLeft = triggerRect.left;
+      const maxLeft = viewportWidth - popoverWidth - viewportPadding;
+      const left = Math.max(viewportPadding, Math.min(preferredLeft, maxLeft));
+      const top = shouldOpenAbove
+        ? Math.max(viewportPadding, triggerRect.top - Math.min(popoverHeight, availableHeight) - 8)
+        : Math.min(viewportHeight - viewportPadding, triggerRect.bottom + 8);
+
+      setPopoverStyle({
+        left,
+        top,
+        maxHeight: Math.min(220, availableHeight),
+        visibility: "visible"
+      });
+    }
+
+    function scheduleUpdate() {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updatePosition);
+    }
+
+    scheduleUpdate();
+    window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("scroll", scheduleUpdate, true);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("scroll", scheduleUpdate, true);
     };
   }, [open]);
 
@@ -100,8 +167,14 @@ export function TimePickerDropdown({
         <span className="tpd-trigger-value">{minute}</span>
       </button>
 
-      {open ? (
-        <div className="tpd-popover" role="dialog" aria-label={ariaLabel}>
+      {open ? createPortal(
+        <div
+          className="tpd-popover"
+          role="dialog"
+          aria-label={ariaLabel}
+          ref={popoverRef}
+          style={popoverStyle ?? { visibility: "hidden" }}
+        >
           <OptionColumn
             options={HOUR_OPTIONS}
             selected={hour}
@@ -117,7 +190,8 @@ export function TimePickerDropdown({
             label="分钟"
             disabled={disabled}
           />
-        </div>
+        </div>,
+        document.body
       ) : null}
     </div>
   );

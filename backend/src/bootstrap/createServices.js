@@ -124,6 +124,7 @@ export async function createServices() {
   const personaStore = new PersonaStore({
     rootDir: PERSONAS_DIR
   });
+  await personaStore.ensureDefaultPersona();
 
   const mcpManager = new McpManager({
     configStore: mcpConfigStore

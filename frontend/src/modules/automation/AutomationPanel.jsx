@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   createAutomationTask,
-  deleteAutomationHistoryById,
+  deleteAutomationBinding,
   deleteAutomationTask,
-  fetchAutomationHistories,
+  fetchAutomationBindings,
   fetchAutomationTasks,
-  runAutomationTaskNow,
-  updateAutomationTask
+  runAutomationBindingNow,
+  updateAutomationBinding,
+  updateAutomationTask,
+  upsertAutomationBinding
 } from "../../api/automationApi";
-import { selectWorkplaceBySystemDialog } from "../../api/chatApi";
+import { fetchHistories } from "../../api/chatApi";
 import { TimePickerDropdown } from "../../shared/TimePickerDropdown";
+import { confirmAction } from "../../shared/feedback";
 import "./automation.css";
 
 function formatDateTime(timestamp) {
@@ -29,79 +32,40 @@ function normalizeTimeInput(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(normalized) ? normalized : "09:00";
 }
 
-function normalizeSource(value) {
-  return String(value ?? "").trim().toLowerCase();
+function normalizeText(value) {
+  return String(value ?? "").trim();
 }
 
-function groupAutomationHistories(histories) {
-  const sourceList = Array.isArray(histories) ? histories : [];
-  const byId = new Map();
-  for (const item of sourceList) {
-    const id = String(item?.id ?? "").trim();
-    if (!id) {
-      continue;
-    }
-    byId.set(id, item);
-  }
-
-  const topLevelItems = [];
-  const childItemsByParentId = new Map();
-
-  for (const item of sourceList) {
-    const id = String(item?.id ?? "").trim();
-    if (!id) {
-      continue;
-    }
-
-    const parentId = String(item?.parentConversationId ?? "").trim();
-    const isChild = normalizeSource(item?.source) === "subagent" && parentId && byId.has(parentId);
-
-    if (isChild) {
-      const current = childItemsByParentId.get(parentId) ?? [];
-      current.push(item);
-      childItemsByParentId.set(parentId, current);
-      continue;
-    }
-
-    topLevelItems.push(item);
-  }
-
-  const sortByUpdatedDesc = (left, right) =>
-    Number(right?.updatedAt ?? 0) - Number(left?.updatedAt ?? 0);
-  topLevelItems.sort(sortByUpdatedDesc);
-  for (const [parentId, list] of childItemsByParentId.entries()) {
-    childItemsByParentId.set(parentId, [...list].sort(sortByUpdatedDesc));
-  }
-
-  return {
-    topLevelItems,
-    childItemsByParentId
-  };
+function isBindableConversation(conversation) {
+  const source = normalizeText(conversation?.source);
+  return normalizeText(conversation?.id) && source !== "subagent";
 }
 
 export function AutomationPanel({ onOpenConversation, activeConversationId = "" }) {
-  const [tasks, setTasks] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [bindings, setBindings] = useState([]);
   const [histories, setHistories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [workplaceSelecting, setWorkplaceSelecting] = useState(false);
-  const [expandedHistoryGroupMap, setExpandedHistoryGroupMap] = useState({});
+  const [message, setMessage] = useState("");
+  const [configTemplateId, setConfigTemplateId] = useState("");
+  const [editingTemplateId, setEditingTemplateId] = useState("");
   const [form, setForm] = useState({
     name: "",
-    prompt: "",
-    workplacePath: "",
-    timeOfDay: "09:00",
-    enabled: true
+    prompt: ""
   });
+  const [bindingDraftByConversationId, setBindingDraftByConversationId] = useState({});
 
   async function loadData() {
-    const [taskResp, historyResp] = await Promise.all([
+    const [taskResp, bindingResp, historyResp] = await Promise.all([
       fetchAutomationTasks(),
-      fetchAutomationHistories()
+      fetchAutomationBindings(),
+      fetchHistories()
     ]);
 
-    setTasks(Array.isArray(taskResp?.tasks) ? taskResp.tasks : []);
+    setTemplates(Array.isArray(taskResp?.tasks) ? taskResp.tasks : []);
+    setBindings(Array.isArray(bindingResp?.bindings) ? bindingResp.bindings : []);
     setHistories(Array.isArray(historyResp?.histories) ? historyResp.histories : []);
   }
 
@@ -137,130 +101,198 @@ export function AutomationPanel({ onOpenConversation, activeConversationId = "" 
     };
   }, []);
 
-  const sortedTasks = useMemo(
-    () => [...tasks].sort((left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0)),
-    [tasks]
+  const sortedTemplates = useMemo(
+    () => [...templates].sort((left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0)),
+    [templates]
   );
-  const groupedHistories = useMemo(() => groupAutomationHistories(histories), [histories]);
 
-  async function handleCreateTask(event) {
+  const sortedBindings = useMemo(
+    () => [...bindings].sort((left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0)),
+    [bindings]
+  );
+
+  const bindableHistories = useMemo(
+    () =>
+      (Array.isArray(histories) ? histories : [])
+        .filter(isBindableConversation)
+        .sort((left, right) => Number(right.updatedAt ?? 0) - Number(left.updatedAt ?? 0)),
+    [histories]
+  );
+
+  const bindingByConversationId = useMemo(() => {
+    const result = new Map();
+    for (const binding of bindings) {
+      const conversationId = normalizeText(binding?.conversationId);
+      if (conversationId) {
+        result.set(conversationId, binding);
+      }
+    }
+    return result;
+  }, [bindings]);
+
+  const activeTemplate = useMemo(
+    () => sortedTemplates.find((template) => template.id === configTemplateId) ?? null,
+    [sortedTemplates, configTemplateId]
+  );
+
+  function resetForm() {
+    setEditingTemplateId("");
+    setForm({
+      name: "",
+      prompt: ""
+    });
+  }
+
+  function getBindingDraft(conversationId, existingBinding = null) {
+    const normalizedConversationId = normalizeText(conversationId);
+    const draft = bindingDraftByConversationId[normalizedConversationId] ?? {};
+    return {
+      timeOfDay: normalizeTimeInput(draft.timeOfDay ?? existingBinding?.timeOfDay ?? "09:00")
+    };
+  }
+
+  function updateBindingDraft(conversationId, patch) {
+    const normalizedConversationId = normalizeText(conversationId);
+    if (!normalizedConversationId) {
+      return;
+    }
+
+    setBindingDraftByConversationId((prev) => ({
+      ...prev,
+      [normalizedConversationId]: {
+        ...(prev?.[normalizedConversationId] ?? {}),
+        ...patch
+      }
+    }));
+  }
+
+  async function handleSaveTemplate(event) {
     event.preventDefault();
-
     setSaving(true);
     setError("");
+    setMessage("");
     try {
-      await createAutomationTask({
-        name: String(form.name ?? "").trim(),
-        prompt: String(form.prompt ?? "").trim(),
-        workplacePath: String(form.workplacePath ?? "").trim(),
-        timeOfDay: normalizeTimeInput(form.timeOfDay),
-        enabled: Boolean(form.enabled)
-      });
+      const payload = {
+        name: normalizeText(form.name),
+        prompt: normalizeText(form.prompt)
+      };
 
-      setForm({
-        name: "",
-        prompt: "",
-        workplacePath: "",
-        timeOfDay: "09:00",
-        enabled: true
-      });
+      if (editingTemplateId) {
+        await updateAutomationTask(editingTemplateId, payload);
+        setMessage("自动化任务模板已更新");
+      } else {
+        await createAutomationTask(payload);
+        setMessage("自动化任务模板已创建");
+      }
 
+      resetForm();
       await loadData();
-    } catch (createError) {
-      setError(String(createError?.message ?? "创建自动化任务失败"));
+    } catch (saveError) {
+      setError(String(saveError?.message ?? "保存自动化任务模板失败"));
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleSelectWorkplace() {
-    setError("");
-    setWorkplaceSelecting(true);
-    try {
-      const response = await selectWorkplaceBySystemDialog(form.workplacePath);
-      const selectedPath = String(response?.selectedPath ?? "").trim();
-      if (!selectedPath || response?.canceled) {
-        return;
-      }
+  function handleEditTemplate(template) {
+    setEditingTemplateId(template.id);
+    setForm({
+      name: template.name || "",
+      prompt: template.prompt || ""
+    });
+  }
 
-      setForm((prev) => ({
-        ...prev,
-        workplacePath: selectedPath
-      }));
-    } catch (selectError) {
-      setError(String(selectError?.message ?? "选择工作区失败"));
-    } finally {
-      setWorkplaceSelecting(false);
+  async function handleDeleteTemplate(template) {
+    const shouldDelete = await confirmAction({
+      title: "删除自动化模板",
+      message: `确认删除自动化任务模板“${template.name}”吗？相关会话绑定也会删除。`,
+      confirmLabel: "删除"
+    });
+    if (!shouldDelete) {
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    try {
+      await deleteAutomationTask(template.id);
+      if (configTemplateId === template.id) {
+        setConfigTemplateId("");
+      }
+      await loadData();
+      setMessage("自动化任务模板已删除");
+    } catch (deleteError) {
+      setError(String(deleteError?.message ?? "删除任务模板失败"));
     }
   }
 
-  async function handleToggleTask(task) {
+  async function handleBindConversation(conversation) {
+    if (!activeTemplate) {
+      return;
+    }
+
+    const conversationId = normalizeText(conversation?.id);
+    const existingBinding = bindingByConversationId.get(conversationId) ?? null;
+    const draft = getBindingDraft(conversationId, existingBinding);
     setError("");
+    setMessage("");
     try {
-      await updateAutomationTask(task.id, {
-        enabled: !Boolean(task.enabled)
+      await upsertAutomationBinding({
+        templateId: activeTemplate.id,
+        conversationId,
+        timeOfDay: draft.timeOfDay,
+        enabled: true
+      });
+      await loadData();
+      setMessage(`已绑定会话：${conversation.title || conversationId}`);
+    } catch (bindError) {
+      setError(String(bindError?.message ?? "绑定会话失败"));
+    }
+  }
+
+  async function handleToggleBinding(binding) {
+    setError("");
+    setMessage("");
+    try {
+      await updateAutomationBinding(binding.id, {
+        enabled: !Boolean(binding.enabled)
       });
       await loadData();
     } catch (toggleError) {
-      setError(String(toggleError?.message ?? "更新任务状态失败"));
+      setError(String(toggleError?.message ?? "更新绑定状态失败"));
     }
   }
 
-  async function handleRunTask(task) {
+  async function handleRunBinding(binding) {
     setError("");
+    setMessage("");
     try {
-      await runAutomationTaskNow(task.id);
+      await runAutomationBindingNow(binding.id);
       await loadData();
+      setMessage("已提交立即执行");
     } catch (runError) {
       setError(String(runError?.message ?? "立即执行失败"));
     }
   }
 
-  async function handleDeleteTask(task) {
-    const shouldDelete = window.confirm(`确认删除自动化任务“${task.name}”吗？`);
+  async function handleUnbind(binding) {
+    const shouldDelete = await confirmAction({
+      title: "解绑自动化任务",
+      message: `确认解绑“${binding.conversation?.title || binding.conversationId}”的自动化任务吗？`,
+      confirmLabel: "解绑"
+    });
     if (!shouldDelete) {
       return;
     }
 
     setError("");
+    setMessage("");
     try {
-      await deleteAutomationTask(task.id);
+      await deleteAutomationBinding(binding.id);
       await loadData();
+      setMessage("已解绑自动化任务");
     } catch (deleteError) {
-      setError(String(deleteError?.message ?? "删除任务失败"));
-    }
-  }
-
-  function toggleHistoryGroup(conversationId) {
-    const normalizedConversationId = String(conversationId ?? "").trim();
-    if (!normalizedConversationId) {
-      return;
-    }
-
-    setExpandedHistoryGroupMap((prev) => ({
-      ...prev,
-      [normalizedConversationId]: !Boolean(prev?.[normalizedConversationId])
-    }));
-  }
-
-  async function handleDeleteAutomationHistory(history) {
-    const conversationId = String(history?.id ?? "").trim();
-    if (!conversationId) {
-      return;
-    }
-
-    const displayName = String(history?.title ?? "").trim() || "该会话";
-    const shouldDelete = window.confirm(`确认删除“${displayName}”及其子智能体会话吗？`);
-    if (!shouldDelete) {
-      return;
-    }
-
-    setError("");
-    try {
-      await deleteAutomationHistoryById(conversationId);
-      await loadData();
-    } catch (deleteError) {
-      setError(String(deleteError?.message ?? "删除自动化会话失败"));
+      setError(String(deleteError?.message ?? "解绑失败"));
     }
   }
 
@@ -269,17 +301,17 @@ export function AutomationPanel({ onOpenConversation, activeConversationId = "" 
       <header className="automation-header">
         <div>
           <h2>自动化调度</h2>
-          <p>独立任务池，按时间自动向独立会话发送指令。</p>
+          <p>管理通用任务模板，并把模板绑定到任意普通会话。</p>
         </div>
         <button type="button" className="btn-ghost" onClick={() => void loadData()}>
           刷新
         </button>
       </header>
 
-      <form className="automation-create" onSubmit={handleCreateTask}>
+      <form className="automation-create" onSubmit={handleSaveTemplate}>
         <div className="automation-field-row">
           <label>
-            任务名
+            模板名
             <input
               value={form.name}
               onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
@@ -288,94 +320,54 @@ export function AutomationPanel({ onOpenConversation, activeConversationId = "" 
               required
             />
           </label>
-          <label>
-            每日执行时间
-            <TimePickerDropdown
-              value={normalizeTimeInput(form.timeOfDay)}
-              onChange={(nextValue) =>
-                setForm((prev) => ({ ...prev, timeOfDay: normalizeTimeInput(nextValue) }))
-              }
-              ariaLabel="每日执行时间"
-            />
-          </label>
-          <label className="automation-checkbox">
-            <input
-              type="checkbox"
-              checked={Boolean(form.enabled)}
-              onChange={(event) => setForm((prev) => ({ ...prev, enabled: event.target.checked }))}
-            />
-            启用
-          </label>
         </div>
 
         <label>
-          指令
+          自动发送的用户消息
           <textarea
             value={form.prompt}
             onChange={(event) => setForm((prev) => ({ ...prev, prompt: event.target.value }))}
-            placeholder="到点时自动发送给模型的用户指令"
+            placeholder="到点时作为正常 user 消息发送到绑定会话"
             rows={4}
             required
           />
         </label>
 
-        <label>
-          工作区
-          <div className="automation-workplace-row">
-            <input
-              value={form.workplacePath}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, workplacePath: event.target.value }))
-              }
-              placeholder="请选择自动化会话工作区目录"
-              required
-            />
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => void handleSelectWorkplace()}
-              disabled={workplaceSelecting}
-            >
-              {workplaceSelecting ? "打开中..." : "选择目录"}
-            </button>
-          </div>
-        </label>
-
         <div className="automation-actions">
           <button type="submit" className="btn-primary" disabled={saving}>
-            {saving ? "保存中..." : "创建任务"}
+            {saving ? "保存中..." : editingTemplateId ? "更新模板" : "创建模板"}
           </button>
+          {editingTemplateId ? (
+            <button type="button" className="btn-ghost" onClick={resetForm} disabled={saving}>
+              取消编辑
+            </button>
+          ) : null}
         </div>
       </form>
 
       {error ? <p className="automation-error">{error}</p> : null}
+      {message ? <p className="automation-message">{message}</p> : null}
       {loading ? <p className="automation-loading">加载中...</p> : null}
 
       <section className="automation-section">
-        <h3>任务列表</h3>
+        <h3>任务模板</h3>
         <div className="automation-list">
-          {sortedTasks.length === 0 ? <p className="automation-empty">暂无任务</p> : null}
-          {sortedTasks.map((task) => (
-            <article key={task.id} className="automation-item">
+          {sortedTemplates.length === 0 ? <p className="automation-empty">暂无任务模板</p> : null}
+          {sortedTemplates.map((template) => (
+            <article key={template.id} className="automation-item">
               <div className="automation-item-main">
-                <h4>{task.name}</h4>
-                <p className="automation-item-meta">
-                  时间 {task.timeOfDay} · 状态 {task.status} · 下次 {formatDateTime(task.nextRunAt)}
-                </p>
-                <p className="automation-item-meta">工作区 {task.workplacePath || "(未设置)"}</p>
-                <p className="automation-item-meta">
-                  上次 {formatDateTime(task.lastRunAt)}
-                  {task.lastError ? ` · 错误：${task.lastError}` : ""}
-                </p>
+                <h4>{template.name}</h4>
+                <p className="automation-item-meta">已绑定 {Number(template.bindingCount ?? 0)} 个会话</p>
+                <p className="automation-item-preview">{template.prompt}</p>
               </div>
               <div className="automation-item-actions">
-                <button type="button" className="btn-ghost" onClick={() => void handleRunTask(task)}>
-                  立即执行
+                <button type="button" className="btn-ghost" onClick={() => setConfigTemplateId(template.id)}>
+                  配置会话
                 </button>
-                <button type="button" className="btn-ghost" onClick={() => void handleToggleTask(task)}>
-                  {task.enabled ? "停用" : "启用"}
+                <button type="button" className="btn-ghost" onClick={() => handleEditTemplate(template)}>
+                  编辑
                 </button>
-                <button type="button" className="btn-danger" onClick={() => void handleDeleteTask(task)}>
+                <button type="button" className="btn-danger" onClick={() => void handleDeleteTemplate(template)}>
                   删除
                 </button>
               </div>
@@ -384,112 +376,102 @@ export function AutomationPanel({ onOpenConversation, activeConversationId = "" 
         </div>
       </section>
 
-      <section className="automation-section">
-        <h3>自动化历史会话</h3>
-        <div className="history-list automation-history-list">
-          {groupedHistories.topLevelItems.length === 0 ? (
-            <p className="automation-empty">暂无自动化历史</p>
-          ) : null}
-          {groupedHistories.topLevelItems.map((item) => {
-            const childItems =
-              groupedHistories.childItemsByParentId.get(String(item?.id ?? "").trim()) ?? [];
-            const hasChildren = childItems.length > 0;
-            const normalizedItemId = String(item?.id ?? "").trim();
-            const isParentActive =
-              normalizedItemId && normalizedItemId === String(activeConversationId ?? "").trim();
-            const containsActiveChild = childItems.some(
-              (child) => String(child?.id ?? "").trim() === String(activeConversationId ?? "").trim()
-            );
-            const isExpanded =
-              !hasChildren || Boolean(expandedHistoryGroupMap?.[normalizedItemId]);
-
-            return (
-              <article
-                key={item.id}
-                className={`history-group ${isExpanded ? "history-group-expanded" : ""}`}
-              >
-                <div
-                  className={`history-item ${
-                    isParentActive ? "history-item-active" : containsActiveChild ? "history-item-contains-active" : ""
-                  } ${hasChildren ? "history-item-has-children" : ""}`}
+      {activeTemplate ? (
+        <section className="automation-section automation-bind-section">
+          <div className="automation-section-head">
+            <div>
+              <h3>给会话绑定“{activeTemplate.name}”</h3>
+              <p>每个会话只能绑定一个自动化任务；重复绑定会替换原绑定。</p>
+            </div>
+            <button type="button" className="btn-ghost" onClick={() => setConfigTemplateId("")}>
+              收起
+            </button>
+          </div>
+          <div className="automation-conversation-list">
+            {bindableHistories.length === 0 ? <p className="automation-empty">暂无可绑定会话</p> : null}
+            {bindableHistories.map((conversation) => {
+              const binding = bindingByConversationId.get(conversation.id) ?? null;
+              const draft = getBindingDraft(conversation.id, binding);
+              const isCurrentTemplate = binding?.templateId === activeTemplate.id;
+              return (
+                <article
+                  key={conversation.id}
+                  className={`automation-conversation-card ${
+                    String(conversation.id) === String(activeConversationId) ? "is-active" : ""
+                  } ${binding ? "is-bound" : ""}`}
                 >
                   <button
                     type="button"
-                    className="history-item-main"
-                    onClick={() => onOpenConversation?.(item)}
+                    className="automation-conversation-main"
+                    onClick={() => onOpenConversation?.(conversation)}
                   >
-                    <div className="history-item-top">
-                      <strong>{item.title || "未命名会话"}</strong>
-                      <div className="history-item-meta">
-                        <span className="history-item-badge">自动化</span>
-                        <span>{formatDateTime(item.updatedAt)}</span>
-                      </div>
-                    </div>
-                    <p>{item.preview || "暂无内容"}</p>
+                    <strong>
+                      {binding ? <span className="automation-alarm-icon" title="已绑定自动化">⏰</span> : null}
+                      {conversation.title || "未命名会话"}
+                    </strong>
+                    <small>{conversation.preview || conversation.workplacePath || "暂无预览"}</small>
                   </button>
-
-                  {hasChildren ? (
-                    <button
-                      type="button"
-                      className={`history-item-toggle ${isExpanded ? "is-expanded" : ""}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleHistoryGroup(item.id);
-                      }}
-                      aria-label={isExpanded ? "收起子智能体对话" : "展开子智能体对话"}
-                    >
-                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m9 6l6 6l-6 6" />
-                      </svg>
-                    </button>
-                  ) : null}
-
-                  <div className="history-item-actions">
-                    <button
-                      type="button"
-                      className="history-item-delete"
-                      onClick={() => void handleDeleteAutomationHistory(item)}
-                      aria-label="删除该自动化历史"
-                    >
-                      删除
+                  <div className="automation-conversation-config">
+                    {binding ? (
+                      <span className="automation-binding-chip">
+                        {binding.templateName}
+                        {binding.enabled ? " · 启用" : " · 暂停"}
+                      </span>
+                    ) : null}
+                    <TimePickerDropdown
+                      value={draft.timeOfDay}
+                      onChange={(nextValue) =>
+                        updateBindingDraft(conversation.id, { timeOfDay: normalizeTimeInput(nextValue) })
+                      }
+                      ariaLabel="绑定执行时间"
+                    />
+                    <button type="button" className="btn-primary" onClick={() => void handleBindConversation(conversation)}>
+                      {binding ? (isCurrentTemplate ? "更新绑定" : "替换绑定") : "绑定"}
                     </button>
                   </div>
-                </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
-                {hasChildren && isExpanded ? (
-                  <div className="history-subitem-list">
-                    {childItems.map((child) => {
-                      const isChildActive =
-                        String(child?.id ?? "").trim() === String(activeConversationId ?? "").trim();
-                      return (
-                        <article
-                          key={child.id}
-                          className={`history-subitem ${isChildActive ? "history-subitem-active" : ""}`}
-                        >
-                          <button
-                            type="button"
-                            className="history-subitem-main"
-                            onClick={() => onOpenConversation?.(child)}
-                          >
-                            <div className="history-item-top">
-                              <strong>{child.title || child.agentDisplayName || "子智能体对话"}</strong>
-                              <div className="history-item-meta">
-                                <span className="history-item-badge">
-                                  {child.agentDisplayName || child.agentType || "子智能体"}
-                                </span>
-                                <span>{formatDateTime(child.updatedAt)}</span>
-                              </div>
-                            </div>
-                            <p>{child.preview || "暂无内容"}</p>
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
+      <section className="automation-section">
+        <h3>已绑定自动化的会话</h3>
+        <div className="automation-list">
+          {sortedBindings.length === 0 ? <p className="automation-empty">暂无绑定会话</p> : null}
+          {sortedBindings.map((binding) => (
+            <article key={binding.id} className="automation-item automation-binding-item">
+              <button
+                type="button"
+                className="automation-item-main as-button"
+                onClick={() => binding.conversation && onOpenConversation?.(binding.conversation)}
+              >
+                <h4>
+                  <span className="automation-alarm-icon" aria-hidden="true">⏰</span>
+                  {binding.conversation?.title || binding.conversationId}
+                </h4>
+                <p className="automation-item-meta">
+                  模板 {binding.templateName} · {binding.enabled ? "启用" : "暂停"} · 时间 {binding.timeOfDay} · 下次 {formatDateTime(binding.nextRunAt)}
+                </p>
+                <p className="automation-item-meta">
+                  上次 {formatDateTime(binding.lastRunAt)}
+                  {binding.lastError ? ` · 错误：${binding.lastError}` : ""}
+                </p>
+              </button>
+              <div className="automation-item-actions">
+                <button type="button" className="btn-ghost" onClick={() => void handleRunBinding(binding)}>
+                  立即执行
+                </button>
+                <button type="button" className="btn-ghost" onClick={() => void handleToggleBinding(binding)}>
+                  {binding.enabled ? "暂停" : "启用"}
+                </button>
+                <button type="button" className="btn-danger" onClick={() => void handleUnbind(binding)}>
+                  解绑
+                </button>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
     </div>

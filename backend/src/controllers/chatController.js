@@ -865,6 +865,7 @@ export function createChatController({
   orchestratorStore,
   orchestratorSchedulerService,
   orchestratorSupervisorService,
+  automationSchedulerService,
   wakeDispatcher
 }) {
   const createForegroundQueuedInsertionFlusher = ({
@@ -1811,6 +1812,11 @@ export function createChatController({
           orchestratorSchedulerService?.resetSession?.(conversationId);
         }
       }
+
+      for (const deletedConversationId of deletedConversationIds) {
+        automationSchedulerService?.deleteBindingByConversationId?.(deletedConversationId);
+      }
+
       res.status(200).json({
         success: true,
         deletedConversationIds: Array.from(deletedConversationIds)

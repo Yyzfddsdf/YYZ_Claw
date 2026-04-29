@@ -24,18 +24,32 @@ export function deleteAutomationTask(taskId) {
   });
 }
 
-export function runAutomationTaskNow(taskId) {
-  return requestJson(`/automation/tasks/${encodeURIComponent(taskId)}/run`, {
-    method: "POST"
+export function fetchAutomationBindings() {
+  return requestJson("/automation/bindings");
+}
+
+export function upsertAutomationBinding(payload) {
+  return requestJson("/automation/bindings", {
+    method: "POST",
+    body: payload
   });
 }
 
-export function fetchAutomationHistories() {
-  return requestJson("/automation/histories");
+export function updateAutomationBinding(bindingId, payload) {
+  return requestJson(`/automation/bindings/${encodeURIComponent(bindingId)}`, {
+    method: "PUT",
+    body: payload
+  });
 }
 
-export function deleteAutomationHistoryById(conversationId) {
-  return requestJson(`/automation/histories/${encodeURIComponent(conversationId)}`, {
+export function deleteAutomationBinding(bindingId) {
+  return requestJson(`/automation/bindings/${encodeURIComponent(bindingId)}`, {
     method: "DELETE"
+  });
+}
+
+export function runAutomationBindingNow(bindingId) {
+  return requestJson(`/automation/bindings/${encodeURIComponent(bindingId)}/run`, {
+    method: "POST"
   });
 }

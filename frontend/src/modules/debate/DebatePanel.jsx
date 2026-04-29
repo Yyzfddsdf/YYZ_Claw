@@ -9,6 +9,7 @@ import {
 } from "../../api/debateApi";
 import { MarkdownMessage } from "../chat/MarkdownMessage";
 import { formatTimestamp } from "../../shared/formatTimestamp";
+import { confirmAction } from "../../shared/feedback";
 import "./debate.css";
 
 function normalizeDebate(value) {
@@ -247,7 +248,12 @@ export function DebatePanel({ disabled = false, disabledReason = "" }) {
 
     const currentTitle =
       debates.find((item) => String(item?.id ?? "").trim() === normalizedId)?.title || "该互博";
-    if (!window.confirm(`确认删除“${currentTitle}”吗？`)) {
+    const confirmed = await confirmAction({
+      title: "删除 AI 互博",
+      message: `确认删除“${currentTitle}”吗？`,
+      confirmLabel: "删除"
+    });
+    if (!confirmed) {
       return;
     }
 

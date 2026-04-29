@@ -822,6 +822,26 @@
   animation: history-run-spin 0.72s linear infinite;
 }
 
+.history-automation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  padding: 0.1rem 0.38rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, #f59e0b 14%, var(--bg-elevated));
+  color: #b45309;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #f59e0b 18%, transparent);
+}
+
+.history-automation-badge.is-paused {
+  background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-elevated));
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 16%, transparent);
+}
+
 @keyframes history-run-spin {
   to {
     transform: rotate(360deg);
@@ -993,6 +1013,309 @@
   padding: 6px 8px;
   font-size: 14px;
   font-weight: 600;
+}
+
+.automation-toggle {
+  border-color: color-mix(in srgb, #f59e0b 30%, var(--border-light));
+  background: color-mix(in srgb, #f59e0b 8%, var(--bg-main));
+  color: color-mix(in srgb, #b45309 72%, var(--text-muted));
+}
+
+.automation-toggle.is-bound,
+.automation-toggle.active {
+  background: linear-gradient(135deg, color-mix(in srgb, #f59e0b 18%, var(--bg-main)), var(--bg-main));
+  border-color: color-mix(in srgb, #f59e0b 46%, var(--border-light));
+  color: #92400e;
+}
+
+.chat-automation-panel {
+  margin: 0.55rem 1rem 0.5rem;
+  padding: 0.85rem;
+  border: 1px solid color-mix(in srgb, #f59e0b 28%, var(--border-light));
+  border-radius: 1rem;
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, #f59e0b 12%, transparent), transparent 34%),
+    var(--bg-elevated);
+  box-shadow: 0 14px 36px rgba(146, 64, 14, 0.08);
+}
+
+.chat-automation-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.8rem;
+}
+
+.chat-automation-panel-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-main);
+}
+
+.chat-automation-panel-head p,
+.chat-automation-note,
+.chat-automation-template-preview p {
+  margin: 0.18rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.chat-automation-state {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-main));
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.chat-automation-state.is-enabled {
+  background: color-mix(in srgb, #f59e0b 15%, var(--bg-main));
+  color: #b45309;
+}
+
+.chat-automation-grid {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.chat-automation-grid label,
+.chat-automation-template-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.chat-automation-template-field {
+  position: relative;
+  min-width: 0;
+}
+
+.chat-automation-field-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.chat-automation-template-trigger {
+  width: 100%;
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid color-mix(in srgb, #f59e0b 24%, var(--border-light));
+  border-radius: 0.9rem;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #f59e0b 10%, transparent), transparent 48%),
+    var(--bg-main);
+  color: var(--text-main);
+  padding: 0.5rem 0.62rem;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: 0 10px 26px rgba(146, 64, 14, 0.06);
+}
+
+.chat-automation-template-trigger:hover,
+.chat-automation-template-trigger.open {
+  border-color: color-mix(in srgb, #f59e0b 44%, var(--border-light));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #f59e0b 15%, transparent), transparent 52%),
+    var(--bg-main);
+  transform: translateY(-1px);
+}
+
+.chat-automation-template-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.chat-automation-template-icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 2rem;
+  background: color-mix(in srgb, #f59e0b 16%, var(--bg-elevated));
+  color: #b45309;
+  border: 1px solid color-mix(in srgb, #f59e0b 20%, transparent);
+}
+
+.chat-automation-template-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.chat-automation-template-copy strong,
+.chat-automation-template-option strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-main);
+  font-size: 0.84rem;
+}
+
+.chat-automation-template-copy small,
+.chat-automation-template-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.chat-automation-template-arrow {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1.35rem;
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg-elevated));
+  color: #b45309;
+  font-size: 0.72rem;
+  transition: var(--transition);
+}
+
+.chat-automation-template-trigger.open .chat-automation-template-arrow {
+  transform: rotate(180deg);
+}
+
+.chat-automation-template-menu {
+  position: absolute;
+  z-index: 45;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.45rem);
+  max-height: min(18rem, 42vh);
+  overflow-y: auto;
+  padding: 0.45rem;
+  border: 1px solid color-mix(in srgb, #f59e0b 22%, var(--border-light));
+  border-radius: 1rem;
+  background:
+    radial-gradient(circle at 12% 0, color-mix(in srgb, #f59e0b 12%, transparent), transparent 34%),
+    var(--bg-elevated);
+  box-shadow: 0 22px 55px rgba(146, 64, 14, 0.18);
+}
+
+.chat-automation-template-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.58rem;
+  border: 1px solid transparent;
+  border-radius: 0.85rem;
+  background: transparent;
+  color: var(--text-main);
+  padding: 0.62rem;
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.chat-automation-template-option:hover {
+  background: color-mix(in srgb, #f59e0b 8%, var(--bg-main));
+  border-color: color-mix(in srgb, #f59e0b 18%, var(--border-light));
+}
+
+.chat-automation-template-option.active {
+  background: color-mix(in srgb, #f59e0b 13%, var(--bg-main));
+  border-color: color-mix(in srgb, #f59e0b 34%, var(--border-light));
+}
+
+.chat-automation-template-option-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, #f59e0b 42%, var(--border-light));
+  box-shadow: 0 0 0 4px color-mix(in srgb, #f59e0b 10%, transparent);
+}
+
+.chat-automation-template-option.active .chat-automation-template-option-dot {
+  background: #f59e0b;
+}
+
+.chat-automation-template-option span:not(.chat-automation-template-option-dot) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.chat-automation-template-option em {
+  border-radius: 999px;
+  padding: 0.18rem 0.45rem;
+  background: color-mix(in srgb, #f59e0b 16%, var(--bg-main));
+  color: #b45309;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.chat-automation-template-preview {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, #f59e0b 8%, var(--bg-main));
+  border: 1px solid color-mix(in srgb, #f59e0b 18%, var(--border-light));
+}
+
+.chat-automation-template-preview strong {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+.chat-automation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.chat-automation-actions .automation-save {
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--border-light));
+  color: #92400e;
+  background: color-mix(in srgb, #f59e0b 12%, var(--bg-main));
+}
+
+.chat-automation-actions .automation-unbind {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border-light));
+  color: var(--danger);
+  background: var(--danger-light);
+}
+
+.chat-automation-error,
+.chat-automation-message {
+  margin: 0.45rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.chat-automation-error {
+  color: var(--danger);
+}
+
+.chat-automation-message {
+  color: #b45309;
 }
 
 .chat-pane-head h3 {
@@ -4257,5 +4580,15 @@
   background: #ffffff;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  .chat-automation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-automation-panel-head {
+    flex-direction: column;
+  }
 }
 

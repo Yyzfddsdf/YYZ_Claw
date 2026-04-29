@@ -21,7 +21,7 @@ function normalizeTimeOfDay(value) {
   return normalized;
 }
 
-function normalizeTaskRow(row) {
+function normalizeTemplateRow(row) {
   if (!row) {
     return null;
   }
@@ -30,8 +30,23 @@ function normalizeTaskRow(row) {
     id: normalizeText(row.id),
     name: normalizeText(row.name),
     prompt: String(row.prompt ?? ""),
+    bindingCount: Number(row.binding_count ?? 0),
+    createdAt: Number(row.created_at ?? 0),
+    updatedAt: Number(row.updated_at ?? 0)
+  };
+}
+
+function normalizeBindingRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: normalizeText(row.id),
+    templateId: normalizeText(row.template_id),
+    templateName: normalizeText(row.template_name),
+    templatePrompt: String(row.template_prompt ?? ""),
     conversationId: normalizeText(row.conversation_id),
-    workplacePath: normalizeText(row.workplace_path),
     enabled: Number(row.enabled ?? 0) === 1,
     timeOfDay: normalizeTimeOfDay(row.time_of_day),
     timezone: normalizeText(row.timezone) || "Asia/Shanghai",
@@ -59,44 +74,8 @@ export class SqliteAutomationTaskStore {
 
     this.db = new DatabaseSync(this.dbFilePath);
     this.db.exec("PRAGMA foreign_keys = ON;");
-
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS automation_tasks (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        prompt TEXT NOT NULL,
-        conversation_id TEXT NOT NULL DEFAULT '',
-        workplace_path TEXT NOT NULL DEFAULT '',
-        enabled INTEGER NOT NULL DEFAULT 1,
-        time_of_day TEXT NOT NULL DEFAULT '09:00',
-        timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
-        status TEXT NOT NULL DEFAULT 'idle',
-        last_error TEXT NOT NULL DEFAULT '',
-        last_run_at INTEGER NOT NULL DEFAULT 0,
-        next_run_at INTEGER NOT NULL DEFAULT 0,
-        running_since INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_automation_tasks_due
-      ON automation_tasks(enabled, next_run_at, status);
-    `);
-    this.ensureWorkplacePathColumn();
-
-    this.db
-      .prepare(
-        `
-          UPDATE automation_tasks
-          SET status = CASE WHEN enabled = 1 THEN 'idle' ELSE 'disabled' END,
-              running_since = 0,
-              updated_at = ?
-          WHERE status = 'running'
-        `
-      )
-      .run(Date.now());
+    this.createTables();
+    this.resetRunningBindings();
   }
 
   ensureDb() {
@@ -107,15 +86,62 @@ export class SqliteAutomationTaskStore {
     return this.db;
   }
 
-  ensureWorkplacePathColumn() {
+  createTables() {
     const db = this.ensureDb();
-    const columns = db.prepare("PRAGMA table_info(automation_tasks)").all();
-    const columnNames = new Set(columns.map((item) => String(item?.name ?? "")));
-    if (columnNames.has("workplace_path")) {
-      return;
-    }
 
-    db.exec("ALTER TABLE automation_tasks ADD COLUMN workplace_path TEXT NOT NULL DEFAULT ''");
+    db.exec("DROP TABLE IF EXISTS automation_tasks;");
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS automation_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS automation_bindings (
+        id TEXT PRIMARY KEY,
+        template_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL UNIQUE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        time_of_day TEXT NOT NULL DEFAULT '09:00',
+        timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+        status TEXT NOT NULL DEFAULT 'idle',
+        last_error TEXT NOT NULL DEFAULT '',
+        last_run_at INTEGER NOT NULL DEFAULT 0,
+        next_run_at INTEGER NOT NULL DEFAULT 0,
+        running_since INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY(template_id) REFERENCES automation_templates(id) ON DELETE CASCADE
+      );
+    `);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_automation_bindings_due
+      ON automation_bindings(enabled, next_run_at, status);
+    `);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_automation_bindings_template
+      ON automation_bindings(template_id);
+    `);
+  }
+
+  resetRunningBindings() {
+    const db = this.ensureDb();
+    db.prepare(
+      `
+        UPDATE automation_bindings
+        SET status = CASE WHEN enabled = 1 THEN 'idle' ELSE 'disabled' END,
+            running_since = 0,
+            updated_at = ?
+        WHERE status = 'running'
+      `
+    ).run(Date.now());
   }
 
   listTasks() {
@@ -123,22 +149,36 @@ export class SqliteAutomationTaskStore {
     const rows = db
       .prepare(
         `
-          SELECT *
-          FROM automation_tasks
-          ORDER BY updated_at DESC, created_at DESC, id ASC
+          SELECT
+            t.*,
+            COUNT(b.id) AS binding_count
+          FROM automation_templates t
+          LEFT JOIN automation_bindings b ON b.template_id = t.id
+          GROUP BY t.id
+          ORDER BY t.updated_at DESC, t.created_at DESC, t.id ASC
         `
       )
       .all();
 
-    return rows.map((row) => normalizeTaskRow(row)).filter(Boolean);
+    return rows.map((row) => normalizeTemplateRow(row)).filter(Boolean);
   }
 
   getTask(taskId) {
     const db = this.ensureDb();
     const row = db
-      .prepare("SELECT * FROM automation_tasks WHERE id = ?")
+      .prepare(
+        `
+          SELECT
+            t.*,
+            COUNT(b.id) AS binding_count
+          FROM automation_templates t
+          LEFT JOIN automation_bindings b ON b.template_id = t.id
+          WHERE t.id = ?
+          GROUP BY t.id
+        `
+      )
       .get(normalizeText(taskId));
-    return normalizeTaskRow(row);
+    return normalizeTemplateRow(row);
   }
 
   createTask(options = {}) {
@@ -152,44 +192,12 @@ export class SqliteAutomationTaskStore {
     }
 
     const now = Number(options.createdAt ?? Date.now());
-    const enabled = options.enabled !== false;
-    const status = enabled ? "idle" : "disabled";
-
     db.prepare(
       `
-        INSERT INTO automation_tasks (
-          id,
-          name,
-          prompt,
-          conversation_id,
-          workplace_path,
-          enabled,
-          time_of_day,
-          timezone,
-          status,
-          last_error,
-          last_run_at,
-          next_run_at,
-          running_since,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, 0, ?, ?)
+        INSERT INTO automation_templates (id, name, prompt, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
       `
-    ).run(
-      id,
-      name,
-      prompt,
-      normalizeText(options.conversationId),
-      normalizeText(options.workplacePath),
-      enabled ? 1 : 0,
-      normalizeTimeOfDay(options.timeOfDay),
-      normalizeText(options.timezone) || "Asia/Shanghai",
-      status,
-      Number(options.nextRunAt ?? 0),
-      now,
-      now
-    );
+    ).run(id, name, prompt, now, now);
 
     return this.getTask(id);
   }
@@ -201,46 +209,16 @@ export class SqliteAutomationTaskStore {
       return null;
     }
 
-    const nextEnabled = Object.prototype.hasOwnProperty.call(patch, "enabled")
-      ? Boolean(patch.enabled)
-      : existing.enabled;
-    const nextStatus = nextEnabled
-      ? (existing.status === "running" ? "running" : normalizeStatus(patch.status || "idle"))
-      : "disabled";
     const nextUpdatedAt = Number(patch.updatedAt ?? Date.now());
-
     db.prepare(
       `
-        UPDATE automation_tasks
-        SET
-          name = ?,
-          prompt = ?,
-          conversation_id = ?,
-          workplace_path = ?,
-          enabled = ?,
-          time_of_day = ?,
-          timezone = ?,
-          status = ?,
-          last_error = ?,
-          last_run_at = ?,
-          next_run_at = ?,
-          running_since = ?,
-          updated_at = ?
+        UPDATE automation_templates
+        SET name = ?, prompt = ?, updated_at = ?
         WHERE id = ?
       `
     ).run(
       normalizeText(patch.name ?? existing.name) || existing.name,
       String(patch.prompt ?? existing.prompt),
-      normalizeText(patch.conversationId ?? existing.conversationId),
-      normalizeText(patch.workplacePath ?? existing.workplacePath),
-      nextEnabled ? 1 : 0,
-      normalizeTimeOfDay(patch.timeOfDay ?? existing.timeOfDay),
-      normalizeText(patch.timezone ?? existing.timezone) || "Asia/Shanghai",
-      nextStatus,
-      String(patch.lastError ?? existing.lastError),
-      Number(patch.lastRunAt ?? existing.lastRunAt),
-      Number(patch.nextRunAt ?? existing.nextRunAt),
-      Number(patch.runningSince ?? (nextStatus === "running" ? existing.runningSince : 0)),
       nextUpdatedAt,
       normalizeText(taskId)
     );
@@ -255,7 +233,196 @@ export class SqliteAutomationTaskStore {
       return false;
     }
 
-    const result = db.prepare("DELETE FROM automation_tasks WHERE id = ?").run(normalizedTaskId);
+    const result = db
+      .prepare("DELETE FROM automation_templates WHERE id = ?")
+      .run(normalizedTaskId);
+    return Number(result?.changes ?? 0) > 0;
+  }
+
+  listBindings() {
+    const db = this.ensureDb();
+    const rows = db
+      .prepare(
+        `
+          SELECT
+            b.*,
+            t.name AS template_name,
+            t.prompt AS template_prompt
+          FROM automation_bindings b
+          JOIN automation_templates t ON t.id = b.template_id
+          ORDER BY b.updated_at DESC, b.created_at DESC, b.id ASC
+        `
+      )
+      .all();
+
+    return rows.map((row) => normalizeBindingRow(row)).filter(Boolean);
+  }
+
+  getBinding(bindingId) {
+    const db = this.ensureDb();
+    const row = db
+      .prepare(
+        `
+          SELECT
+            b.*,
+            t.name AS template_name,
+            t.prompt AS template_prompt
+          FROM automation_bindings b
+          JOIN automation_templates t ON t.id = b.template_id
+          WHERE b.id = ?
+        `
+      )
+      .get(normalizeText(bindingId));
+    return normalizeBindingRow(row);
+  }
+
+  getBindingByConversationId(conversationId) {
+    const db = this.ensureDb();
+    const row = db
+      .prepare(
+        `
+          SELECT
+            b.*,
+            t.name AS template_name,
+            t.prompt AS template_prompt
+          FROM automation_bindings b
+          JOIN automation_templates t ON t.id = b.template_id
+          WHERE b.conversation_id = ?
+        `
+      )
+      .get(normalizeText(conversationId));
+    return normalizeBindingRow(row);
+  }
+
+  upsertBinding(options = {}) {
+    const db = this.ensureDb();
+    const templateId = normalizeText(options.templateId);
+    const conversationId = normalizeText(options.conversationId);
+    if (!templateId || !conversationId) {
+      throw new Error("templateId and conversationId are required");
+    }
+
+    const template = this.getTask(templateId);
+    if (!template) {
+      return null;
+    }
+
+    const existing = this.getBindingByConversationId(conversationId);
+    const now = Number(options.updatedAt ?? Date.now());
+    const enabled = Object.prototype.hasOwnProperty.call(options, "enabled")
+      ? Boolean(options.enabled)
+      : existing?.enabled ?? true;
+    const status = enabled ? (existing?.status === "running" ? "running" : "idle") : "disabled";
+    const bindingId = existing?.id || normalizeText(options.id) || `auto_bind_${cryptoRandomSuffix()}`;
+
+    if (existing) {
+      db.prepare(
+        `
+          UPDATE automation_bindings
+          SET
+            template_id = ?,
+            enabled = ?,
+            time_of_day = ?,
+            timezone = ?,
+            status = ?,
+            next_run_at = ?,
+            updated_at = ?
+          WHERE conversation_id = ?
+        `
+      ).run(
+        templateId,
+        enabled ? 1 : 0,
+        normalizeTimeOfDay(options.timeOfDay ?? existing.timeOfDay),
+        normalizeText(options.timezone ?? existing.timezone) || "Asia/Shanghai",
+        status,
+        Number(options.nextRunAt ?? existing.nextRunAt ?? 0),
+        now,
+        conversationId
+      );
+      return this.getBinding(existing.id);
+    }
+
+    db.prepare(
+      `
+        INSERT INTO automation_bindings (
+          id,
+          template_id,
+          conversation_id,
+          enabled,
+          time_of_day,
+          timezone,
+          status,
+          last_error,
+          last_run_at,
+          next_run_at,
+          running_since,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, ?, 0, ?, ?)
+      `
+    ).run(
+      bindingId,
+      templateId,
+      conversationId,
+      enabled ? 1 : 0,
+      normalizeTimeOfDay(options.timeOfDay),
+      normalizeText(options.timezone) || "Asia/Shanghai",
+      status,
+      Number(options.nextRunAt ?? 0),
+      now,
+      now
+    );
+
+    return this.getBinding(bindingId);
+  }
+
+  updateBinding(bindingId, patch = {}) {
+    const db = this.ensureDb();
+    const existing = this.getBinding(bindingId);
+    if (!existing) {
+      return null;
+    }
+
+    return this.upsertBinding({
+      id: existing.id,
+      templateId: patch.templateId ?? existing.templateId,
+      conversationId: existing.conversationId,
+      enabled: Object.prototype.hasOwnProperty.call(patch, "enabled")
+        ? patch.enabled
+        : existing.enabled,
+      timeOfDay: patch.timeOfDay ?? existing.timeOfDay,
+      timezone: patch.timezone ?? existing.timezone,
+      nextRunAt: Object.prototype.hasOwnProperty.call(patch, "nextRunAt")
+        ? patch.nextRunAt
+        : existing.nextRunAt,
+      updatedAt: patch.updatedAt ?? Date.now()
+    });
+  }
+
+  deleteBinding(bindingId) {
+    const db = this.ensureDb();
+    const normalizedBindingId = normalizeText(bindingId);
+    if (!normalizedBindingId) {
+      return false;
+    }
+
+    const result = db
+      .prepare("DELETE FROM automation_bindings WHERE id = ?")
+      .run(normalizedBindingId);
+    return Number(result?.changes ?? 0) > 0;
+  }
+
+  deleteBindingByConversationId(conversationId) {
+    const db = this.ensureDb();
+    const normalizedConversationId = normalizeText(conversationId);
+    if (!normalizedConversationId) {
+      return false;
+    }
+
+    const result = db
+      .prepare("DELETE FROM automation_bindings WHERE conversation_id = ?")
+      .run(normalizedConversationId);
     return Number(result?.changes ?? 0) > 0;
   }
 
@@ -267,34 +434,39 @@ export class SqliteAutomationTaskStore {
     const rows = db
       .prepare(
         `
-          SELECT *
-          FROM automation_tasks
-          WHERE enabled = 1
-            AND status <> 'running'
-            AND next_run_at > 0
-            AND next_run_at <= ?
-          ORDER BY next_run_at ASC, updated_at ASC
+          SELECT
+            b.*,
+            t.name AS template_name,
+            t.prompt AS template_prompt
+          FROM automation_bindings b
+          JOIN automation_templates t ON t.id = b.template_id
+          WHERE b.enabled = 1
+            AND b.status <> 'running'
+            AND b.next_run_at > 0
+            AND b.next_run_at <= ?
+          ORDER BY b.next_run_at ASC, b.updated_at ASC
           LIMIT ?
         `
       )
       .all(numericNow, numericLimit);
 
-    return rows.map((row) => normalizeTaskRow(row)).filter(Boolean);
+    return rows.map((row) => normalizeBindingRow(row)).filter(Boolean);
   }
 
-  markTaskRunning(taskId, options = {}) {
+  markTaskRunning(bindingId, options = {}) {
     const db = this.ensureDb();
-    const normalizedTaskId = normalizeText(taskId);
-    if (!normalizedTaskId) {
+    const normalizedBindingId = normalizeText(bindingId);
+    if (!normalizedBindingId) {
       return false;
     }
 
     const now = Number(options.now ?? Date.now());
     const nextRunAt = Number(options.nextRunAt ?? 0);
+    const force = options.force === true ? 1 : 0;
 
     const result = db.prepare(
       `
-        UPDATE automation_tasks
+        UPDATE automation_bindings
         SET
           status = 'running',
           running_since = ?,
@@ -302,22 +474,22 @@ export class SqliteAutomationTaskStore {
           last_error = '',
           updated_at = ?
         WHERE id = ?
-          AND enabled = 1
+          AND (enabled = 1 OR ? = 1)
           AND status <> 'running'
       `
-    ).run(now, nextRunAt, nextRunAt, now, normalizedTaskId);
+    ).run(now, nextRunAt, nextRunAt, now, normalizedBindingId, force);
 
     return Number(result?.changes ?? 0) > 0;
   }
 
-  finishTaskRun(taskId, options = {}) {
+  finishTaskRun(bindingId, options = {}) {
     const db = this.ensureDb();
-    const normalizedTaskId = normalizeText(taskId);
-    if (!normalizedTaskId) {
+    const normalizedBindingId = normalizeText(bindingId);
+    if (!normalizedBindingId) {
       return null;
     }
 
-    const existing = this.getTask(normalizedTaskId);
+    const existing = this.getBinding(normalizedBindingId);
     if (!existing) {
       return null;
     }
@@ -328,7 +500,7 @@ export class SqliteAutomationTaskStore {
 
     db.prepare(
       `
-        UPDATE automation_tasks
+        UPDATE automation_bindings
         SET
           status = ?,
           running_since = 0,
@@ -343,9 +515,13 @@ export class SqliteAutomationTaskStore {
       success ? 1 : 0,
       now,
       now,
-      normalizedTaskId
+      normalizedBindingId
     );
 
-    return this.getTask(normalizedTaskId);
+    return this.getBinding(normalizedBindingId);
   }
+}
+
+function cryptoRandomSuffix() {
+  return `${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
 }

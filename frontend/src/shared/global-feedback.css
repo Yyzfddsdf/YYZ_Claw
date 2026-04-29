@@ -1,0 +1,237 @@
+.global-feedback-stack {
+  position: fixed;
+  z-index: 100000;
+  top: 1rem;
+  right: 1rem;
+  width: min(380px, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  pointer-events: none;
+}
+
+.global-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: start;
+  padding: 0.78rem 0.78rem 0.78rem 0.72rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, #2563eb 18%, rgba(148, 163, 184, 0.45));
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, #2563eb 12%, transparent), transparent 36%),
+    rgba(255, 255, 255, 0.94);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(16px);
+  animation: global-toast-in 0.18s ease-out;
+}
+
+.global-toast-success {
+  border-color: color-mix(in srgb, #059669 22%, rgba(148, 163, 184, 0.45));
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, #059669 14%, transparent), transparent 36%),
+    rgba(255, 255, 255, 0.94);
+}
+
+.global-toast-warning {
+  border-color: color-mix(in srgb, #f59e0b 26%, rgba(148, 163, 184, 0.45));
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, #f59e0b 16%, transparent), transparent 36%),
+    rgba(255, 255, 255, 0.94);
+}
+
+.global-toast-danger,
+.global-toast-error {
+  border-color: color-mix(in srgb, #dc2626 24%, rgba(148, 163, 184, 0.45));
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, #dc2626 14%, transparent), transparent 36%),
+    rgba(255, 255, 255, 0.94);
+}
+
+.global-toast-mark {
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 0 0 5px color-mix(in srgb, #2563eb 12%, transparent);
+}
+
+.global-toast-success .global-toast-mark {
+  background: #059669;
+  box-shadow: 0 0 0 5px color-mix(in srgb, #059669 12%, transparent);
+}
+
+.global-toast-warning .global-toast-mark {
+  background: #f59e0b;
+  box-shadow: 0 0 0 5px color-mix(in srgb, #f59e0b 14%, transparent);
+}
+
+.global-toast-danger .global-toast-mark,
+.global-toast-error .global-toast-mark {
+  background: #dc2626;
+  box-shadow: 0 0 0 5px color-mix(in srgb, #dc2626 12%, transparent);
+}
+
+.global-toast-copy {
+  min-width: 0;
+}
+
+.global-toast-copy strong {
+  display: block;
+  color: #0f172a;
+  font-size: 0.82rem;
+  margin-bottom: 0.1rem;
+}
+
+.global-toast-copy p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.global-toast-close {
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #64748b;
+  width: 1.45rem;
+  height: 1.45rem;
+  cursor: pointer;
+}
+
+.global-confirm-backdrop {
+  position: fixed;
+  z-index: 100001;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(245, 158, 11, 0.16), transparent 32%),
+    rgba(15, 23, 42, 0.36);
+  backdrop-filter: blur(10px);
+  animation: global-backdrop-in 0.14s ease-out;
+}
+
+.global-confirm {
+  width: min(440px, 100%);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #f59e0b 28%, rgba(148, 163, 184, 0.45));
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, #f59e0b 14%, transparent), transparent 34%),
+    #ffffff;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.34);
+  padding: 1.1rem;
+  animation: global-confirm-in 0.18s ease-out;
+}
+
+.global-confirm-danger {
+  border-color: color-mix(in srgb, #dc2626 24%, rgba(148, 163, 184, 0.45));
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, #dc2626 12%, transparent), transparent 34%),
+    #ffffff;
+}
+
+.global-confirm-orb {
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 0.9rem;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #f59e0b 82%, #ffffff), #fff7ed);
+  box-shadow: 0 12px 30px rgba(245, 158, 11, 0.24);
+  margin-bottom: 0.8rem;
+}
+
+.global-confirm-danger .global-confirm-orb {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #dc2626 78%, #ffffff), #fff1f2);
+  box-shadow: 0 12px 30px rgba(220, 38, 38, 0.22);
+}
+
+.global-confirm-copy h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.02rem;
+}
+
+.global-confirm-copy p {
+  margin: 0.45rem 0 0;
+  color: #475569;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.global-confirm-copy small {
+  display: block;
+  margin-top: 0.45rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.global-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.global-confirm-actions button {
+  border-radius: 999px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.global-confirm-cancel {
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: #ffffff;
+  color: #475569;
+}
+
+.global-confirm-accept {
+  border: 1px solid #dc2626;
+  background: #dc2626;
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(220, 38, 38, 0.18);
+}
+
+.global-confirm-cancel:hover,
+.global-confirm-accept:hover {
+  transform: translateY(-1px);
+}
+
+@keyframes global-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes global-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes global-confirm-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

@@ -41,10 +41,8 @@
 }
 
 .tpd-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 32;
+  position: fixed;
+  z-index: 100002;
   display: grid;
   grid-template-columns: minmax(68px, auto) auto minmax(68px, auto);
   gap: 8px;
@@ -53,10 +51,12 @@
   background: #ffffff;
   box-shadow: 0 12px 26px rgba(19, 41, 78, 0.18);
   padding: 8px;
+  max-width: calc(100vw - 24px);
 }
 
 .tpd-column {
   max-height: 220px;
+  max-height: inherit;
   overflow-y: auto;
   display: grid;
   gap: 4px;

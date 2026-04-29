@@ -26,6 +26,14 @@ function buildUserMessage(content, meta = {}) {
   };
 }
 
+function buildAutomationMessageContent(task, trigger) {
+  const templateName = normalizeText(task?.templateName) || "未命名任务";
+  const normalizedTrigger = normalizeText(trigger) || "schedule";
+  const triggerLabel = normalizedTrigger === "manual" ? "手动执行" : "定时调度";
+  const content = String(task?.templatePrompt ?? "").trim();
+  return `[自动化:${templateName}|${triggerLabel}]\n${content}`;
+}
+
 export function computeNextDailyRunAt(timeOfDay, now = Date.now()) {
   const normalized = normalizeTimeOfDay(timeOfDay);
   const [hourText, minuteText] = normalized.split(":");
@@ -124,25 +132,49 @@ export class AutomationSchedulerService {
 
   createTask(options = {}) {
     const id = normalizeText(options.id) || `auto_${randomUUID()}`;
-    const enabled = options.enabled !== false;
-    const timeOfDay = normalizeTimeOfDay(options.timeOfDay);
-    const nextRunAt = enabled ? computeNextDailyRunAt(timeOfDay) : 0;
-
     return this.taskStore.createTask({
       id,
       name: normalizeText(options.name),
-      prompt: String(options.prompt ?? "").trim(),
-      conversationId: normalizeText(options.conversationId),
-      workplacePath: normalizeText(options.workplacePath),
-      enabled,
-      timeOfDay,
-      timezone: normalizeText(options.timezone) || "Asia/Shanghai",
-      nextRunAt
+      prompt: String(options.prompt ?? "").trim()
     });
   }
 
   updateTask(taskId, patch = {}) {
     const existing = this.taskStore.getTask(taskId);
+    if (!existing) {
+      return null;
+    }
+
+    return this.taskStore.updateTask(taskId, {
+      name: patch.name ?? existing.name,
+      prompt: patch.prompt ?? existing.prompt,
+      updatedAt: Date.now()
+    });
+  }
+
+  deleteTask(taskId) {
+    return this.taskStore.deleteTask(taskId);
+  }
+
+  listBindings() {
+    return this.taskStore?.listBindings?.() ?? [];
+  }
+
+  upsertBinding(options = {}) {
+    const timeOfDay = normalizeTimeOfDay(options.timeOfDay);
+    const enabled = options.enabled !== false;
+    return this.taskStore.upsertBinding({
+      templateId: normalizeText(options.templateId),
+      conversationId: normalizeText(options.conversationId),
+      enabled,
+      timeOfDay,
+      timezone: normalizeText(options.timezone) || "Asia/Shanghai",
+      nextRunAt: enabled ? computeNextDailyRunAt(timeOfDay) : 0
+    });
+  }
+
+  updateBinding(bindingId, patch = {}) {
+    const existing = this.taskStore.getBinding(bindingId);
     if (!existing) {
       return null;
     }
@@ -157,36 +189,40 @@ export class AutomationSchedulerService {
       Object.prototype.hasOwnProperty.call(patch, "enabled")
       || Object.prototype.hasOwnProperty.call(patch, "timeOfDay");
 
-    return this.taskStore.updateTask(taskId, {
-      ...patch,
+    return this.taskStore.updateBinding(bindingId, {
+      templateId: patch.templateId ?? existing.templateId,
       enabled: nextEnabled,
       timeOfDay: nextTimeOfDay,
-      status: nextEnabled ? "idle" : "disabled",
-      runningSince: 0,
+      timezone: patch.timezone ?? existing.timezone,
       nextRunAt: shouldResetNextRun ? (nextEnabled ? computeNextDailyRunAt(nextTimeOfDay) : 0) : existing.nextRunAt,
       updatedAt: Date.now()
     });
   }
 
-  deleteTask(taskId) {
-    return this.taskStore.deleteTask(taskId);
+  deleteBinding(bindingId) {
+    return this.taskStore.deleteBinding(bindingId);
   }
 
-  runTaskNow(taskId) {
-    const task = this.taskStore.getTask(taskId);
-    if (!task) {
+  deleteBindingByConversationId(conversationId) {
+    return this.taskStore.deleteBindingByConversationId(conversationId);
+  }
+
+  runBindingNow(bindingId) {
+    const binding = this.taskStore.getBinding(bindingId);
+    if (!binding) {
       return null;
     }
 
-    if (task.status === "running") {
+    if (binding.status === "running") {
       const error = new Error("automation task is already running");
       error.statusCode = 409;
       throw error;
     }
 
-    const claimed = this.taskStore.markTaskRunning(task.id, {
+    const claimed = this.taskStore.markTaskRunning(binding.id, {
       now: Date.now(),
-      nextRunAt: task.enabled ? computeNextDailyRunAt(task.timeOfDay) : task.nextRunAt
+      nextRunAt: binding.enabled ? computeNextDailyRunAt(binding.timeOfDay) : binding.nextRunAt,
+      force: true
     });
 
     if (!claimed) {
@@ -195,56 +231,16 @@ export class AutomationSchedulerService {
       throw error;
     }
 
-    void this.executeTask(task.id, {
+    void this.executeTask(binding.id, {
       trigger: "manual"
     });
 
-    return this.taskStore.getTask(task.id);
-  }
-
-  ensureConversationForTask(task) {
-    const currentConversationId = normalizeText(task?.conversationId);
-    const existingConversation = currentConversationId
-      ? this.historyStore?.getConversation?.(currentConversationId)
-      : null;
-
-    if (existingConversation) {
-      return existingConversation;
-    }
-
-    const conversationId = currentConversationId || `conv_auto_${randomUUID()}`;
-    const now = Date.now();
-
-    const conversation = this.historyStore.upsertConversation({
-      conversationId,
-      title: `[自动化] ${normalizeText(task?.name) || "未命名任务"}`,
-      workplacePath:
-        normalizeText(task?.workplacePath) ||
-        normalizeText(existingConversation?.workplacePath) ||
-        this.defaultWorkplacePath ||
-        process.cwd(),
-      source: "automation",
-      approvalMode: "auto",
-      messages: []
-    });
-
-    if (!conversation) {
-      throw new Error("failed to create automation conversation");
-    }
-
-    if (conversationId !== currentConversationId) {
-      this.taskStore.updateTask(task.id, {
-        conversationId,
-        updatedAt: now
-      });
-    }
-
-    return conversation;
+    return this.taskStore.getBinding(binding.id);
   }
 
   async executeTask(taskId, options = {}) {
     const now = Date.now();
-    const task = this.taskStore.getTask(taskId);
+    const task = this.taskStore.getBinding(taskId);
 
     if (!task) {
       return;
@@ -257,7 +253,13 @@ export class AutomationSchedulerService {
     let detachConversationBroadcast = () => {};
 
     try {
-      const conversation = this.ensureConversationForTask(task);
+      const conversationId = normalizeText(task?.conversationId);
+      const conversation = conversationId
+        ? this.historyStore?.getConversation?.(conversationId)
+        : null;
+      if (!conversation) {
+        throw new Error("automation bound conversation not found");
+      }
       this.orchestratorSupervisorService?.ensureSession?.(conversation.id);
       const resolvedRuntime = await this.runtimeService.resolveConversationRuntime(conversation.id);
       foregroundRun = this.wakeDispatcher?.beginForegroundRun?.({
@@ -272,11 +274,13 @@ export class AutomationSchedulerService {
         this.conversationRunCoordinator?.attachConversationBroadcast?.(foregroundRun, {
           listenerId: `automation_broadcast_${String(task.id ?? "").trim()}_${Date.now()}`
         }) ?? (() => {});
-      const message = buildUserMessage(task.prompt, {
+      const trigger = normalizeText(options.trigger) || "schedule";
+      const message = buildUserMessage(buildAutomationMessageContent(task, trigger), {
         kind: "automation_trigger",
-        automationTaskId: task.id,
-        automationTaskName: task.name,
-        trigger: normalizeText(options.trigger) || "schedule",
+        automationBindingId: task.id,
+        automationTemplateId: task.templateId,
+        automationTemplateName: task.templateName,
+        trigger,
         scheduledAt: now
       });
 

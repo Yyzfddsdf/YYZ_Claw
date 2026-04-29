@@ -1,6 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 const PERSONA_FILE_NAME = "persona.json";
+const DEFAULT_PERSONA_ID = "YYZ_CLAW 默认";
+const DEFAULT_PERSONA = {
+  id: DEFAULT_PERSONA_ID,
+  name: "YYZ_CLAW 默认",
+  description: "清醒、直接、能打硬仗的通用助手。",
+  prompt: "保持 YYZ_CLAW 的通用智能助手身份。沟通直接、判断清楚、行动稳定。遇到复杂任务先抓关键路径，遇到风险明确指出，默认把事情推进到可验证结果。",
+  accentColor: "#2563eb",
+  avatarPath: "avatar.svg",
+  createdAt: 0,
+  updatedAt: 0
+};
+const DEFAULT_AVATAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#0f172a"/></linearGradient></defs><rect width="128" height="128" rx="32" fill="url(#g)"/><path d="M24 86c18-30 44-46 80-54v72H24z" fill="rgba(255,255,255,.16)"/><text x="64" y="71" text-anchor="middle" font-family="Arial,sans-serif" font-size="30" font-weight="800" fill="#fff">YYZ</text></svg>`;
 
 function normalizeText(value, maxLength = 20000) {
   return String(value ?? "").trim().slice(0, maxLength);
@@ -79,6 +91,29 @@ function avatarContentType(filePath) {
 export class PersonaStore {
   constructor(options = {}) {
     this.rootDir = options.rootDir;
+  }
+
+  async ensureDefaultPersona() {
+    const personaDir = this.resolvePersonaDir(DEFAULT_PERSONA_ID);
+    if (!personaDir) {
+      throw new Error("invalid default persona id");
+    }
+
+    await fs.mkdir(personaDir, { recursive: true });
+
+    const personaFile = path.join(personaDir, PERSONA_FILE_NAME);
+    if (!(await pathExists(personaFile))) {
+      await fs.writeFile(
+        personaFile,
+        JSON.stringify(serializePersona(DEFAULT_PERSONA), null, 2),
+        "utf8"
+      );
+    }
+
+    const avatarFile = path.join(personaDir, "avatar.svg");
+    if (!(await pathExists(avatarFile))) {
+      await fs.writeFile(avatarFile, DEFAULT_AVATAR_SVG, "utf8");
+    }
   }
 
   resolvePersonaDir(personaId) {

@@ -23,6 +23,7 @@ import {
   upsertHistoryById,
   streamChat
 } from "../../api/chatApi";
+import { confirmAction } from "../../shared/feedback";
 import { fetchPersonas } from "../../api/personasApi";
 import {
   applyToolResultToPayload,
@@ -2202,11 +2203,13 @@ export function useChatSession(maxContextWindow = 0) {
       String(targetMessage.role ?? "").trim() === "assistant" &&
       Array.isArray(targetMessage.toolCalls) &&
       targetMessage.toolCalls.length > 0;
-    const confirmed = window.confirm(
-      shouldCascadeTools
+    const confirmed = await confirmAction({
+      title: "删除消息",
+      message: shouldCascadeTools
         ? "删除这条 assistant 消息时，会同时删除本轮关联的工具消息。继续吗？"
-        : "确定删除这条消息吗？"
-    );
+        : "确定删除这条消息吗？",
+      confirmLabel: "删除"
+    });
 
     if (!confirmed) {
       return;

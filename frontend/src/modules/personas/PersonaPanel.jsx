@@ -6,6 +6,7 @@ import {
   updatePersona,
   uploadPersonaAvatar
 } from "../../api/personasApi";
+import { confirmAction } from "../../shared/feedback";
 import "./personas.css";
 
 function emptyDraft() {
@@ -106,7 +107,11 @@ export function PersonaPanel({ chat, onNavigate }) {
       return;
     }
 
-    const confirmed = window.confirm(`确定删除身份「${draft.name || draft.id}」吗？`);
+    const confirmed = await confirmAction({
+      title: "删除 Agent 身份",
+      message: `确定删除身份「${draft.name || draft.id}」吗？`,
+      confirmLabel: "删除"
+    });
     if (!confirmed) {
       return;
     }

@@ -109,6 +109,7 @@ export class ConversationAgentRuntimeService {
     this.skillCatalog = options.skillCatalog ?? null;
     this.skillValidator = options.skillValidator ?? null;
     this.skillPromptBuilder = options.skillPromptBuilder ?? null;
+    this.personaStore = options.personaStore ?? null;
     this.memorySummaryService = options.memorySummaryService ?? null;
     this.orchestratorSchedulerService = options.orchestratorSchedulerService ?? null;
     this.orchestratorStore = options.orchestratorStore ?? null;
@@ -137,6 +138,7 @@ export class ConversationAgentRuntimeService {
           : [];
 
     if (!isSubagent) {
+      const personaPrompt = await this.personaStore?.resolvePrompt?.(history?.personaId);
       return {
         history,
         sessionId: sessionId || conversationId,
@@ -144,7 +146,8 @@ export class ConversationAgentRuntimeService {
         agentType: "primary",
         isSubagent: false,
         activeSkillNames,
-        developerPrompt: normalizeText(history?.developerPrompt),
+        developerPrompt: "",
+        personaPrompt: normalizeText(personaPrompt),
         definitionPrompt: "",
         chatAgent: this.chatAgent
       };
@@ -165,6 +168,7 @@ export class ConversationAgentRuntimeService {
       isSubagent: true,
       activeSkillNames,
       developerPrompt: "",
+      personaPrompt: "",
       definitionPrompt: normalizeText(runtime?.definitionSystemPrompt),
       chatAgent: runtime?.chatAgent ?? this.chatAgent
     };
@@ -281,6 +285,7 @@ export class ConversationAgentRuntimeService {
       workspacePath: workplacePath,
       memorySummaryPrompt: pinnedMemorySummaryPrompt,
       developerPrompt: resolved.developerPrompt,
+      personaPrompt: resolved.personaPrompt,
       activeSkillNames: resolved.activeSkillNames,
       definitionPrompt: resolved.definitionPrompt,
       includeAgentsPrompt: !resolved.isSubagent,
@@ -348,6 +353,7 @@ export class ConversationAgentRuntimeService {
       skillPromptBuilder: this.skillPromptBuilder,
       activeSkillNames: resolved.activeSkillNames,
       developerPrompt: resolved.developerPrompt,
+      personaPrompt: resolved.personaPrompt,
       orchestratorSchedulerService: this.orchestratorSchedulerService,
       orchestratorStore: this.orchestratorStore,
       orchestratorSupervisorService: this.orchestratorSupervisorService,

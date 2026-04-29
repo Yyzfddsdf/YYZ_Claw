@@ -417,6 +417,7 @@ export class SqliteChatHistoryStore {
         model TEXT NOT NULL DEFAULT '',
         approval_mode TEXT NOT NULL DEFAULT 'confirm',
         skills_json TEXT NOT NULL DEFAULT '[]',
+        persona_id TEXT NOT NULL DEFAULT '',
         developer_prompt TEXT NOT NULL DEFAULT '',
         memory_summary_prompt TEXT DEFAULT NULL,
         workplace_locked INTEGER NOT NULL DEFAULT 0,
@@ -434,6 +435,7 @@ export class SqliteChatHistoryStore {
     this.ensureConversationLineageColumns();
     this.ensureConversationApprovalModeColumn();
     this.ensureConversationSkillsColumn();
+    this.ensureConversationPersonaColumn();
     this.ensureConversationDeveloperPromptColumn();
     this.ensureConversationMemorySummaryPromptColumn();
     this.ensureConversationTokenUsageColumns();
@@ -554,6 +556,16 @@ export class SqliteChatHistoryStore {
 
     if (!columnNames.has("skills_json")) {
       db.exec("ALTER TABLE conversations ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'");
+    }
+  }
+
+  ensureConversationPersonaColumn() {
+    const db = this.ensureDb();
+    const columns = db.prepare("PRAGMA table_info(conversations)").all();
+    const columnNames = new Set(columns.map((item) => String(item.name)));
+
+    if (!columnNames.has("persona_id")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN persona_id TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -868,6 +880,7 @@ export class SqliteChatHistoryStore {
         c.model,
         c.approval_mode,
         c.skills_json,
+        c.persona_id,
         c.developer_prompt,
         c.memory_summary_prompt,
         c.workplace_locked,
@@ -916,6 +929,7 @@ export class SqliteChatHistoryStore {
       model: String(item.model ?? "").trim(),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
+      personaId: String(item.persona_id ?? "").trim(),
       developerPrompt: String(item.developer_prompt ?? ""),
       memorySummaryPrompt:
         item.memory_summary_prompt == null ? null : String(item.memory_summary_prompt ?? ""),
@@ -977,6 +991,7 @@ export class SqliteChatHistoryStore {
             c.model,
             c.approval_mode,
             c.skills_json,
+            c.persona_id,
             c.developer_prompt,
             c.memory_summary_prompt,
             c.workplace_locked,
@@ -1028,6 +1043,7 @@ export class SqliteChatHistoryStore {
       model: String(item.model ?? "").trim(),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
+      personaId: String(item.persona_id ?? "").trim(),
       developerPrompt: String(item.developer_prompt ?? ""),
       memorySummaryPrompt:
         item.memory_summary_prompt == null ? null : String(item.memory_summary_prompt ?? ""),
@@ -1055,6 +1071,7 @@ export class SqliteChatHistoryStore {
             model,
             approval_mode,
             skills_json,
+            persona_id,
             developer_prompt,
             memory_summary_prompt,
             workplace_locked,
@@ -1116,6 +1133,7 @@ export class SqliteChatHistoryStore {
       model: String(conversation.model ?? "").trim(),
       approvalMode: normalizeApprovalMode(conversation.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(conversation.skills_json, [])),
+      personaId: String(conversation.persona_id ?? "").trim(),
       developerPrompt: String(conversation.developer_prompt ?? ""),
       memorySummaryPrompt:
         conversation.memory_summary_prompt == null
@@ -1466,6 +1484,7 @@ export class SqliteChatHistoryStore {
         skills_json,
         workplace_locked,
         created_at,
+        persona_id,
         developer_prompt,
         memory_summary_prompt
           FROM conversations
@@ -1494,6 +1513,7 @@ export class SqliteChatHistoryStore {
       String(payload.model ?? existing?.model ?? "").trim();
     const developerPrompt =
       String(payload.developerPrompt ?? existing?.developer_prompt ?? "").trim();
+    const personaId = String(payload.personaId ?? existing?.persona_id ?? "").trim();
     const hasMemorySummaryPrompt =
       Object.prototype.hasOwnProperty.call(payload, "memorySummaryPrompt");
     const memorySummaryPrompt = hasMemorySummaryPrompt
@@ -1544,6 +1564,7 @@ export class SqliteChatHistoryStore {
             model = ?,
             approval_mode = ?,
             skills_json = ?,
+            persona_id = ?,
             developer_prompt = ?,
             memory_summary_prompt = ?,
             updated_at = ?
@@ -1557,6 +1578,7 @@ export class SqliteChatHistoryStore {
           model,
           approvalMode,
           JSON.stringify(skills),
+          personaId,
           developerPrompt,
           memorySummaryPrompt,
           updatedAt,
@@ -1575,13 +1597,14 @@ export class SqliteChatHistoryStore {
               model,
               approval_mode,
               skills_json,
+              persona_id,
               developer_prompt,
               memory_summary_prompt,
               workplace_locked,
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
           `
         ).run(
           conversationId,
@@ -1592,6 +1615,7 @@ export class SqliteChatHistoryStore {
           model,
           approvalMode,
           JSON.stringify(skills),
+          personaId,
           developerPrompt,
           memorySummaryPrompt,
           createdAt,
@@ -1650,6 +1674,7 @@ export class SqliteChatHistoryStore {
       model: payload.model ?? existing.model,
       approvalMode: payload.approvalMode ?? existing.approvalMode,
       skills: payload.skills ?? existing.skills,
+      personaId: payload.personaId ?? existing.personaId,
       developerPrompt: payload.developerPrompt ?? existing.developerPrompt,
       memorySummaryPrompt:
         Object.prototype.hasOwnProperty.call(payload, "memorySummaryPrompt")
@@ -1944,6 +1969,7 @@ export class SqliteChatHistoryStore {
       model: payload.model ?? sourceConversation.model,
       approvalMode: payload.approvalMode ?? sourceConversation.approvalMode,
       skills: payload.skills ?? sourceConversation.skills,
+      personaId: payload.personaId ?? sourceConversation.personaId,
       developerPrompt: payload.developerPrompt ?? sourceConversation.developerPrompt,
       memorySummaryPrompt:
         Object.prototype.hasOwnProperty.call(payload, "memorySummaryPrompt")
@@ -2096,6 +2122,56 @@ export class SqliteChatHistoryStore {
     ).run(JSON.stringify(normalizedSkills), conversationId);
 
     return this.getConversation(conversationId);
+  }
+
+  updateConversationPersona(conversationId, personaId) {
+    const db = this.ensureDb();
+    const normalizedPersonaId = String(personaId ?? "").trim();
+
+    const existing = db
+      .prepare(
+        `
+          SELECT id
+          FROM conversations
+          WHERE id = ?
+        `
+      )
+      .get(conversationId);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET persona_id = ?, updated_at = ?
+        WHERE id = ?
+      `
+    ).run(normalizedPersonaId, Date.now(), conversationId);
+
+    return this.getConversation(conversationId);
+  }
+
+  replaceConversationPersonaId(previousPersonaId, nextPersonaId) {
+    const db = this.ensureDb();
+    const previousId = String(previousPersonaId ?? "").trim();
+    const nextId = String(nextPersonaId ?? "").trim();
+    if (!previousId || previousId === nextId) {
+      return 0;
+    }
+
+    const result = db
+      .prepare(
+        `
+          UPDATE conversations
+          SET persona_id = ?
+          WHERE persona_id = ?
+        `
+      )
+      .run(nextId, previousId);
+
+    return Number(result?.changes ?? 0);
   }
 
   updateConversationDeveloperPrompt(conversationId, developerPrompt) {

@@ -14,6 +14,7 @@ import {
   REMOTE_CONTROL_TOOLS_DIR,
   MEMORY_SUMMARY_FILE,
   MEMORY_SUMMARY_DIR,
+  PERSONAS_DIR,
   DEBATE_DB_FILE,
   HISTORY_DB_FILE,
   HISTORY_DIR,
@@ -30,6 +31,7 @@ import { FeishuConfigStore } from "../im/feishu/config/FeishuConfigStore.js";
 import { ApprovalRulesStore } from "../services/config/ApprovalRulesStore.js";
 import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
 import { MemorySummaryStore } from "../services/config/MemorySummaryStore.js";
+import { PersonaStore } from "../services/personas/PersonaStore.js";
 import { McpConfigStore } from "../services/config/McpConfigStore.js";
 import { ConversationCompressionService } from "../services/context/ConversationCompressionService.js";
 import { AttachmentParserService } from "../services/files/AttachmentParserService.js";
@@ -119,6 +121,9 @@ export async function createServices() {
 
   const skillPromptBuilder = new SkillPromptBuilder({ skillCatalog });
   const skillValidator = new SkillValidator({ skillCatalog });
+  const personaStore = new PersonaStore({
+    rootDir: PERSONAS_DIR
+  });
 
   const mcpManager = new McpManager({
     configStore: mcpConfigStore
@@ -253,6 +258,7 @@ export async function createServices() {
     agentsPromptStore,
     memorySummaryStore,
     skillPromptBuilder,
+    personaStore,
     memoryStore,
     longTermMemoryRecallService,
     remoteHookRegistry,
@@ -307,6 +313,7 @@ export async function createServices() {
     skillCatalog,
     skillValidator,
     skillPromptBuilder,
+    personaStore,
     memorySummaryService,
     orchestratorSchedulerService,
     orchestratorStore,
@@ -389,6 +396,7 @@ export async function createServices() {
     skillCatalog,
     skillPromptBuilder,
     skillValidator,
+    personaStore,
     mcpManager,
     speechToTextService,
     edgeTextToSpeechService,

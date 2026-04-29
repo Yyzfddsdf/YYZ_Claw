@@ -7,6 +7,7 @@ import {
   saveRemoteControlConfig
 } from "../../api/remoteControlApi";
 import { fetchSkills, selectWorkplaceBySystemDialog } from "../../api/chatApi";
+import { fetchPersonas } from "../../api/personasApi";
 import { formatTimestamp } from "../../shared/formatTimestamp";
 import { MarkdownMessage } from "../chat/MarkdownMessage";
 import { parseToolMessagePayload } from "../chat/toolMessageCodec";
@@ -84,9 +85,21 @@ function normalizeGlobalConfig(config) {
   return {
     activeProviderKey: String(config?.activeProviderKey ?? "").trim().toLowerCase(),
     workspacePath: String(config?.workspacePath ?? "").trim(),
-    developerPrompt: String(config?.developerPrompt ?? ""),
+    personaId: String(config?.personaId ?? "").trim(),
     activeSkillNames: normalizeSkillNames(config?.activeSkillNames)
   };
+}
+
+function normalizePersonaCatalog(personas) {
+  return (Array.isArray(personas) ? personas : [])
+    .map((item) => ({
+      id: String(item?.id ?? "").trim(),
+      name: String(item?.name ?? "").trim(),
+      description: String(item?.description ?? "").trim(),
+      avatarUrl: String(item?.avatarUrl ?? "").trim(),
+      accentColor: String(item?.accentColor ?? "#2563eb").trim() || "#2563eb"
+    }))
+    .filter((item) => item.id && item.name);
 }
 
 function normalizeProviderConfig(config) {
@@ -343,7 +356,7 @@ export function RemoteControlPanel() {
     normalizeGlobalConfig({
       activeProviderKey: "",
       workspacePath: "",
-      developerPrompt: "",
+      personaId: "",
       activeSkillNames: []
     })
   );
@@ -352,6 +365,8 @@ export function RemoteControlPanel() {
   const [skillCatalog, setSkillCatalog] = useState([]);
   const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
   const [skillCatalogRefreshing, setSkillCatalogRefreshing] = useState(false);
+  const [personaCatalog, setPersonaCatalog] = useState([]);
+  const [personaCatalogLoaded, setPersonaCatalogLoaded] = useState(false);
   const [workplaceSelecting, setWorkplaceSelecting] = useState(false);
   const [records, setRecords] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
@@ -368,8 +383,11 @@ export function RemoteControlPanel() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
+  const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
   const skillCatalogRequestIdRef = useRef(0);
+  const personaCatalogRequestIdRef = useRef(0);
   const providerMenuRef = useRef(null);
+  const personaMenuRef = useRef(null);
 
   const sortedRecords = useMemo(
     () => [...records].sort((left, right) => Number(left?.seq ?? 0) - Number(right?.seq ?? 0)),
@@ -418,18 +436,25 @@ export function RemoteControlPanel() {
     ],
     [providers]
   );
+  const activePersona = useMemo(
+    () => personaCatalog.find((item) => item.id === globalConfig.personaId) ?? null,
+    [personaCatalog, globalConfig.personaId]
+  );
 
   useEffect(() => {
     function handleGlobalPointerDown(event) {
-      if (!providerMenuRef.current || providerMenuRef.current.contains(event.target)) {
-        return;
+      if (providerMenuRef.current && !providerMenuRef.current.contains(event.target)) {
+        setProviderMenuOpen(false);
       }
-      setProviderMenuOpen(false);
+      if (personaMenuRef.current && !personaMenuRef.current.contains(event.target)) {
+        setPersonaMenuOpen(false);
+      }
     }
 
     function handleGlobalKeyDown(event) {
       if (event.key === "Escape") {
         setProviderMenuOpen(false);
+        setPersonaMenuOpen(false);
       }
     }
 
@@ -474,6 +499,30 @@ export function RemoteControlPanel() {
     }
   }
 
+  async function refreshPersonaCatalog({ silent = false } = {}) {
+    const requestId = ++personaCatalogRequestIdRef.current;
+    if (!silent) {
+      setPersonaCatalogLoaded(false);
+    }
+
+    try {
+      const response = await fetchPersonas();
+      if (requestId !== personaCatalogRequestIdRef.current) {
+        return;
+      }
+      setPersonaCatalog(normalizePersonaCatalog(response?.personas));
+    } catch {
+      if (requestId !== personaCatalogRequestIdRef.current) {
+        return;
+      }
+      setPersonaCatalog([]);
+    } finally {
+      if (requestId === personaCatalogRequestIdRef.current) {
+        setPersonaCatalogLoaded(true);
+      }
+    }
+  }
+
   async function loadConfig() {
     const response = await fetchRemoteControlConfig();
     const normalizedConfig = normalizeGlobalConfig(response?.config ?? {});
@@ -487,7 +536,10 @@ export function RemoteControlPanel() {
       return isEmptyProviderConfig(next) ? normalizeProviderConfig(prev) : next;
     });
     setProviders(normalizeProviders(response?.providers));
-    await refreshSkillCatalog({ workspacePath: normalizedConfig.workspacePath, silent: true });
+    await Promise.all([
+      refreshSkillCatalog({ workspacePath: normalizedConfig.workspacePath, silent: true }),
+      refreshPersonaCatalog({ silent: true })
+    ]);
   }
 
   async function loadRecords({ append = false } = {}) {
@@ -589,7 +641,7 @@ export function RemoteControlPanel() {
       const payload = {
         activeProviderKey: globalConfig.activeProviderKey,
         workspacePath: globalConfig.workspacePath,
-        developerPrompt: globalConfig.developerPrompt,
+        personaId: globalConfig.personaId,
         activeSkillNames: normalizeSkillNames(globalConfig.activeSkillNames)
       };
       if (normalizedActiveProviderKey && !isEmptyProviderConfig(providerConfig)) {
@@ -602,7 +654,10 @@ export function RemoteControlPanel() {
       setGlobalConfig(normalizedConfig);
       setProviderConfig(normalizeProviderConfig(response?.providerConfig ?? providerConfig));
       setProviders(normalizeProviders(response?.providers ?? providers));
-      await refreshSkillCatalog({ workspacePath: normalizedConfig.workspacePath, silent: true });
+      await Promise.all([
+        refreshSkillCatalog({ workspacePath: normalizedConfig.workspacePath, silent: true }),
+        refreshPersonaCatalog({ silent: true })
+      ]);
       setMessage("远程控制配置已保存");
       await loadRecords();
     } catch (saveError) {
@@ -959,18 +1014,127 @@ export function RemoteControlPanel() {
             </section>
 
             <section className="rc-settings-column">
-              <label>
-                <span>主智能体同款提示词</span>
-                <textarea
-                  value={globalConfig.developerPrompt}
-                  onChange={(event) => updateGlobalField("developerPrompt", event.target.value)}
-                  rows={14}
-                  placeholder="写入后会作为 system prompt 注入远程回合。"
-                  disabled={saving}
-                />
-              </label>
+              <div className="rc-persona-picker-block">
+                <div className="rc-persona-picker-head">
+                  <div>
+                    <span className="rc-persona-picker-title">Agent 身份</span>
+                    <p>复用 Chat 的身份资产，远程回合运行时只注入选中的 persona prompt。</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="rc-skills-refresh"
+                    onClick={() => refreshPersonaCatalog()}
+                    disabled={saving || !personaCatalogLoaded}
+                  >
+                    刷新身份
+                  </button>
+                </div>
+
+                <div
+                  className="rc-persona-picker"
+                  ref={personaMenuRef}
+                  style={{ "--persona-accent": activePersona?.accentColor || "#2563eb" }}
+                >
+                  <button
+                    type="button"
+                    className={`rc-persona-trigger ${personaMenuOpen ? "is-open" : ""}`}
+                    onClick={() => setPersonaMenuOpen((prev) => !prev)}
+                    disabled={saving || !personaCatalogLoaded}
+                    aria-haspopup="listbox"
+                    aria-expanded={personaMenuOpen}
+                  >
+                    <span className="rc-persona-avatar">
+                      {activePersona?.avatarUrl ? (
+                        <img src={activePersona.avatarUrl} alt="" />
+                      ) : (
+                        <span>{activePersona?.name?.slice(0, 2) || "AI"}</span>
+                      )}
+                    </span>
+                    <span className="rc-persona-trigger-copy">
+                      <strong>{activePersona?.name || "不使用身份"}</strong>
+                      <small>
+                        {activePersona?.description ||
+                          (personaCatalogLoaded ? `${personaCatalog.length} 个可用身份` : "身份加载中...")}
+                      </small>
+                    </span>
+                    <span className="rc-select-caret" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                      </svg>
+                    </span>
+                  </button>
+
+                  {personaMenuOpen && (
+                    <div className="rc-persona-menu" role="listbox" aria-label="选择 Agent 身份">
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={!activePersona}
+                        className={`rc-persona-option ${!activePersona ? "is-selected" : ""}`}
+                        onClick={() => {
+                          updateGlobalField("personaId", "");
+                          setPersonaMenuOpen(false);
+                        }}
+                      >
+                        <span className="rc-persona-avatar is-muted">AI</span>
+                        <span className="rc-persona-option-copy">
+                          <strong>不使用身份</strong>
+                          <small>只使用 YYZ_CLAW 默认远程行为</small>
+                        </span>
+                        {!activePersona && <small className="rc-persona-selected-mark">已选</small>}
+                      </button>
+
+                      {personaCatalog.map((persona) => {
+                        const selected = persona.id === globalConfig.personaId;
+                        return (
+                          <button
+                            key={persona.id}
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            className={`rc-persona-option ${selected ? "is-selected" : ""}`}
+                            style={{ "--persona-accent": persona.accentColor || "#2563eb" }}
+                            onClick={() => {
+                              updateGlobalField("personaId", persona.id);
+                              setPersonaMenuOpen(false);
+                            }}
+                          >
+                            {persona.avatarUrl ? (
+                              <img className="rc-persona-avatar" src={persona.avatarUrl} alt="" />
+                            ) : (
+                              <span className="rc-persona-avatar">{persona.name.slice(0, 2).toUpperCase()}</span>
+                            )}
+                            <span className="rc-persona-option-copy">
+                              <strong>{persona.name}</strong>
+                              <small>{persona.description || persona.id}</small>
+                            </span>
+                            {selected && <small className="rc-persona-selected-mark">已选</small>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {activePersona ? (
+                  <div
+                    className="rc-persona-preview"
+                    style={{ "--persona-accent": activePersona.accentColor || "#2563eb" }}
+                  >
+                    {activePersona.avatarUrl && (
+                      <img className="rc-persona-preview-avatar" src={activePersona.avatarUrl} alt="" />
+                    )}
+                    <div>
+                      <strong>{activePersona.name}</strong>
+                      <p>{activePersona.description || "这个身份没有描述。"}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rc-empty-inline">当前远程回合不会额外注入身份 prompt。</div>
+                )}
+              </div>
               <p className="rc-inline-note">
-                远程链路已对齐主智能体多层 system 注入（developer / AGENTS / workplace / long-term-memory / skills），且不注入 memory_summary。
+                远程链路已对齐主智能体多层 system 注入（persona / AGENTS / workplace / long-term-memory / skills），且不注入 memory_summary。
               </p>
             </section>
           </div>

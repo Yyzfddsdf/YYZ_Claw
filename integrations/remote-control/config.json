@@ -1,9 +1,10 @@
 {
   "activeProviderKey": "",
   "workspacePath": "D:\\Work\\AntiFraud-AI-Assistant",
-  "developerPrompt": "hytrttyrhtg",
+  "personaId": "测试破坏王",
   "activeSkillNames": [
     "global:yyz_greeting",
     "global:session-memory"
   ]
 }
+

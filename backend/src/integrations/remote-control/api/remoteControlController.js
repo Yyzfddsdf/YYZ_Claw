@@ -57,7 +57,8 @@ function normalizeProviderConfig(value) {
 export function createRemoteControlController({
   remoteControlConfigStore,
   remoteControlProviderRegistry,
-  remoteControlHistoryStore
+  remoteControlHistoryStore,
+  personaStore
 }) {
   if (!remoteControlConfigStore) {
     throw new Error("remoteControlConfigStore is required");
@@ -106,7 +107,7 @@ export function createRemoteControlController({
       config: {
         activeProviderKey,
         workspacePath: String(config.workspacePath ?? "").trim(),
-        developerPrompt: String(config.developerPrompt ?? "").trim(),
+        personaId: String(config.personaId ?? "").trim(),
         activeSkillNames: normalizeSkillNames(config.activeSkillNames)
       },
       providers
@@ -186,7 +187,7 @@ export function createRemoteControlController({
       const previousActiveProviderKey = normalizeProviderKey(state.config.activeProviderKey);
       let activeProviderKey = state.config.activeProviderKey;
       let workspacePath = String(state.config.workspacePath ?? "").trim();
-      let developerPrompt = String(state.config.developerPrompt ?? "").trim();
+      let personaId = String(state.config.personaId ?? "").trim();
       let activeSkillNames = normalizeSkillNames(state.config.activeSkillNames);
       if (validation.data.activeProviderKey !== undefined) {
         const requestedKey = normalizeProviderKey(validation.data.activeProviderKey);
@@ -198,8 +199,15 @@ export function createRemoteControlController({
       if (validation.data.workspacePath !== undefined) {
         workspacePath = String(validation.data.workspacePath ?? "").trim();
       }
-      if (validation.data.developerPrompt !== undefined) {
-        developerPrompt = String(validation.data.developerPrompt ?? "").trim();
+      if (validation.data.personaId !== undefined) {
+        const requestedPersonaId = String(validation.data.personaId ?? "").trim();
+        if (requestedPersonaId) {
+          const persona = await personaStore?.getPersona?.(requestedPersonaId);
+          if (!persona) {
+            throw createValidationError("persona not found");
+          }
+        }
+        personaId = requestedPersonaId;
       }
       if (validation.data.activeSkillNames !== undefined) {
         activeSkillNames = normalizeSkillNames(validation.data.activeSkillNames);
@@ -208,7 +216,7 @@ export function createRemoteControlController({
       const savedGlobalConfig = await remoteControlConfigStore.save({
         activeProviderKey,
         workspacePath,
-        developerPrompt,
+        personaId,
         activeSkillNames
       });
 

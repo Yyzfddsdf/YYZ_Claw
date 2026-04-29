@@ -11,8 +11,8 @@ import {
 } from "../schemas/chatSchema.js";
 import { configSchema } from "../schemas/configSchema.js";
 import {
+  conversationPersonaSchema,
   conversationSkillsSchema,
-  conversationDeveloperPromptSchema,
   conversationUpsertSchema,
   conversationWorkplaceSchema
 } from "../schemas/historySchema.js";
@@ -172,6 +172,22 @@ function normalizeStreamRequestBody(body) {
 
 function normalizeMessageMeta(meta) {
   return meta && typeof meta === "object" && !Array.isArray(meta) ? { ...meta } : {};
+}
+
+async function resolvePersistablePersonaId(personaStore, ...candidates) {
+  for (const candidate of candidates) {
+    const personaId = String(candidate ?? "").trim();
+    if (!personaId) {
+      continue;
+    }
+
+    const persona = await personaStore?.getPersona?.(personaId);
+    if (persona) {
+      return personaId;
+    }
+  }
+
+  return "";
 }
 
 function buildRunSummary(run) {
@@ -842,6 +858,7 @@ export function createChatController({
   skillValidator,
   skillPromptBuilder,
   skillCatalog,
+  personaStore,
   conversationAgentRuntimeService,
   conversationEventBroadcaster,
   conversationRunCoordinator,
@@ -1227,6 +1244,7 @@ export function createChatController({
         title: buildForkTitle(history.title),
         workplacePath: history.workplacePath,
         approvalMode: history.approvalMode,
+        personaId: history.personaId,
         developerPrompt: history.developerPrompt,
         skills: history.skills,
         model: history.model
@@ -1349,14 +1367,14 @@ export function createChatController({
       });
     },
 
-    updateDeveloperPromptById: async (req, res) => {
+    updatePersonaById: async (req, res) => {
       const conversationId = String(req.params.conversationId || "").trim();
 
       if (!conversationId) {
         throw createValidationError("conversationId is required");
       }
 
-      const validation = conversationDeveloperPromptSchema.safeParse(req.body);
+      const validation = conversationPersonaSchema.safeParse(req.body);
       if (!validation.success) {
         throw createValidationError(formatZodError(validation.error));
       }
@@ -1368,14 +1386,28 @@ export function createChatController({
         throw notFoundError;
       }
 
-      const updated = historyStore.updateConversationDeveloperPrompt(
+      if (String(history.source ?? "").trim().toLowerCase() === "subagent") {
+        throw createValidationError("subagent conversation does not support persona");
+      }
+
+      const personaId = String(validation.data.personaId ?? "").trim();
+      if (personaId) {
+        const persona = await personaStore?.getPersona?.(personaId);
+        if (!persona) {
+          const notFoundError = createValidationError("persona not found");
+          notFoundError.statusCode = 404;
+          throw notFoundError;
+        }
+      }
+
+      const updated = historyStore.updateConversationPersona(
         conversationId,
-        validation.data.developerPrompt
+        personaId
       );
 
       res.json({
         history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
-        developerPrompt: validation.data.developerPrompt
+        personaId
       });
     },
 
@@ -1462,6 +1494,7 @@ export function createChatController({
         model: existing.model,
         approvalMode: existing.approvalMode,
         skills: existing.skills,
+        personaId: existing.personaId,
         developerPrompt: existing.developerPrompt,
         messages: nextMessages
       });
@@ -1537,7 +1570,14 @@ export function createChatController({
       const workplacePath = requestedWorkplacePath
         ? await ensureDirectoryPath(requestedWorkplacePath)
         : undefined;
-      const developerPrompt = String(validation.data.developerPrompt ?? "").trim();
+      const personaId =
+        String(existing?.source ?? "").trim().toLowerCase() === "subagent"
+          ? ""
+          : await resolvePersistablePersonaId(
+              personaStore,
+              validation.data.personaId,
+              existing?.personaId
+            );
 
       if (
         existing?.workplaceLocked &&
@@ -1588,7 +1628,8 @@ export function createChatController({
         model: existing?.model,
         approvalMode: validation.data.approvalMode,
         skills: validation.data.skills,
-        developerPrompt,
+        personaId,
+        developerPrompt: existing?.developerPrompt,
         messages: validation.data.messages
       });
 
@@ -1887,6 +1928,9 @@ export function createChatController({
                 developerPrompt: String(
                   resolvedPendingApproval.executionContext?.developerPrompt ?? ""
                 ).trim(),
+                personaPrompt: String(
+                  resolvedPendingApproval.executionContext?.personaPrompt ?? ""
+                ).trim(),
                 definitionPrompt: "",
                 chatAgent
               };
@@ -1951,6 +1995,11 @@ export function createChatController({
               resolvedPendingApproval.executionContext?.developerPrompt ??
               ""
           ).trim(),
+          personaPrompt: String(
+            resolvedRuntime?.personaPrompt ??
+              resolvedPendingApproval.executionContext?.personaPrompt ??
+              ""
+          ).trim(),
           orchestratorStore,
           orchestratorSchedulerService,
           orchestratorSupervisorService,
@@ -2004,6 +2053,7 @@ export function createChatController({
           model: runtimeModel || resumedHistory?.model,
           approvalMode: resumedHistory?.approvalMode,
           skills: resumedHistory?.skills,
+          personaId: resumedHistory?.personaId,
           developerPrompt: resumedHistory?.developerPrompt,
           messages: nextMessages
         });
@@ -2208,12 +2258,19 @@ export function createChatController({
         const historyRuntimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
           isSubagent: conversationSource === "subagent"
         });
-        const developerPrompt =
+        const personaId =
           conversationSource === "subagent"
-            ? String(existingConversation?.developerPrompt ?? "").trim()
-            : String(
-                chatValidation.data.developerPrompt ?? existingConversation?.developerPrompt ?? ""
-              ).trim();
+            ? ""
+            : await resolvePersistablePersonaId(
+                personaStore,
+                chatValidation.data.personaId,
+                existingConversation?.personaId
+              );
+        const personaPrompt =
+          conversationSource === "subagent" || !personaId
+            ? ""
+            : String(await personaStore?.resolvePrompt?.(personaId) ?? "").trim();
+        const developerPrompt = String(existingConversation?.developerPrompt ?? "").trim();
         let effectiveMessages = Array.isArray(chatValidation.data.messages)
           ? chatValidation.data.messages
           : [];
@@ -2239,7 +2296,8 @@ export function createChatController({
                 isSubagent:
                   String(existingConversation?.source ?? "").trim().toLowerCase() === "subagent",
                 activeSkillNames: persistedSkillNames,
-                developerPrompt,
+                developerPrompt: "",
+                personaPrompt,
                 definitionPrompt: "",
                 chatAgent
               };
@@ -2281,6 +2339,7 @@ export function createChatController({
             model: historyRuntimeConfig.model,
             approvalMode,
             skills: persistedSkillNames,
+            personaId,
             developerPrompt,
             messages: effectiveMessages
           });
@@ -2342,6 +2401,7 @@ export function createChatController({
               model: existingConversation?.model,
               approvalMode: existingConversation?.approvalMode,
               skills: existingConversation?.skills,
+              personaId: existingConversation?.personaId,
               developerPrompt: existingConversation?.developerPrompt,
               messages: compressionResult.messages
             });
@@ -2416,6 +2476,7 @@ export function createChatController({
           workspacePath: workplacePath,
           memorySummaryPrompt: pinnedMemorySummaryPrompt,
           developerPrompt: resolvedRuntime?.developerPrompt,
+          personaPrompt: resolvedRuntime?.personaPrompt,
           activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
             ? resolvedRuntime.activeSkillNames
             : [],
@@ -2446,6 +2507,7 @@ export function createChatController({
             ? resolvedRuntime.activeSkillNames
             : [],
           developerPrompt: String(resolvedRuntime?.developerPrompt ?? "").trim(),
+          personaPrompt: String(resolvedRuntime?.personaPrompt ?? "").trim(),
           orchestratorStore,
           orchestratorSchedulerService,
           orchestratorSupervisorService,
@@ -2499,6 +2561,7 @@ export function createChatController({
           model: runtimeExecutionConfig.model,
           approvalMode: existingConversation?.approvalMode ?? approvalMode,
           skills: existingConversation?.skills,
+          personaId: existingConversation?.personaId,
           developerPrompt: existingConversation?.developerPrompt,
           messages: nextMessages
         });

@@ -378,6 +378,7 @@ export class RemoteControlRuntimeService {
     this.agentsPromptStore = options.agentsPromptStore ?? null;
     this.memorySummaryStore = options.memorySummaryStore ?? null;
     this.skillPromptBuilder = options.skillPromptBuilder ?? null;
+    this.personaStore = options.personaStore ?? null;
     this.memoryStore = options.memoryStore ?? null;
     this.longTermMemoryRecallService = options.longTermMemoryRecallService ?? null;
     this.remoteHookRegistry = options.remoteHookRegistry ?? null;
@@ -612,7 +613,10 @@ export class RemoteControlRuntimeService {
       controlConfig?.workspacePath,
       this.defaultWorkplacePath
     );
-    const developerPrompt = String(controlConfig?.developerPrompt ?? "").trim();
+    const personaId = String(controlConfig?.personaId ?? "").trim();
+    const personaPrompt = personaId
+      ? String(await this.personaStore?.resolvePrompt?.(personaId) ?? "").trim()
+      : "";
     const activeSkillNames = normalizeSkillNames(controlConfig?.activeSkillNames);
     const runtimeConfig = normalizeExecutionConfig(runtimeConfigValidation.data);
     const toolRegistry = new ScopedToolRegistry({
@@ -683,7 +687,7 @@ export class RemoteControlRuntimeService {
       memorySummaryStore: this.memorySummaryStore,
       skillPromptBuilder: this.skillPromptBuilder,
       workspacePath,
-      developerPrompt,
+      personaPrompt,
       activeSkillNames,
       definitionPrompt: "",
       includeAgentsPrompt: true,

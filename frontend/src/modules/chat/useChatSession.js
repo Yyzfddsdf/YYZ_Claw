@@ -17,11 +17,13 @@ import {
   stopConversationRunById,
   subscribeChatEvents,
   updateHistoryApprovalModeById,
+  updateHistoryPersonaById,
   updateHistoryWorkplaceById,
   updateHistorySkillsById,
   upsertHistoryById,
   streamChat
 } from "../../api/chatApi";
+import { fetchPersonas } from "../../api/personasApi";
 import {
   applyToolResultToPayload,
   applyToolPendingApprovalToPayload,
@@ -360,6 +362,7 @@ function toSummary(history) {
     model: String(history?.model ?? "").trim(),
     workplaceLocked: Boolean(history?.workplaceLocked),
     approvalMode: String(history?.approvalMode ?? "confirm"),
+    personaId: String(history?.personaId ?? "").trim(),
     developerPrompt: String(history?.developerPrompt ?? ""),
     skills: Array.isArray(history?.skills)
       ? history.skills.map((item) => String(item ?? "").trim()).filter(Boolean)
@@ -389,6 +392,7 @@ function normalizeSummaryList(histories) {
     model: String(item?.model ?? "").trim(),
     workplaceLocked: Boolean(item.workplaceLocked),
     approvalMode: String(item.approvalMode ?? "confirm"),
+    personaId: String(item.personaId ?? "").trim(),
     developerPrompt: String(item.developerPrompt ?? ""),
     skills: Array.isArray(item.skills)
       ? item.skills.map((value) => String(value ?? "").trim()).filter(Boolean)
@@ -682,6 +686,7 @@ function buildConversationUpsertPayload({
   title = "新会话",
   workplacePath = "",
   approvalMode = "confirm",
+  personaId = "",
   developerPrompt = "",
   skills = [],
   messages = []
@@ -689,6 +694,7 @@ function buildConversationUpsertPayload({
   const payload = {
     title: String(title ?? "").trim() || "新会话",
     approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
+    personaId: String(personaId ?? "").trim(),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt),
     skills: Array.isArray(skills)
       ? Array.from(
@@ -714,6 +720,7 @@ function buildPersistenceSignature({
   skills = [],
   workplacePath = "",
   approvalMode = "confirm",
+  personaId = "",
   developerPrompt = ""
 } = {}) {
   return JSON.stringify({
@@ -722,6 +729,7 @@ function buildPersistenceSignature({
     skills: Array.isArray(skills) ? skills : [],
     workplacePath: String(workplacePath ?? "").trim(),
     approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
+    personaId: String(personaId ?? "").trim(),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt)
   });
 }
@@ -980,6 +988,8 @@ export function useChatSession(maxContextWindow = 0) {
   const [skillsDrawerOpen, setSkillsDrawerOpen] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState([]);
   const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
+  const [personaCatalog, setPersonaCatalog] = useState([]);
+  const [personaCatalogLoaded, setPersonaCatalogLoaded] = useState(false);
   const [tokenUsageRecords, setTokenUsageRecords] = useState([]);
   const [compressionState, setCompressionState] = useState(EMPTY_COMPRESSION_STATE);
   const [foregroundStreamingConversationIds, setForegroundStreamingConversationIds] = useState([]);
@@ -1049,6 +1059,15 @@ export function useChatSession(maxContextWindow = 0) {
 
     const current = conversationList.find((item) => item.id === activeConversationId);
     return String(current?.approvalMode ?? "confirm");
+  }, [conversationList, activeConversationId, draftConversation]);
+
+  const activeConversationPersonaId = useMemo(() => {
+    if (draftConversation?.id === activeConversationId) {
+      return String(draftConversation.personaId ?? "").trim();
+    }
+
+    const current = conversationList.find((item) => item.id === activeConversationId);
+    return String(current?.personaId ?? "").trim();
   }, [conversationList, activeConversationId, draftConversation]);
 
   const activeConversationDeveloperPrompt = useMemo(() => {
@@ -1228,6 +1247,7 @@ export function useChatSession(maxContextWindow = 0) {
             id: draftConversationId,
             workplacePath: "",
             approvalMode: "confirm",
+            personaId: "",
             developerPrompt: "",
             skills: []
           });
@@ -1393,6 +1413,36 @@ export function useChatSession(maxContextWindow = 0) {
       }
     };
   }, [activeConversationWorkplace]);
+
+  async function refreshPersonaCatalog() {
+    try {
+      const response = await fetchPersonas();
+      const personas = Array.isArray(response?.personas)
+        ? response.personas
+            .map((persona) => ({
+              id: String(persona?.id ?? "").trim(),
+              name: String(persona?.name ?? "").trim(),
+              description: String(persona?.description ?? "").trim(),
+              prompt: String(persona?.prompt ?? ""),
+              accentColor: String(persona?.accentColor ?? "#2563eb").trim() || "#2563eb",
+              avatarUrl: String(persona?.avatarUrl ?? "").trim(),
+              avatarPath: String(persona?.avatarPath ?? "").trim(),
+              createdAt: Number(persona?.createdAt ?? 0),
+              updatedAt: Number(persona?.updatedAt ?? 0)
+            }))
+            .filter((persona) => persona.id && persona.name)
+        : [];
+      setPersonaCatalog(personas);
+    } catch {
+      setPersonaCatalog([]);
+    } finally {
+      setPersonaCatalogLoaded(true);
+    }
+  }
+
+  useEffect(() => {
+    refreshPersonaCatalog();
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1777,6 +1827,7 @@ export function useChatSession(maxContextWindow = 0) {
       return {
         workplacePath: String(draftConversationValue.workplacePath ?? "").trim(),
         approvalMode: String(draftConversationValue.approvalMode ?? "confirm"),
+        personaId: String(draftConversationValue.personaId ?? "").trim(),
         developerPrompt: normalizeDeveloperPrompt(draftConversationValue.developerPrompt ?? ""),
         skills: Array.isArray(draftConversationValue.skills) ? draftConversationValue.skills : [],
         isDraft: true
@@ -1797,6 +1848,7 @@ export function useChatSession(maxContextWindow = 0) {
     return {
       workplacePath: String(summary.workplacePath ?? "").trim(),
       approvalMode: String(summary.approvalMode ?? "confirm"),
+      personaId: String(summary.personaId ?? "").trim(),
       developerPrompt: normalizeDeveloperPrompt(summary.developerPrompt ?? ""),
       skills: Array.isArray(effectiveSkills) ? effectiveSkills : [],
       isDraft: false
@@ -1836,6 +1888,7 @@ export function useChatSession(maxContextWindow = 0) {
       title,
       messages: payloadMessages,
       skills: [...selectedSkillsRef.current],
+      personaId: activeConversationPersonaId,
       developerPrompt: activeConversationDeveloperPrompt
     };
 
@@ -1868,6 +1921,7 @@ export function useChatSession(maxContextWindow = 0) {
             approvalMode: String(
               history.approvalMode ?? activeConversationApprovalMode ?? "confirm"
             ),
+            personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
             developerPrompt: normalizeDeveloperPrompt(
               history.developerPrompt ?? activeConversationDeveloperPrompt
             )
@@ -1895,6 +1949,7 @@ export function useChatSession(maxContextWindow = 0) {
     historyLoaded,
     activeConversationTitle,
     draftConversation,
+    activeConversationPersonaId,
     activeConversationDeveloperPrompt,
     activeConversationApprovalMode
   ]);
@@ -1971,6 +2026,7 @@ export function useChatSession(maxContextWindow = 0) {
       id: conversationId,
       workplacePath: String(activeConversationWorkplace ?? "").trim(),
       approvalMode: String(activeConversationApprovalMode ?? "confirm"),
+      personaId: "",
       developerPrompt: "",
       skills: [...selectedSkillsRef.current]
     });
@@ -2178,6 +2234,7 @@ export function useChatSession(maxContextWindow = 0) {
         skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
         workplacePath: String(history.workplacePath ?? activeConversationWorkplace ?? ""),
         approvalMode: String(history.approvalMode ?? activeConversationApprovalMode ?? "confirm"),
+        personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
         developerPrompt: normalizeDeveloperPrompt(
           history.developerPrompt ?? activeConversationDeveloperPrompt
         )
@@ -2388,6 +2445,60 @@ export function useChatSession(maxContextWindow = 0) {
     }
   }
 
+  async function setConversationPersona(nextPersonaId) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
+      return;
+    }
+
+    if (activeConversationSource === "subagent") {
+      setError("子智能体不支持身份切换");
+      return;
+    }
+
+    const normalizedPersonaId = String(nextPersonaId ?? "").trim();
+
+    if (isDraftConversationActive) {
+      setDraftConversation((prev) => {
+        if (!prev || prev.id !== activeConversationId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          personaId: normalizedPersonaId
+        };
+      });
+      setError("");
+      return;
+    }
+
+    try {
+      setConversationList((prev) =>
+        prev.map((item) =>
+          item.id === activeConversationId
+            ? {
+                ...item,
+                personaId: normalizedPersonaId
+              }
+            : item
+        )
+      );
+
+      const response = await updateHistoryPersonaById(activeConversationId, normalizedPersonaId);
+      const updatedSummary = toSummary(response?.history ?? {});
+      setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
+      setError("");
+    } catch (personaError) {
+      setError(personaError?.message || "设置身份失败");
+    }
+  }
+
   async function setConversationDeveloperPrompt(nextDeveloperPrompt) {
     if (
       !historyLoaded ||
@@ -2496,6 +2607,7 @@ export function useChatSession(maxContextWindow = 0) {
           skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
           workplacePath: String(history.workplacePath ?? ""),
           approvalMode: String(history.approvalMode ?? "confirm"),
+          personaId: String(history.personaId ?? ""),
           developerPrompt: normalizeDeveloperPrompt(history.developerPrompt ?? "")
         });
       }
@@ -3704,7 +3816,7 @@ export function useChatSession(maxContextWindow = 0) {
       conversationId: normalizedConversationId,
       messages: normalizeForApi(activatedMessages),
       approvalMode: String(conversationRecord?.approvalMode ?? "confirm"),
-      developerPrompt: String(conversationRecord?.developerPrompt ?? ""),
+      personaId: String(conversationRecord?.personaId ?? ""),
       enableDeepThinking: deepThinkingEnabled
     };
   }
@@ -3810,7 +3922,7 @@ export function useChatSession(maxContextWindow = 0) {
             conversationId: currentPlan.conversationId,
             messages: currentPlan.messages,
             approvalMode: currentPlan.approvalMode,
-            developerPrompt: currentPlan.developerPrompt,
+            personaId: currentPlan.personaId,
             enableDeepThinking: currentPlan.enableDeepThinking,
             signal: controller.signal,
             onAgentEvent: (event) => {
@@ -3928,7 +4040,8 @@ export function useChatSession(maxContextWindow = 0) {
         workplacePath: draftConversation?.workplacePath ?? "",
         approvalMode:
           String(draftConversation?.approvalMode ?? activeConversationApprovalMode ?? "confirm"),
-        developerPrompt: activeConversationDeveloperPrompt,
+        personaId: activeConversationPersonaId,
+        developerPrompt: "",
         skills: selectedSkillsRef.current,
         messages: toPersistableMessages(nextMessages)
       });
@@ -3956,7 +4069,7 @@ export function useChatSession(maxContextWindow = 0) {
           ? draftConversation?.approvalMode ?? activeConversationApprovalMode
           : activeConversationApprovalMode
       ),
-      developerPrompt: activeConversationDeveloperPrompt,
+      personaId: activeConversationPersonaId,
       enableDeepThinking: deepThinkingEnabled
     });
   }
@@ -4146,6 +4259,7 @@ export function useChatSession(maxContextWindow = 0) {
       activeConversationWorkplace,
       activeConversationWorkplaceLocked,
       activeConversationApprovalMode,
+      activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
       activeConversationSource,
@@ -4157,12 +4271,15 @@ export function useChatSession(maxContextWindow = 0) {
       canManualCompress,
       skillCatalog,
       skillCatalogLoaded,
+      personaCatalog,
+      personaCatalogLoaded,
       tokenUsageRecords,
       isCompressing,
       compressionTrigger: activeCompressionTrigger,
       skillsDrawerOpen,
       setSkillsDrawerOpen,
       reloadSkillCatalog: refreshSkillCatalog,
+      reloadPersonaCatalog: refreshPersonaCatalog,
       workplaceSelecting,
       pendingApproval,
       isDraftConversation: isDraftConversationActive,
@@ -4188,6 +4305,7 @@ export function useChatSession(maxContextWindow = 0) {
       openWorkplaceBrowser,
       setConversationWorkplace,
       setConversationApprovalMode,
+      setConversationPersona,
       setConversationSkills,
       setConversationDeveloperPrompt,
       compressConversation,
@@ -4208,6 +4326,7 @@ export function useChatSession(maxContextWindow = 0) {
       activeConversationWorkplace,
       activeConversationWorkplaceLocked,
       activeConversationApprovalMode,
+      activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
       activeConversationSource,
@@ -4219,12 +4338,15 @@ export function useChatSession(maxContextWindow = 0) {
       canManualCompress,
       skillCatalog,
       skillCatalogLoaded,
+      personaCatalog,
+      personaCatalogLoaded,
       tokenUsageRecords,
       isCompressing,
       activeCompressionTrigger,
       skillsDrawerOpen,
       setSkillsDrawerOpen,
       refreshSkillCatalog,
+      refreshPersonaCatalog,
       workplaceSelecting,
       pendingApproval,
       retryNotice,
@@ -4248,6 +4370,7 @@ export function useChatSession(maxContextWindow = 0) {
       openWorkplaceBrowser,
       setConversationWorkplace,
       setConversationApprovalMode,
+      setConversationPersona,
       setConversationSkills,
       setConversationDeveloperPrompt,
       compressConversation,

@@ -649,6 +649,7 @@ export function ChatPanel({
   const [historyPaneOpen, setHistoryPaneOpen] = useState(Boolean(showHistoryPane));
   const [contextPopupOpen, setContextPopupOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
+  const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
   const [clarifySelectedOption, setClarifySelectedOption] = useState("");
   const [clarifyAdditionalText, setClarifyAdditionalText] = useState("");
   const [viewingImage, setViewingImage] = useState(null);
@@ -678,6 +679,7 @@ export function ChatPanel({
   const isScrollTrackingReadyRef = useRef(false);
   const contextPopupRef = useRef(null);
   const approvalMenuRef = useRef(null);
+  const personaMenuRef = useRef(null);
 
   useEffect(() => {
     setHistoryPaneOpen(Boolean(showHistoryPane));
@@ -726,6 +728,9 @@ export function ChatPanel({
       if (approvalMenuRef.current && !approvalMenuRef.current.contains(event.target)) {
         setApprovalMenuOpen(false);
       }
+      if (personaMenuRef.current && !personaMenuRef.current.contains(event.target)) {
+        setPersonaMenuOpen(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
@@ -747,10 +752,22 @@ export function ChatPanel({
     inputDisabled ||
     isParsingFiles ||
     (!hasComposerPayload && !chat.canStopStream);
-  const developerPromptDisabled =
+  const personaSelectorDisabled =
     chat.isStreaming ||
     !chat.historyLoaded ||
     Boolean(chat.pendingApproval);
+  const personaCatalog = Array.isArray(chat?.personaCatalog) ? chat.personaCatalog : [];
+  const activePersona = personaCatalog.find(
+    (persona) => String(persona?.id ?? "").trim() === String(chat.activeConversationPersonaId ?? "").trim()
+  ) ?? null;
+  const personaTriggerLabel = activePersona?.name || "不使用身份";
+
+  useEffect(() => {
+    if (!promptDrawerOpen || personaSelectorDisabled) {
+      setPersonaMenuOpen(false);
+    }
+  }, [promptDrawerOpen, personaSelectorDisabled]);
+
   const placeholder = !chat.historyLoaded
     ? "正在从 SQLite 加载历史..."
     : chat.pendingApproval
@@ -1194,10 +1211,6 @@ export function ChatPanel({
       : [...current, normalizedSkillName];
 
     chat.setConversationSkills(next);
-  }
-
-  function handleDeveloperPromptChange(event) {
-    chat.setConversationDeveloperPrompt(event.target.value);
   }
 
   function handleDraftChange(event) {
@@ -1989,13 +2002,17 @@ export function ChatPanel({
                 {!isSubagentConversation && (
                   <button
                     type="button"
-                    className={`mode-pill skills-toggle ${promptDrawerOpen ? "active" : ""}`}
+                    className={`mode-pill persona-toggle ${promptDrawerOpen ? "active" : ""}`}
                     onClick={() => {
                       setPromptDrawerOpen((prev) => !prev);
                     }}
                     disabled={!chat.historyLoaded}
+                    style={activePersona?.accentColor ? { "--persona-accent": activePersona.accentColor } : undefined}
                   >
-                    Developer Prompt
+                    {activePersona?.avatarUrl && (
+                      <img className="persona-toggle-avatar" src={activePersona.avatarUrl} alt="" />
+                    )}
+                    {activePersona?.name || "选择身份"}
                   </button>
                 )}
                 <button
@@ -2016,26 +2033,123 @@ export function ChatPanel({
           </div>
 
           {promptDrawerOpen && !isSubagentConversation && (
-            <section className="chat-developer-panel">
+            <section className="chat-persona-panel">
               <div className="chat-developer-panel-head">
                 <div>
-                  <h3>Developer 提示词</h3>
-                  <p>
-                    当前会话独立保存，修改后会热更新到下一次请求。
-                  </p>
+                  <h3>Agent 身份</h3>
+                  <p>身份来自资产文件，选择后从下一次请求开始影响主智能体。</p>
                 </div>
                 <span className="chat-developer-panel-badge">
-                  {chat.activeConversationDeveloperPrompt ? "已配置" : "未配置"}
+                  {activePersona ? "已启用" : "未选择"}
                 </span>
               </div>
-              <textarea
-                className="chat-developer-input"
-                value={chat.activeConversationDeveloperPrompt || ""}
-                onChange={handleDeveloperPromptChange}
-                placeholder="为当前会话写入 developer 指令，例如角色、边界、输出格式或禁忌。"
-                disabled={developerPromptDisabled}
-                rows={4}
-              />
+              <div className="chat-persona-select-row">
+                <div
+                  className="chat-persona-combobox"
+                  ref={personaMenuRef}
+                  style={{ "--persona-accent": activePersona?.accentColor || "#2563eb" }}
+                >
+                  <button
+                    type="button"
+                    className={`chat-persona-trigger ${personaMenuOpen ? "open" : ""}`}
+                    onClick={() => setPersonaMenuOpen((prev) => !prev)}
+                    disabled={personaSelectorDisabled}
+                    aria-haspopup="listbox"
+                    aria-expanded={personaMenuOpen}
+                  >
+                    <span className="chat-persona-trigger-avatar">
+                      {activePersona?.avatarUrl ? (
+                        <img src={activePersona.avatarUrl} alt="" />
+                      ) : (
+                        <span>{activePersona?.name?.slice(0, 2) || "AI"}</span>
+                      )}
+                    </span>
+                    <span className="chat-persona-trigger-copy">
+                      <strong>{personaTriggerLabel}</strong>
+                      <small>
+                        {activePersona?.description || `${personaCatalog.length} 个可用身份`}
+                      </small>
+                    </span>
+                    <span className="chat-persona-trigger-arrow" aria-hidden="true">v</span>
+                  </button>
+
+                  {personaMenuOpen && (
+                    <div className="chat-persona-menu" role="listbox">
+                      <button
+                        type="button"
+                        className={`chat-persona-option ${!activePersona ? "active" : ""}`}
+                        onClick={() => {
+                          setPersonaMenuOpen(false);
+                          chat.setConversationPersona("");
+                        }}
+                        role="option"
+                        aria-selected={!activePersona}
+                      >
+                        <span className="chat-persona-option-avatar muted">AI</span>
+                        <span className="chat-persona-option-copy">
+                          <strong>不使用身份</strong>
+                          <small>只使用 YYZ_CLAW 默认行为</small>
+                        </span>
+                        {!activePersona && <span className="chat-persona-option-check">已选</span>}
+                      </button>
+
+                      {personaCatalog.map((persona) => {
+                        const selected = String(persona.id) === String(chat.activeConversationPersonaId || "");
+                        return (
+                          <button
+                            type="button"
+                            key={persona.id}
+                            className={`chat-persona-option ${selected ? "active" : ""}`}
+                            style={{ "--persona-accent": persona.accentColor || "#2563eb" }}
+                            onClick={() => {
+                              setPersonaMenuOpen(false);
+                              chat.setConversationPersona(persona.id);
+                            }}
+                            role="option"
+                            aria-selected={selected}
+                          >
+                            {persona.avatarUrl ? (
+                              <img className="chat-persona-option-avatar" src={persona.avatarUrl} alt="" />
+                            ) : (
+                              <span className="chat-persona-option-avatar">
+                                {persona.name.slice(0, 2).toUpperCase()}
+                              </span>
+                            )}
+                            <span className="chat-persona-option-copy">
+                              <strong>{persona.name}</strong>
+                              <small>{persona.description || persona.id}</small>
+                            </span>
+                            {selected && <span className="chat-persona-option-check">已选</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="mode-pill skills-toggle"
+                  onClick={() => onNavigate?.("personas")}
+                >
+                  管理身份
+                </button>
+              </div>
+              {activePersona ? (
+                <div
+                  className="chat-persona-preview"
+                  style={{ "--persona-accent": activePersona.accentColor || "#2563eb" }}
+                >
+                  {activePersona.avatarUrl && (
+                    <img className="chat-persona-preview-avatar" src={activePersona.avatarUrl} alt="" />
+                  )}
+                  <div>
+                    <strong>{activePersona.name}</strong>
+                    <p>{activePersona.description || "这个身份没有描述。"}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="chat-persona-empty">当前会话会使用默认 YYZ_CLAW 行为，不额外注入身份 prompt。</div>
+              )}
             </section>
           )}
 

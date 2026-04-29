@@ -43,6 +43,7 @@ export const chatRequestSchema = z.object({
   messages: z.array(chatMessageSchema).min(1, "at least one message is required"),
   approvalMode: approvalModeSchema.optional(),
   developerPrompt: z.string().max(20000).optional(),
+  personaId: z.string().trim().max(120).optional(),
   enableDeepThinking: z.boolean().optional()
 });
 

@@ -326,6 +326,19 @@ export function createDeveloperPromptMessage(developerPrompt) {
   };
 }
 
+export function createPersonaPromptMessage(personaPrompt) {
+  const normalizedPrompt = String(personaPrompt ?? "").trim();
+
+  if (!normalizedPrompt) {
+    return null;
+  }
+
+  return {
+    role: "system",
+    content: normalizedPrompt
+  };
+}
+
 export function buildSubagentGuardPrompt() {
   return [
     "你当前运行在子智能体模式。",
@@ -418,6 +431,11 @@ export async function buildConversationPromptMessages(options = {}) {
         content: agentsPrompt
       });
     }
+  }
+
+  const personaPromptMessage = createPersonaPromptMessage(options.personaPrompt);
+  if (personaPromptMessage) {
+    promptMessages.push(personaPromptMessage);
   }
 
   if (includeMemorySummaryPrompt) {

@@ -44,10 +44,7 @@ export function createChatRoutes(services) {
     asyncHandler(controller.updateApprovalModeById)
   );
   router.put("/chat/histories/:conversationId/skills", asyncHandler(controller.updateSkillsById));
-  router.put(
-    "/chat/histories/:conversationId/developer-prompt",
-    asyncHandler(controller.updateDeveloperPromptById)
-  );
+  router.put("/chat/histories/:conversationId/persona", asyncHandler(controller.updatePersonaById));
   router.post(
     "/chat/histories/:conversationId/compress",
     asyncHandler(controller.compressHistoryById)

@@ -7,6 +7,7 @@ import { createDebateRoutes } from "./debateRoutes.js";
 import { createRemoteControlRoutes } from "../integrations/remote-control/api/remoteControlRoutes.js";
 import { createMemoryRoutes } from "./memoryRoutes.js";
 import { createMcpRoutes } from "./mcpRoutes.js";
+import { createPersonasRoutes } from "./personasRoutes.js";
 import { createSkillsRoutes } from "./skillsRoutes.js";
 import { createSttRoutes } from "./sttRoutes.js";
 import { createTtsRoutes } from "./ttsRoutes.js";
@@ -17,6 +18,7 @@ export function createApiRouter(services) {
   router.use(createConfigRoutes(services));
   router.use(createMcpRoutes(services));
   router.use(createMemoryRoutes(services));
+  router.use(createPersonasRoutes(services));
   router.use(createSkillsRoutes(services));
   router.use(createSttRoutes(services));
   router.use(createTtsRoutes(services));

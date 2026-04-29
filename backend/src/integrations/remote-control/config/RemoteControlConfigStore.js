@@ -35,7 +35,7 @@ function normalizeConfig(value) {
   return {
     activeProviderKey: normalizeProviderKey(source.activeProviderKey),
     workspacePath: String(source.workspacePath ?? "").trim(),
-    developerPrompt: String(source.developerPrompt ?? "").trim(),
+    personaId: String(source.personaId ?? "").trim(),
     activeSkillNames: normalizeSkillNames(source.activeSkillNames)
   };
 }
@@ -81,5 +81,24 @@ export class RemoteControlConfigStore {
     const normalized = normalizeConfig(nextValue);
     await fs.writeFile(this.filePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
     return normalized;
+  }
+
+  async replacePersonaId(previousPersonaId, nextPersonaId) {
+    const previousId = String(previousPersonaId ?? "").trim();
+    const nextId = String(nextPersonaId ?? "").trim();
+    if (!previousId || previousId === nextId) {
+      return false;
+    }
+
+    const current = await this.read();
+    if (String(current.personaId ?? "").trim() !== previousId) {
+      return false;
+    }
+
+    await this.save({
+      ...current,
+      personaId: nextId
+    });
+    return true;
   }
 }

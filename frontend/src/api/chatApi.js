@@ -57,10 +57,10 @@ export function updateHistorySkillsById(conversationId, skills) {
   });
 }
 
-export function updateHistoryDeveloperPromptById(conversationId, developerPrompt) {
-  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/developer-prompt`, {
+export function updateHistoryPersonaById(conversationId, personaId) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/persona`, {
     method: "PUT",
-    body: { developerPrompt }
+    body: { personaId }
   });
 }
 
@@ -253,7 +253,7 @@ export async function streamChat({
   conversationId,
   messages,
   approvalMode,
-  developerPrompt,
+  personaId,
   enableDeepThinking,
   signal,
   onAgentEvent
@@ -264,7 +264,7 @@ export async function streamChat({
       conversationId,
       messages,
       approvalMode,
-      developerPrompt,
+      personaId,
       enableDeepThinking: Boolean(enableDeepThinking)
     },
     signal,

@@ -13,6 +13,7 @@ import { useChatSession } from "./modules/chat/useChatSession";
 import { ConfigPanel } from "./modules/config/ConfigPanel";
 import { DebatePanel } from "./modules/debate/DebatePanel";
 import { MemoryPanel } from "./modules/memory/MemoryPanel";
+import { PersonaPanel } from "./modules/personas/PersonaPanel";
 import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
 
@@ -277,6 +278,20 @@ export default function App() {
           <button
             type="button"
             role="tab"
+            aria-selected={activeWorkspace === "personas"}
+            className={`nav-item ${activeWorkspace === "personas" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("personas")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
+              <path d="M4 21a8 8 0 0 1 16 0" />
+            </svg>
+            Agent 身份
+          </button>
+
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeWorkspace === "debate"}
             className={`nav-item ${activeWorkspace === "debate" ? "active" : ""}`}
             onClick={() => setActiveWorkspace("debate")}
@@ -359,6 +374,12 @@ export default function App() {
         {activeWorkspace === "memory" && (
           <section className="panel panel-memory" role="tabpanel" aria-label="memory workspace">
             <MemoryPanel onNavigate={(nav) => setActiveWorkspace(nav)} />
+          </section>
+        )}
+
+        {activeWorkspace === "personas" && (
+          <section className="panel panel-personas" role="tabpanel" aria-label="persona workspace">
+            <PersonaPanel chat={chat} onNavigate={(nav) => setActiveWorkspace(nav)} />
           </section>
         )}
 

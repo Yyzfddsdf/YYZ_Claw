@@ -31,7 +31,7 @@ export const remoteControlConfigUpdateSchema = z
   .object({
     activeProviderKey: z.string().trim().optional(),
     workspacePath: z.string().max(4096).optional(),
-    developerPrompt: z.string().max(20000).optional(),
+    personaId: z.string().trim().max(120).optional(),
     activeSkillNames: z.array(z.string().trim().min(1).max(200)).max(120).optional(),
     providerConfig: z.record(z.unknown()).optional()
   })
@@ -39,10 +39,8 @@ export const remoteControlConfigUpdateSchema = z
     activeProviderKey: normalizeProviderKey(payload.activeProviderKey),
     workspacePath:
       payload.workspacePath === undefined ? undefined : String(payload.workspacePath ?? "").trim(),
-    developerPrompt:
-      payload.developerPrompt === undefined
-        ? undefined
-        : String(payload.developerPrompt ?? "").trim(),
+    personaId:
+      payload.personaId === undefined ? undefined : String(payload.personaId ?? "").trim(),
     activeSkillNames:
       payload.activeSkillNames === undefined
         ? undefined

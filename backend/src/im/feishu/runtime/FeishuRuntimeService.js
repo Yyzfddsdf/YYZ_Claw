@@ -16,6 +16,7 @@ export class FeishuRuntimeService extends RemoteControlRuntimeService {
       agentsPromptStore: options.agentsPromptStore,
       memorySummaryStore: options.memorySummaryStore,
       skillPromptBuilder: options.skillPromptBuilder,
+      personaStore: options.personaStore,
       memoryStore: options.memoryStore,
       longTermMemoryRecallService: options.longTermMemoryRecallService,
       remoteHookRegistry: options.remoteHookRegistry,

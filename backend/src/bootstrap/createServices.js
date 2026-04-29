@@ -2,16 +2,15 @@ import path from "node:path";
 
 import {
   APPROVAL_RULES_FILE,
+  BACKGROUNDS_DIR,
   CONFIG_FILE,
   FEISHU_CONFIG_FILE,
   GLOBAL_AGENTS_FILE,
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
   MCP_CONFIG_FILE,
+  MODELS_DIR,
   REMOTE_CONTROL_CONFIG_FILE,
-  REMOTE_CONTROL_HOOKS_DIR,
-  REMOTE_CONTROL_HISTORY_DB_FILE,
-  REMOTE_CONTROL_TOOLS_DIR,
   MEMORY_SUMMARY_FILE,
   MEMORY_SUMMARY_DIR,
   PERSONAS_DIR,
@@ -27,6 +26,7 @@ import {
 } from "../config/paths.js";
 import { ChatAgent } from "../services/agent/ChatAgent.js";
 import { ConfigStore } from "../services/config/ConfigStore.js";
+import { BackgroundStore } from "../services/appearance/BackgroundStore.js";
 import { FeishuConfigStore } from "../im/feishu/config/FeishuConfigStore.js";
 import { ApprovalRulesStore } from "../services/config/ApprovalRulesStore.js";
 import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
@@ -43,9 +43,6 @@ import { FeishuOpenApiClient } from "../im/feishu/transport/FeishuOpenApiClient.
 import { DebateService } from "../services/debate/DebateService.js";
 import { SqliteDebateStore } from "../services/debate/SqliteDebateStore.js";
 import { RemoteControlConfigStore } from "../integrations/remote-control/config/RemoteControlConfigStore.js";
-import { RemoteControlHistoryStore } from "../integrations/remote-control/history/RemoteControlHistoryStore.js";
-import { RemoteHookBlockBuilder } from "../integrations/remote-control/hooks/RemoteHookBlockBuilder.js";
-import { RemoteHookRegistry } from "../integrations/remote-control/hooks/RemoteHookRegistry.js";
 import { RemoteControlProviderAdapter } from "../integrations/remote-control/providers/RemoteControlProviderAdapter.js";
 import { RemoteControlProviderRegistry } from "../integrations/remote-control/providers/RemoteControlProviderRegistry.js";
 import { HookBlockBuilder } from "../services/hooks/HookBlockBuilder.js";
@@ -81,12 +78,8 @@ import { UnifiedToolRegistry } from "../services/tools/UnifiedToolRegistry.js";
 export async function createServices() {
   const localToolRegistry = new ToolRegistry();
   await localToolRegistry.autoRegisterFromDir(TOOLS_DIR);
-  const remoteControlToolRegistry = new ToolRegistry();
-  await remoteControlToolRegistry.autoRegisterFromDir(REMOTE_CONTROL_TOOLS_DIR);
   const hookRegistry = new HookRegistry();
   await hookRegistry.autoRegisterFromDir(HOOKS_DIR);
-  const remoteHookRegistry = new RemoteHookRegistry();
-  await remoteHookRegistry.autoRegisterFromDir(REMOTE_CONTROL_HOOKS_DIR);
   const runtimeBlockRegistry = new RuntimeBlockRegistry();
   await runtimeBlockRegistry.autoRegisterFromDir(RUNTIME_BLOCKS_DIR);
 
@@ -96,6 +89,10 @@ export async function createServices() {
   await feishuConfigStore.ensureFile();
   const remoteControlConfigStore = new RemoteControlConfigStore(REMOTE_CONTROL_CONFIG_FILE);
   await remoteControlConfigStore.ensureFile();
+  const backgroundStore = new BackgroundStore({
+    rootDir: BACKGROUNDS_DIR
+  });
+  await backgroundStore.ensureDir();
 
   const mcpConfigStore = new McpConfigStore(MCP_CONFIG_FILE);
   await mcpConfigStore.ensureFile();
@@ -131,7 +128,7 @@ export async function createServices() {
   });
   await mcpManager.refresh();
   const speechToTextService = new SpeechToTextService({
-    cacheDir: path.join(PROJECT_ROOT, "models", "onnx")
+    cacheDir: path.join(MODELS_DIR, "onnx")
   });
   const edgeTextToSpeechService = new EdgeTextToSpeechService({
     defaultVoice: "zh-CN-XiaoxiaoNeural",
@@ -152,11 +149,6 @@ export async function createServices() {
     defaultWorkplacePath: PROJECT_ROOT
   });
   await historyStore.initialize();
-  const remoteControlHistoryStore = new RemoteControlHistoryStore({
-    dbFilePath: REMOTE_CONTROL_HISTORY_DB_FILE,
-    dirPath: HISTORY_DIR
-  });
-  await remoteControlHistoryStore.initialize();
   const orchestratorStore = new SqliteOrchestratorStore({
     dbFilePath: HISTORY_DB_FILE,
     dirPath: HISTORY_DIR
@@ -197,11 +189,6 @@ export async function createServices() {
   });
   const hookBlockBuilder = new HookBlockBuilder({
     hookRegistry,
-    maxHooks: 3,
-    maxBlockChars: 1800
-  });
-  const remoteHookBlockBuilder = new RemoteHookBlockBuilder({
-    hookRegistry: remoteHookRegistry,
     maxHooks: 3,
     maxBlockChars: 1800
   });
@@ -251,19 +238,9 @@ export async function createServices() {
     configStore: feishuConfigStore
   });
   const feishuRuntimeService = new FeishuRuntimeService({
-    configStore,
     remoteControlConfigStore,
-    remoteControlHistoryStore,
-    sharedToolRegistry: remoteControlToolRegistry,
+    historyStore,
     feishuOpenApiClient,
-    agentsPromptStore,
-    memorySummaryStore,
-    skillPromptBuilder,
-    personaStore,
-    memoryStore,
-    longTermMemoryRecallService,
-    remoteHookRegistry,
-    remoteHookBlockBuilder,
     edgeTextToSpeechService,
     defaultWorkplacePath: PROJECT_ROOT,
     queueFlushDelayMs: 1200
@@ -284,9 +261,7 @@ export async function createServices() {
     configStore: feishuConfigStore,
     runtimeService: feishuRuntimeService,
     eventIngestService: feishuWebhookIngestService,
-    connectionService: feishuLongConnectionService,
-    toolRegistry: remoteControlToolRegistry,
-    historyStore: remoteControlHistoryStore
+    connectionService: feishuLongConnectionService
   });
   remoteControlProviderRegistry.register({
     key: "feishu",
@@ -360,6 +335,10 @@ export async function createServices() {
   });
   conversationAgentRuntimeService.chatAgent = chatAgent;
   conversationAgentRuntimeService.orchestratorSupervisorService = orchestratorSupervisorService;
+  feishuRuntimeService.runtimeService = conversationAgentRuntimeService;
+  feishuRuntimeService.wakeDispatcher = wakeDispatcher;
+  feishuRuntimeService.conversationRunCoordinator = conversationRunCoordinator;
+  feishuRuntimeService.orchestratorSupervisorService = orchestratorSupervisorService;
   automationSchedulerService.wakeDispatcher = wakeDispatcher;
   automationSchedulerService.orchestratorSupervisorService = orchestratorSupervisorService;
   automationSchedulerService.start();
@@ -367,11 +346,8 @@ export async function createServices() {
   return {
     toolRegistry,
     localToolRegistry,
-    remoteControlToolRegistry,
     hookRegistry,
     hookBlockBuilder,
-    remoteHookRegistry,
-    remoteHookBlockBuilder,
     runtimeBlockRegistry,
     runtimeScopeBuilder,
     runtimeBlockRuntime,
@@ -386,6 +362,7 @@ export async function createServices() {
     conversationRunCoordinator,
     orchestratorSupervisorService,
     configStore,
+    backgroundStore,
     remoteControlConfigStore,
     remoteControlProviderRegistry,
     feishuConfigStore,
@@ -406,7 +383,6 @@ export async function createServices() {
     automationSchedulerService,
     debateStore,
     debateService,
-    remoteControlHistoryStore,
     memoryStore,
     longTermMemoryRecallService,
     compressionService,

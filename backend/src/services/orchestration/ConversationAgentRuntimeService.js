@@ -354,6 +354,10 @@ export class ConversationAgentRuntimeService {
       activeSkillNames: resolved.activeSkillNames,
       developerPrompt: resolved.developerPrompt,
       personaPrompt: resolved.personaPrompt,
+      remoteContext:
+        options.remoteContext && typeof options.remoteContext === "object"
+          ? options.remoteContext
+          : null,
       orchestratorSchedulerService: this.orchestratorSchedulerService,
       orchestratorStore: this.orchestratorStore,
       orchestratorSupervisorService: this.orchestratorSupervisorService,
@@ -383,11 +387,13 @@ export class ConversationAgentRuntimeService {
         this.historyStore.appendMessages(conversationId, messages, {
           updatedAt: Date.now()
         });
-        options.onEvent?.({
+        const payload = {
           type: "conversation_messages_appended",
           messages,
           checkpoint: normalizeText(checkpoint)
-        });
+        };
+        recorder.applyEvent(payload);
+        options.onEvent?.(payload);
 
         return messages;
       }

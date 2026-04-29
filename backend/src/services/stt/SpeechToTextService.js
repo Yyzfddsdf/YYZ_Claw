@@ -28,7 +28,7 @@ export class SpeechToTextService {
     const resolvedCacheDir = String(options.cacheDir ?? "").trim();
     this.cacheDir = resolvedCacheDir
       ? path.resolve(resolvedCacheDir)
-      : path.resolve(process.cwd(), "models", "onnx");
+      : path.resolve(process.cwd(), ".yyz", "models", "onnx");
     this.worker = null;
     this.pendingRequests = new Map();
   }

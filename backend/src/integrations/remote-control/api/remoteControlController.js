@@ -1,8 +1,6 @@
 import {
-  remoteControlClearRecordsQuerySchema,
   remoteControlConfigUpdateSchema,
-  remoteControlInboundPayloadSchema,
-  remoteControlRecordsQuerySchema
+  remoteControlInboundPayloadSchema
 } from "./remoteControlSchema.js";
 
 function createValidationError(message) {
@@ -21,29 +19,6 @@ function normalizeProviderKey(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-function normalizeSkillNames(value) {
-  const list = Array.isArray(value) ? value : [];
-  const seen = new Set();
-  const normalized = [];
-
-  for (const item of list) {
-    const skillName = String(item ?? "").trim();
-    if (!skillName) {
-      continue;
-    }
-
-    const key = skillName.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    normalized.push(skillName);
-  }
-
-  return normalized;
-}
-
 function normalizeProviderConfig(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -57,8 +32,7 @@ function normalizeProviderConfig(value) {
 export function createRemoteControlController({
   remoteControlConfigStore,
   remoteControlProviderRegistry,
-  remoteControlHistoryStore,
-  personaStore
+  historyStore
 }) {
   if (!remoteControlConfigStore) {
     throw new Error("remoteControlConfigStore is required");
@@ -66,10 +40,6 @@ export function createRemoteControlController({
   if (!remoteControlProviderRegistry) {
     throw new Error("remoteControlProviderRegistry is required");
   }
-  if (!remoteControlHistoryStore) {
-    throw new Error("remoteControlHistoryStore is required");
-  }
-
   async function setProviderActive(provider, active, options = {}) {
     const adapter = provider?.adapter ?? null;
     if (!adapter || typeof adapter.setActive !== "function") {
@@ -106,9 +76,7 @@ export function createRemoteControlController({
     return {
       config: {
         activeProviderKey,
-        workspacePath: String(config.workspacePath ?? "").trim(),
-        personaId: String(config.personaId ?? "").trim(),
-        activeSkillNames: normalizeSkillNames(config.activeSkillNames)
+        targetConversationId: String(config.targetConversationId ?? "").trim()
       },
       providers
     };
@@ -186,9 +154,7 @@ export function createRemoteControlController({
       const state = await getConfigState();
       const previousActiveProviderKey = normalizeProviderKey(state.config.activeProviderKey);
       let activeProviderKey = state.config.activeProviderKey;
-      let workspacePath = String(state.config.workspacePath ?? "").trim();
-      let personaId = String(state.config.personaId ?? "").trim();
-      let activeSkillNames = normalizeSkillNames(state.config.activeSkillNames);
+      let targetConversationId = String(state.config.targetConversationId ?? "").trim();
       if (validation.data.activeProviderKey !== undefined) {
         const requestedKey = normalizeProviderKey(validation.data.activeProviderKey);
         if (requestedKey && !remoteControlProviderRegistry.has(requestedKey)) {
@@ -196,28 +162,23 @@ export function createRemoteControlController({
         }
         activeProviderKey = requestedKey;
       }
-      if (validation.data.workspacePath !== undefined) {
-        workspacePath = String(validation.data.workspacePath ?? "").trim();
-      }
-      if (validation.data.personaId !== undefined) {
-        const requestedPersonaId = String(validation.data.personaId ?? "").trim();
-        if (requestedPersonaId) {
-          const persona = await personaStore?.getPersona?.(requestedPersonaId);
-          if (!persona) {
-            throw createValidationError("persona not found");
+      if (validation.data.targetConversationId !== undefined) {
+        const requestedConversationId = String(validation.data.targetConversationId ?? "").trim();
+        if (requestedConversationId) {
+          const history = historyStore?.getConversation?.(requestedConversationId);
+          if (!history) {
+            throw createValidationError("target conversation not found");
+          }
+          if (String(history?.source ?? "").trim().toLowerCase() === "subagent") {
+            throw createValidationError("subagent conversation cannot be remote target");
           }
         }
-        personaId = requestedPersonaId;
-      }
-      if (validation.data.activeSkillNames !== undefined) {
-        activeSkillNames = normalizeSkillNames(validation.data.activeSkillNames);
+        targetConversationId = requestedConversationId;
       }
 
       const savedGlobalConfig = await remoteControlConfigStore.save({
         activeProviderKey,
-        workspacePath,
-        personaId,
-        activeSkillNames
+        targetConversationId
       });
 
       let providerConfig = null;
@@ -239,43 +200,6 @@ export function createRemoteControlController({
         config: savedGlobalConfig,
         providerConfig,
         providers: remoteControlProviderRegistry.list()
-      });
-    },
-
-    listRecords: async (req, res) => {
-      const validation = remoteControlRecordsQuerySchema.safeParse(req.query ?? {});
-      if (!validation.success) {
-        throw createValidationError(formatZodError(validation.error));
-      }
-
-      const context = await getActiveProviderContext();
-      const result = remoteControlHistoryStore.listRecords(validation.data);
-      res.json({
-        records: Array.isArray(result?.records) ? result.records : [],
-        nextCursor: Number.isFinite(Number(result?.nextCursor)) ? Number(result.nextCursor) : null,
-        status: await getProviderStatus(context.provider),
-        activeProviderKey: context.activeProviderKey
-      });
-    },
-
-    clearRecords: async (req, res) => {
-      const validation = remoteControlClearRecordsQuerySchema.safeParse(req.query ?? {});
-      if (!validation.success) {
-        throw createValidationError(formatZodError(validation.error));
-      }
-
-      const context = await getActiveProviderContext();
-      const result = remoteControlHistoryStore.clearRecords({
-        providerKey: validation.data.providerKey
-      });
-
-      res.json({
-        cleared: true,
-        providerKey: String(result?.providerKey ?? "").trim(),
-        deletedTurns: Number(result?.deletedTurns ?? 0),
-        deletedMessages: Number(result?.deletedMessages ?? 0),
-        activeProviderKey: context.activeProviderKey,
-        status: await getProviderStatus(context.provider)
       });
     },
 

@@ -735,9 +735,314 @@
   gap: 0.65rem;
 }
 
-.rc-provider-field input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
+.rc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.rc-field > span {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.rc-provider-fields input,
+.rc-field input,
+.rc-field select {
+  width: 100%;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+  color: var(--text-main);
+  font-size: 0.9rem;
+  padding: 0.62rem 0.74rem;
+}
+
+.rc-smart-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+}
+
+.rc-smart-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.rc-smart-trigger {
+  width: 100%;
+  min-height: 3.35rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, var(--border-light));
+  border-radius: 1rem;
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--brand) 10%, transparent), transparent 38%),
+    linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-main) 100%);
+  color: var(--text-main);
+  padding: 0.66rem 0.74rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.58rem;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.rc-smart-trigger:hover:not(:disabled),
+.rc-smart-trigger.is-open {
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--border-light));
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
+}
+
+.rc-smart-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.rc-smart-trigger-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.rc-smart-trigger-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-main);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.rc-smart-trigger-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.rc-smart-badge,
+.rc-smart-option-badge {
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 10%, var(--bg-elevated));
+  color: color-mix(in srgb, var(--brand) 72%, var(--text-main));
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 0.18rem 0.46rem;
+}
+
+.rc-smart-caret {
+  width: 1.12rem;
+  height: 1.12rem;
+  color: var(--brand);
+  transition: transform 0.16s ease;
+}
+
+.rc-smart-trigger.is-open .rc-smart-caret {
+  transform: rotate(180deg);
+}
+
+.rc-smart-menu {
+  position: absolute;
+  z-index: 40;
+  inset: calc(100% + 0.42rem) 0 auto 0;
+  max-height: min(21rem, 48vh);
+  overflow: auto;
+  padding: 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border-light));
+  border-radius: 1rem;
+  background:
+    radial-gradient(circle at 18% 0, color-mix(in srgb, var(--brand) 10%, transparent), transparent 34%),
+    color-mix(in srgb, var(--bg-elevated) 96%, white);
+  box-shadow: 0 22px 52px rgba(15, 23, 42, 0.18);
+  display: grid;
+  gap: 0.34rem;
+  animation: rc-menu-pop 0.14s ease-out;
+}
+
+.rc-smart-menu::-webkit-scrollbar {
+  width: 7px;
+}
+
+.rc-smart-menu::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--brand) 24%, var(--border-light));
+  border-radius: 999px;
+}
+
+.rc-smart-option {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 0.78rem;
+  background: transparent;
+  color: var(--text-main);
+  padding: 0.64rem 0.68rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.55rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+
+.rc-smart-option:hover {
+  border-color: color-mix(in srgb, var(--brand) 18%, var(--border-light));
+  background: color-mix(in srgb, var(--brand) 7%, var(--bg-main));
+  transform: translateX(2px);
+}
+
+.rc-smart-option.is-selected {
+  border-color: color-mix(in srgb, var(--brand) 38%, var(--border-light));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--brand) 13%, transparent), transparent 56%),
+    var(--bg-main);
+}
+
+.rc-smart-option-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.rc-smart-option-main strong,
+.rc-smart-option-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-smart-option-main strong {
+  font-size: 0.86rem;
+  color: var(--text-main);
+  font-weight: 800;
+}
+
+.rc-smart-option-main small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.rc-smart-check {
+  border-radius: 999px;
+  background: var(--brand);
+  color: white;
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 0.18rem 0.42rem;
+}
+
+.rc-smart-empty {
+  border: 1px dashed var(--border-light);
+  border-radius: 0.75rem;
+  color: var(--text-muted);
+  background: var(--bg-main);
+  padding: 0.8rem;
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+@keyframes rc-menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.rc-alert {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 0.72rem 0.85rem;
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  font-size: 0.86rem;
+}
+
+.rc-alert.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.rc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.rc-actions button {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  font-weight: 700;
+  padding: 0.62rem 0.9rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.rc-actions button.primary {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: white;
+}
+
+.rc-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.rc-muted {
+  margin: 0;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  padding: 0.7rem 0.8rem;
+}
+
+.rc-target-summary {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(20, 184, 166, 0.08));
+  padding: 0.9rem;
+}
+
+.rc-target-summary strong {
+  color: var(--text-main);
+}
+
+.rc-target-summary span,
+.rc-target-summary small {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.rc-error-text {
+  color: #b91c1c !important;
 }
 
 .rc-empty-inline {

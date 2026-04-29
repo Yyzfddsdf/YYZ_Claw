@@ -223,11 +223,11 @@ export class ChatAgent {
     return { model, baseURL, apiKey, enableDeepThinking };
   }
 
-  createChatCompletionRequest(validatedConfig, conversation) {
+  createChatCompletionRequest(validatedConfig, conversation, executionContext = {}) {
     const request = {
       model: validatedConfig.model,
       messages: sanitizeConversationForModel(conversation),
-      tools: this.toolRegistry.getOpenAITools(),
+      tools: this.toolRegistry.getOpenAITools(executionContext),
       stream_options: {
         include_usage: true
       },
@@ -879,7 +879,7 @@ export class ChatAgent {
       const stream = await this.executeWithRetry(
         () =>
           client.chat.completions.create(
-            this.createChatCompletionRequest(validatedConfig, apiConversation),
+            this.createChatCompletionRequest(validatedConfig, apiConversation, executionContext),
             abortSignal ? { signal: abortSignal } : undefined
           ),
         onEvent,
@@ -1088,7 +1088,7 @@ export class ChatAgent {
       const stream = await this.executeWithRetry(
         () =>
           client.chat.completions.create(
-            this.createChatCompletionRequest(validatedConfig, apiConversation),
+            this.createChatCompletionRequest(validatedConfig, apiConversation, executionContext),
             abortSignal ? { signal: abortSignal } : undefined
           ),
         onEvent,

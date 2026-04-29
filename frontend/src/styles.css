@@ -71,7 +71,57 @@ body {
   margin: 0;
   background: rgba(255, 255, 255, 0.84);
   box-shadow: 0 18px 50px rgb(15 23 42 / 0.08);
-  backdrop-filter: blur(12px);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.app-shell.has-background {
+  --bg-main: rgba(248, 250, 252, var(--app-panel-opacity));
+  --bg-elevated: rgba(255, 255, 255, var(--app-panel-opacity));
+  --bg-hover: rgba(243, 244, 246, 0.68);
+  --bg-active: rgba(229, 231, 235, 0.74);
+  --border-light: rgba(255, 255, 255, 0.46);
+  --brand-light: rgba(239, 246, 255, 0.72);
+  --danger-light: rgba(254, 242, 242, 0.74);
+  --success-light: rgba(236, 253, 245, 0.72);
+  --bg-1: rgba(255, 255, 255, var(--app-panel-opacity));
+  --bg-2: rgba(248, 250, 252, var(--app-panel-opacity));
+  --bg-3: rgba(241, 245, 249, var(--app-panel-opacity));
+  --border-color: rgba(255, 255, 255, 0.46);
+  --app-surface: rgba(255, 255, 255, var(--app-panel-opacity));
+  --app-surface-main: rgba(248, 250, 252, var(--app-main-opacity));
+  --app-surface-warm: rgba(255, 251, 235, var(--app-panel-opacity));
+  --app-surface-danger: rgba(254, 242, 242, var(--app-panel-opacity));
+  --app-surface-success: rgba(236, 253, 245, var(--app-panel-opacity));
+  background: transparent;
+}
+
+.app-shell.has-background::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: var(--app-background-image);
+  background-position: center;
+  background-size: cover;
+}
+
+.app-shell.has-background::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 16% 12%, rgba(255, 255, 255, 0.18), transparent 34%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.04), rgba(248, 250, 252, 0.08));
+  pointer-events: none;
+}
+
+.app-shell > .app-sidebar,
+.app-shell > .workspace-main {
+  position: relative;
+  z-index: 1;
 }
 
 /* Sidebar Header / Nav */
@@ -82,6 +132,11 @@ body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+}
+
+.app-shell.has-background .app-sidebar {
+  background: rgba(252, 253, 254, var(--app-sidebar-opacity));
+  border-right-color: rgba(255, 255, 255, 0.42);
 }
 
 .app-sidebar-header {
@@ -148,6 +203,120 @@ body {
   position: relative;
   display: flex;
   background: var(--bg-main);
+}
+
+.app-shell.has-background .workspace-main {
+  background: rgba(248, 250, 252, var(--app-main-opacity));
+}
+
+.app-shell.has-background * {
+  backdrop-filter: none !important;
+}
+
+.app-shell.has-background :is(
+  .panel,
+  .app-sidebar,
+  .workspace-main,
+  .chat-pane,
+  .chat-pane-head,
+  .history-pane,
+  .history-pane-head,
+  .skills-pane,
+  .skills-drawer,
+  .skills-panel,
+  .skills-panel-header,
+  .skills-detail-modal,
+  .skills-detail-head,
+  .skills-detail-content,
+  .skills-detail-files,
+  .skill-card,
+  .config-section,
+  .config-section-header,
+  .select-dropdown,
+  .automation-create,
+  .automation-section,
+  .automation-item,
+  .automation-conversation-card,
+  .automation-binding-item,
+  .background-hero,
+  .background-control-strip,
+  .background-card,
+  .debate-history,
+  .debate-form,
+  .debate-form input,
+  .debate-form textarea,
+  .debate-detail-head,
+  .debate-topic-card,
+  .debate-turn,
+  .memory-detail-panel,
+  .memory-detail-header,
+  .memory-detail-card,
+  .memory-detail-stats div,
+  .memory-detail-field input,
+  .memory-detail-field textarea,
+  .memory-detail-readonly,
+  .persona-panel-header,
+  .persona-list,
+  .persona-editor-card,
+  .persona-field input,
+  .persona-field textarea,
+  .remote-control-card,
+  .remote-select-menu,
+  .rc-select-menu,
+  .rc-card,
+  .rc-panel,
+  .global-confirm-card,
+  .time-picker-trigger,
+  .time-picker-dropdown
+) {
+  background: var(--app-surface) !important;
+}
+
+.app-shell.has-background :is(
+  .chat-workspace,
+  .debate-panel,
+  .memory-panel,
+  .persona-panel,
+  .automation-panel,
+  .background-module,
+  .remote-control-module,
+  .config-module,
+  .skills-panel-content
+) {
+  background: transparent !important;
+}
+
+.app-shell.has-background :is(
+  .status-note.warning,
+  .runtime-hook-strip,
+  .bubble-user.bubble-runtime-hook-injected .bubble-content,
+  .compression-card-content,
+  .composer-approval-card,
+  .tool-hook-warning,
+  .rc-hook-item.warning,
+  .rc-record.is-hook
+) {
+  background: var(--app-surface-warm) !important;
+}
+
+.app-shell.has-background :is(
+  .status-note.error,
+  .runtime-autopsy,
+  .composer-approval-error,
+  .debate-warning,
+  .memory-detail-banner.error,
+  .rc-record.is-error,
+  .rc-records-head button.is-danger
+) {
+  background: var(--app-surface-danger) !important;
+}
+
+.app-shell.has-background :is(
+  .debate-final,
+  .debate-turn-agreement,
+  .debate-turn-final
+) {
+  background: var(--app-surface-success) !important;
 }
 
 .panel {

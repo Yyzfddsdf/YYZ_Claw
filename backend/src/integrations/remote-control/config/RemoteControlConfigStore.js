@@ -7,36 +7,11 @@ function normalizeProviderKey(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-function normalizeSkillNames(value) {
-  const list = Array.isArray(value) ? value : [];
-  const seen = new Set();
-  const normalized = [];
-
-  for (const item of list) {
-    const skillName = String(item ?? "").trim();
-    if (!skillName) {
-      continue;
-    }
-
-    const key = skillName.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    normalized.push(skillName);
-  }
-
-  return normalized;
-}
-
 function normalizeConfig(value) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   return {
     activeProviderKey: normalizeProviderKey(source.activeProviderKey),
-    workspacePath: String(source.workspacePath ?? "").trim(),
-    personaId: String(source.personaId ?? "").trim(),
-    activeSkillNames: normalizeSkillNames(source.activeSkillNames)
+    targetConversationId: String(source.targetConversationId ?? "").trim()
   };
 }
 
@@ -84,21 +59,6 @@ export class RemoteControlConfigStore {
   }
 
   async replacePersonaId(previousPersonaId, nextPersonaId) {
-    const previousId = String(previousPersonaId ?? "").trim();
-    const nextId = String(nextPersonaId ?? "").trim();
-    if (!previousId || previousId === nextId) {
-      return false;
-    }
-
-    const current = await this.read();
-    if (String(current.personaId ?? "").trim() !== previousId) {
-      return false;
-    }
-
-    await this.save({
-      ...current,
-      personaId: nextId
-    });
-    return true;
+    return false;
   }
 }

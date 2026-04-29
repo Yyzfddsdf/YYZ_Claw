@@ -4,47 +4,18 @@ function normalizeProviderKey(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-function normalizeSkillNames(value) {
-  const list = Array.isArray(value) ? value : [];
-  const seen = new Set();
-  const normalized = [];
-
-  for (const item of list) {
-    const skillName = String(item ?? "").trim();
-    if (!skillName) {
-      continue;
-    }
-
-    const key = skillName.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    normalized.push(skillName);
-  }
-
-  return normalized;
-}
-
 export const remoteControlConfigUpdateSchema = z
   .object({
     activeProviderKey: z.string().trim().optional(),
-    workspacePath: z.string().max(4096).optional(),
-    personaId: z.string().trim().max(120).optional(),
-    activeSkillNames: z.array(z.string().trim().min(1).max(200)).max(120).optional(),
+    targetConversationId: z.string().trim().max(160).optional(),
     providerConfig: z.record(z.unknown()).optional()
   })
   .transform((payload) => ({
     activeProviderKey: normalizeProviderKey(payload.activeProviderKey),
-    workspacePath:
-      payload.workspacePath === undefined ? undefined : String(payload.workspacePath ?? "").trim(),
-    personaId:
-      payload.personaId === undefined ? undefined : String(payload.personaId ?? "").trim(),
-    activeSkillNames:
-      payload.activeSkillNames === undefined
+    targetConversationId:
+      payload.targetConversationId === undefined
         ? undefined
-        : normalizeSkillNames(payload.activeSkillNames),
+        : String(payload.targetConversationId ?? "").trim(),
     providerConfig:
       payload.providerConfig && typeof payload.providerConfig === "object" && !Array.isArray(payload.providerConfig)
         ? payload.providerConfig

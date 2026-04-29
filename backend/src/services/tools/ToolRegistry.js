@@ -39,8 +39,22 @@ function normalizeTool(toolModule) {
     name: candidate.name,
     description: candidate.description,
     parameters: candidate.parameters,
-    execute: candidate.execute
+    execute: candidate.execute,
+    isAvailable:
+      typeof candidate.isAvailable === "function" ? candidate.isAvailable : null
   };
+}
+
+function isToolAvailable(tool, executionContext = {}) {
+  if (!tool || typeof tool !== "object") {
+    return false;
+  }
+
+  if (typeof tool.isAvailable !== "function") {
+    return true;
+  }
+
+  return Boolean(tool.isAvailable(executionContext));
 }
 
 export class ToolRegistry {
@@ -78,12 +92,17 @@ export class ToolRegistry {
     return this.toolMap.get(String(toolName ?? "").trim()) ?? null;
   }
 
-  listTools() {
-    return Array.from(this.toolMap.values());
+  listTools(executionContext = null) {
+    const tools = Array.from(this.toolMap.values());
+    if (!executionContext) {
+      return tools;
+    }
+
+    return tools.filter((tool) => isToolAvailable(tool, executionContext));
   }
 
-  getOpenAITools() {
-    return this.listTools().map((tool) => ({
+  getOpenAITools(executionContext = {}) {
+    return this.listTools(executionContext).map((tool) => ({
       type: "function",
       function: {
         name: tool.name,
@@ -104,6 +123,9 @@ export class ToolRegistry {
 
     if (!tool) {
       throw new Error(`Tool is not registered: ${toolName}`);
+    }
+    if (!isToolAvailable(tool, executionContext)) {
+      throw new Error(`Tool is not available in the current runtime: ${toolName}`);
     }
 
     const rawArguments = toolCall?.function?.arguments ?? "{}";

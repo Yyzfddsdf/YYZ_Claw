@@ -7,6 +7,12 @@ History/*.sqlite
 History/*.sqlite-*
 memory.sqlite
 memory.sqlite-*
+.yyz/config/
+.yyz/history/
 .yyz/memory/
+.yyz/memory.sqlite
+.yyz/memory.sqlite-*
+.yyz/models/
+.yyz/integrations/
 models/
 config/

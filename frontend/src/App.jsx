@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { fetchBackgrounds } from "./api/backgroundApi";
 import { fetchConfig, saveConfig } from "./api/configApi";
 import { fetchMcpConfig, saveMcpConfig } from "./api/mcpApi";
 import { AutomationPanel } from "./modules/automation/AutomationPanel";
+import { BackgroundPanel } from "./modules/backgrounds/BackgroundPanel";
 import { ChatPanel } from "./modules/chat/ChatPanel";
 import { useChatSession } from "./modules/chat/useChatSession";
 import { ConfigPanel } from "./modules/config/ConfigPanel";
@@ -40,6 +42,16 @@ function createEmptyMcpConfig() {
   };
 }
 
+function createEmptyAppearance() {
+  return {
+    backgrounds: [],
+    settings: {
+      selectedFile: "",
+      surfaceOpacity: 0.68
+    }
+  };
+}
+
 function hasRuntimeConfig(config) {
   return Boolean(config.model && config.baseURL && config.apiKey);
 }
@@ -54,6 +66,7 @@ export default function App() {
   const [mcpError, setMcpError] = useState("");
   const [mcpLoading, setMcpLoading] = useState(true);
   const [mcpSaving, setMcpSaving] = useState(false);
+  const [appearance, setAppearance] = useState(createEmptyAppearance);
   const [activeWorkspace, setActiveWorkspace] = useState("chat");
 
   const chat = useChatSession(Number(config.maxContextWindow || 0));
@@ -102,6 +115,30 @@ export default function App() {
     }
 
     loadConfig();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadAppearance() {
+      try {
+        const response = await fetchBackgrounds();
+        if (!mounted) return;
+        setAppearance({
+          backgrounds: response?.backgrounds ?? [],
+          settings: response?.settings ?? createEmptyAppearance().settings
+        });
+      } catch {
+        if (!mounted) return;
+        setAppearance(createEmptyAppearance());
+      }
+    }
+
+    loadAppearance();
 
     return () => {
       mounted = false;
@@ -179,9 +216,30 @@ export default function App() {
   }
 
   const canChat = useMemo(() => hasRuntimeConfig(config), [config]);
+  const activeBackground = useMemo(
+    () =>
+      appearance.backgrounds.find((item) => item.name === appearance.settings?.selectedFile) ??
+      null,
+    [appearance]
+  );
+  const appShellStyle = activeBackground
+    ? (() => {
+        const surfaceOpacity = Number(appearance.settings?.surfaceOpacity ?? 0.68);
+        return {
+        "--app-background-image": `url("${activeBackground.url}")`,
+        "--app-surface-opacity": String(surfaceOpacity),
+        "--app-sidebar-opacity": String(Math.min(0.9, surfaceOpacity + 0.16)),
+        "--app-main-opacity": String(Math.max(0.16, surfaceOpacity - 0.14)),
+        "--app-panel-opacity": String(Math.max(0.14, surfaceOpacity - 0.2))
+      };
+      })()
+    : undefined;
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${activeBackground ? "has-background" : ""}`}
+      style={appShellStyle}
+    >
       <GlobalFeedbackHost />
       <aside className="app-sidebar">
         <header className="app-sidebar-header">
@@ -229,6 +287,21 @@ export default function App() {
               <path d="M4 21a8 8 0 0 1 16 0" />
             </svg>
             Agent 身份
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeWorkspace === "backgrounds"}
+            className={`nav-item ${activeWorkspace === "backgrounds" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("backgrounds")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M4 5h16v14H4z" />
+              <path d="M8 13l2.5-3l3.5 4l2-2.5L20 16" />
+              <path d="M8 8h.01" />
+            </svg>
+            界面背景
           </button>
 
           <button
@@ -320,6 +393,12 @@ export default function App() {
         {activeWorkspace === "personas" && (
           <section className="panel panel-personas" role="tabpanel" aria-label="persona workspace">
             <PersonaPanel chat={chat} onNavigate={(nav) => setActiveWorkspace(nav)} />
+          </section>
+        )}
+
+        {activeWorkspace === "backgrounds" && (
+          <section className="panel panel-backgrounds" role="tabpanel" aria-label="background workspace">
+            <BackgroundPanel appearance={appearance} onAppearanceChange={setAppearance} />
           </section>
         )}
 

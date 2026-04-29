@@ -4,6 +4,18 @@ function normalizeToolName(toolCall) {
   return String(toolCall?.function?.name ?? "").trim();
 }
 
+function isToolAvailable(tool, executionContext = {}) {
+  if (!tool || typeof tool !== "object") {
+    return false;
+  }
+
+  if (typeof tool.isAvailable !== "function") {
+    return true;
+  }
+
+  return Boolean(tool.isAvailable(executionContext));
+}
+
 export class UnifiedToolRegistry {
   constructor({ localToolRegistry, mcpManager = null }) {
     this.localToolRegistry = localToolRegistry;
@@ -42,8 +54,10 @@ export class UnifiedToolRegistry {
     return Array.from(toolMap.values());
   }
 
-  getOpenAITools() {
-    return this.listTools().map((tool) => ({
+  getOpenAITools(executionContext = {}) {
+    return this.listTools()
+      .filter((tool) => isToolAvailable(tool, executionContext))
+      .map((tool) => ({
       type: "function",
       function: {
         name: tool.name,

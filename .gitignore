@@ -17,3 +17,6 @@ memory.sqlite-*
 models/
 config/
 frontend/dist/
+release/
+!resources/defaults/config/
+!resources/defaults/config/**

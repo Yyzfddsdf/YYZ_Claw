@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Skills Creator">
+  <defs>
+    <linearGradient id="creatorGradient" x1="20" y1="16" x2="135" y2="144" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fb923c"/>
+      <stop offset="1" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" rx="42" fill="url(#creatorGradient)"/>
+  <path d="M47 89 80 28l33 61H47z" fill="#fff7ed"/>
+  <path d="M47 99h66v25a10 10 0 0 1-10 10H57a10 10 0 0 1-10-10V99z" fill="#7c2d12"/>
+  <path d="M67 87h26M80 56v63" stroke="#fed7aa" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="112" cy="45" r="8" fill="#ffedd5"/>
+  <circle cx="45" cy="50" r="6" fill="#ffedd5" opacity=".78"/>
+</svg>

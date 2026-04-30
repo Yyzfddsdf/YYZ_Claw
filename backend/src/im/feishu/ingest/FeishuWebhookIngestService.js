@@ -176,6 +176,7 @@ export class FeishuWebhookIngestService {
     this.openApiClient = options.openApiClient ?? null;
     this.attachmentParserService = options.attachmentParserService ?? null;
     this.speechToTextService = options.speechToTextService ?? null;
+    this.configStore = options.configStore ?? null;
     this.attachmentResolver =
       options.attachmentResolver ??
       new RemoteAttachmentResolver({
@@ -424,11 +425,23 @@ export class FeishuWebhookIngestService {
         audioBuffer: resource.buffer,
         language: "zh",
         task: "transcribe",
-        provider: "local"
+        remoteConfig: await this.resolveSpeechToTextRemoteConfig()
       });
       return String(result?.text ?? "").trim();
     } catch {
       return "";
     }
+  }
+
+  async resolveSpeechToTextRemoteConfig() {
+    const runtimeConfig = this.configStore && typeof this.configStore.read === "function"
+      ? await this.configStore.read()
+      : {};
+
+    return {
+      cloudflareApiToken: String(runtimeConfig?.sttCloudflareApiToken ?? "").trim(),
+      cloudflareAccountId: String(runtimeConfig?.sttCloudflareAccountId ?? "").trim(),
+      cloudflareModel: String(runtimeConfig?.sttCloudflareModel ?? "").trim()
+    };
   }
 }

@@ -13,7 +13,7 @@ function normalizeConfig(config) {
     compressionModel: config?.compressionModel ?? "",
     compressionBaseURL: config?.compressionBaseURL ?? "",
     compressionApiKey: config?.compressionApiKey ?? "",
-    sttProvider: config?.sttProvider ?? "local",
+    sttProvider: "cloudflare",
     sttCloudflareApiToken: config?.sttCloudflareApiToken ?? "",
     sttCloudflareAccountId: config?.sttCloudflareAccountId ?? "",
     sttCloudflareModel: config?.sttCloudflareModel ?? "@cf/openai/whisper-large-v3-turbo",
@@ -68,7 +68,6 @@ export function ConfigPanel({
   const [mcpSaveMessage, setMcpSaveMessage] = useState("");
   const [expandedServers, setExpandedServers] = useState({});
   const [openTransportMenuIndex, setOpenTransportMenuIndex] = useState(-1);
-  const [sttProviderMenuOpen, setSttProviderMenuOpen] = useState(false);
 
   useEffect(() => {
     setForm(normalizeConfig(initialConfig));
@@ -84,7 +83,6 @@ export function ConfigPanel({
         return;
       }
       setOpenTransportMenuIndex(-1);
-      setSttProviderMenuOpen(false);
     }
 
     document.addEventListener("pointerdown", handleDocumentPointerDown);
@@ -101,14 +99,6 @@ export function ConfigPanel({
     ],
     []
   );
-  const sttProviderOptions = useMemo(
-    () => [
-      { value: "local", label: "local（本地 ONNX）" },
-      { value: "cloudflare", label: "cloudflare（远端 API）" }
-    ],
-    []
-  );
-
   async function handleConfigSubmit(event) {
     event.preventDefault();
     if (!form.model || !form.baseURL || !form.apiKey) {
@@ -270,86 +260,33 @@ export function ConfigPanel({
             />
             <div className="config-item">
               <div className="config-item-info">
-                <span className="config-item-label">STT 路径</span>
-                <span className="config-item-desc">选择语音转文字使用本地 ONNX 或 Cloudflare 远端。不会自动兜底切换。</span>
-              </div>
-              <div className="config-item-control">
-                <div className="select-container">
-                  <button
-                    type="button"
-                    className={`select-trigger ${sttProviderMenuOpen ? "is-active" : ""}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (loading || saving) {
-                        return;
-                      }
-                      setOpenTransportMenuIndex(-1);
-                      setSttProviderMenuOpen((prev) => !prev);
-                    }}
-                    disabled={loading || saving}
-                  >
-                    <span>
-                      {sttProviderOptions.find((item) => item.value === form.sttProvider)?.label ||
-                        "local（本地 ONNX）"}
-                    </span>
-                  </button>
-                  {sttProviderMenuOpen && (
-                    <div className="select-dropdown" onClick={(event) => event.stopPropagation()}>
-                      {sttProviderOptions.map((option) => (
-                        <div
-                          key={`stt_provider_${option.value}`}
-                          role="button"
-                          tabIndex={0}
-                          className={`select-option ${
-                            form.sttProvider === option.value ? "is-selected" : ""
-                          }`}
-                          onClick={() => {
-                            setForm({ ...form, sttProvider: option.value });
-                            setSttProviderMenuOpen(false);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              setForm({ ...form, sttProvider: option.value });
-                              setSttProviderMenuOpen(false);
-                            }
-                          }}
-                        >
-                          {option.label}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <span className="config-item-label">STT 云端</span>
+                <span className="config-item-desc">语音转文字只使用 Cloudflare Workers AI，所有语音识别请求都会走云端配置。</span>
               </div>
             </div>
 
-            {form.sttProvider === "cloudflare" && (
-              <>
-                <ConfigRow
-                  label="STT Cloudflare Token"
-                  desc="Cloudflare API Token（Workers AI 权限）"
-                  value={form.sttCloudflareApiToken}
-                  onChange={v => setForm({ ...form, sttCloudflareApiToken: v })}
-                  isPassword
-                  disabled={loading || saving}
-                />
-                <ConfigRow
-                  label="STT Cloudflare Account"
-                  desc="Cloudflare Account ID"
-                  value={form.sttCloudflareAccountId}
-                  onChange={v => setForm({ ...form, sttCloudflareAccountId: v })}
-                  disabled={loading || saving}
-                />
-                <ConfigRow
-                  label="STT Cloudflare Model"
-                  desc="示例：@cf/openai/whisper-large-v3-turbo"
-                  value={form.sttCloudflareModel}
-                  onChange={v => setForm({ ...form, sttCloudflareModel: v })}
-                  disabled={loading || saving}
-                />
-              </>
-            )}
+            <ConfigRow
+              label="STT Cloudflare Token"
+              desc="Cloudflare API Token（Workers AI 权限）"
+              value={form.sttCloudflareApiToken}
+              onChange={v => setForm({ ...form, sttCloudflareApiToken: v })}
+              isPassword
+              disabled={loading || saving}
+            />
+            <ConfigRow
+              label="STT Cloudflare Account"
+              desc="Cloudflare Account ID"
+              value={form.sttCloudflareAccountId}
+              onChange={v => setForm({ ...form, sttCloudflareAccountId: v })}
+              disabled={loading || saving}
+            />
+            <ConfigRow
+              label="STT Cloudflare Model"
+              desc="示例：@cf/openai/whisper-large-v3-turbo"
+              value={form.sttCloudflareModel}
+              onChange={v => setForm({ ...form, sttCloudflareModel: v })}
+              disabled={loading || saving}
+            />
           </div>
         </div>
 
@@ -411,7 +348,6 @@ export function ConfigPanel({
                         className={`select-trigger ${openTransportMenuIndex === sIndex ? "is-active" : ""}`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setSttProviderMenuOpen(false);
                           setOpenTransportMenuIndex((prev) => (prev === sIndex ? -1 : sIndex));
                         }}
                         disabled={mcpSaving}

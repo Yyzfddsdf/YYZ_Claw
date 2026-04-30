@@ -2,6 +2,7 @@
   "name": "agent-framework-workspace",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.cjs",
   "workspaces": [
     "backend",
     "frontend"
@@ -13,6 +14,8 @@
     "build:backend": "npm run build --workspace backend",
     "build:frontend": "node service.js --build-only",
     "electron:dev": "electron electron/main.cjs",
+    "electron:pack": "npm run build && electron-builder --dir",
+    "electron:dist": "npm run build && electron-builder",
     "start:backend": "npm run start --workspace backend"
   },
   "dependencies": {
@@ -24,6 +27,54 @@
     "d3-selection": "^3.0.0",
     "d3-shape": "^3.2.0",
     "d3-zoom": "^3.0.0",
-    "electron": "^41.3.0"
+    "electron": "^41.3.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.yyzclaw.app",
+    "productName": "YYZ_CLAW",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "service.js",
+      "package.json",
+      "package-lock.json",
+      "backend/**",
+      "frontend/**",
+      "electron/**",
+      "!resources/**",
+      "!release/**",
+      "!.yyz/**",
+      "!models/**",
+      "!History/**",
+      "!config/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/defaults",
+        "to": "resources/defaults"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icons/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

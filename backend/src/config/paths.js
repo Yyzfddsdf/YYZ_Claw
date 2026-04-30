@@ -29,7 +29,6 @@ export const HISTORY_DIR = path.join(YYZ_DIR, "history");
 export const HISTORY_DB_FILE = path.join(HISTORY_DIR, "chat_history.sqlite");
 export const DEBATE_DB_FILE = path.join(HISTORY_DIR, "ai_debates.sqlite");
 export const MEMORY_DB_FILE = path.join(YYZ_DIR, "memory.sqlite");
-export const MODELS_DIR = path.join(YYZ_DIR, "models");
 export const TOOLS_DIR = path.join(BACKEND_ROOT, "src", "services", "tools");
 export const BUILTIN_TOOLS_DIR = TOOLS_DIR;
 export const SUBAGENTS_DIR = path.join(BACKEND_ROOT, "src", "subagents");

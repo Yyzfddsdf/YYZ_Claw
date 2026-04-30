@@ -9,7 +9,6 @@ import {
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
   MCP_CONFIG_FILE,
-  MODELS_DIR,
   REMOTE_CONTROL_CONFIG_FILE,
   MEMORY_SUMMARY_FILE,
   MEMORY_SUMMARY_DIR,
@@ -124,15 +123,12 @@ export async function createServices() {
   const personaStore = new PersonaStore({
     rootDir: PERSONAS_DIR
   });
-  await personaStore.ensureDefaultPersona();
 
   const mcpManager = new McpManager({
     configStore: mcpConfigStore
   });
   await mcpManager.refresh();
-  const speechToTextService = new SpeechToTextService({
-    cacheDir: path.join(MODELS_DIR, "onnx")
-  });
+  const speechToTextService = new SpeechToTextService();
   const edgeTextToSpeechService = new EdgeTextToSpeechService({
     defaultVoice: "zh-CN-XiaoxiaoNeural",
     defaultRate: "+0%",
@@ -252,7 +248,8 @@ export async function createServices() {
     runtimeService: feishuRuntimeService,
     openApiClient: feishuOpenApiClient,
     attachmentParserService,
-    speechToTextService
+    speechToTextService,
+    configStore
   });
   const feishuLongConnectionService = new FeishuLongConnectionService({
     configStore: feishuConfigStore,

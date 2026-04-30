@@ -8,6 +8,11 @@ const DEFAULT_PORT = Number(process.env.PORT || 3000);
 const SERVER_URL = process.env.YYZ_CLAW_SERVER_URL || `http://127.0.0.1:${DEFAULT_PORT}`;
 const PRELOAD_FILE = path.join(__dirname, "preload.cjs");
 const APP_ICON_FILE = path.join(PROJECT_ROOT, "frontend", "src", "assets", "yyz-claw-icon.png");
+const DEFAULT_ASSET_DIR_CANDIDATES = [
+  path.join(PROJECT_ROOT, "resources", "defaults"),
+  path.join(process.resourcesPath || "", "resources", "defaults"),
+  path.join(process.resourcesPath || "", "defaults")
+].filter(Boolean);
 
 let backendProcess = null;
 let mainWindow = null;
@@ -53,11 +58,19 @@ function startBackendService() {
     return null;
   }
 
-  const child = spawn(process.execPath, ["service.js"], {
+  const defaultAssetsDir =
+    DEFAULT_ASSET_DIR_CANDIDATES.find((candidate) => require("node:fs").existsSync(candidate)) ||
+    DEFAULT_ASSET_DIR_CANDIDATES[0];
+  const serviceEntry = path.join(PROJECT_ROOT, "service.js");
+
+  const child = spawn(process.execPath, [serviceEntry], {
     cwd: PROJECT_ROOT,
     env: {
       ...process.env,
-      PORT: String(DEFAULT_PORT)
+      ELECTRON_RUN_AS_NODE: "1",
+      YYZ_CLAW_SKIP_FRONTEND_BUILD: app.isPackaged ? "1" : "",
+      PORT: String(DEFAULT_PORT),
+      YYZ_CLAW_DEFAULTS_DIR: defaultAssetsDir
     },
     stdio: "inherit",
     windowsHide: true

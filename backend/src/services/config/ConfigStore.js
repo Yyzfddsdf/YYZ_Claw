@@ -34,6 +34,12 @@ export class ConfigStore {
     const parsed = safeJsonParse(raw, {});
 
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if (parsed.sttProvider !== undefined && parsed.sttProvider !== "cloudflare") {
+        return {
+          ...parsed,
+          sttProvider: "cloudflare"
+        };
+      }
       return parsed;
     }
 

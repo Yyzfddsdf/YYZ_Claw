@@ -1,0 +1,19 @@
+{
+  "model": "",
+  "baseURL": "",
+  "apiKey": "",
+  "webProvider": "",
+  "tavilyApiKey": "",
+  "subagentModel": "",
+  "subagentBaseURL": "",
+  "subagentApiKey": "",
+  "maxContextWindow": 128000,
+  "compressionModel": "",
+  "compressionBaseURL": "",
+  "compressionApiKey": "",
+  "compressionMaxOutputTokens": 32000,
+  "sttProvider": "cloudflare",
+  "sttCloudflareApiToken": "",
+  "sttCloudflareAccountId": "",
+  "sttCloudflareModel": "@cf/openai/whisper-large-v3-turbo"
+}

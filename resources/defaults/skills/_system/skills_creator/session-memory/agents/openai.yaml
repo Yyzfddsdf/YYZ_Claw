@@ -1,0 +1,7 @@
+interface:
+  display_name: "Session Memory"
+  short_description: "Keep concise task memory updated"
+  default_prompt: "Use $session-memory to keep SESSION_MEMORY.md current with completed work, next steps, and risks."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#0f9f8f"

@@ -24,7 +24,7 @@ export const configSchema = z.object({
   compressionBaseURL: createOptionalUrlWithBlankSchema("compressionBaseURL"),
   compressionApiKey: z.string().trim().optional(),
   compressionMaxOutputTokens: z.number().int().positive().optional(),
-  sttProvider: z.enum(["local", "cloudflare"]).optional(),
+  sttProvider: z.literal("cloudflare").optional(),
   sttCloudflareApiToken: z.string().trim().optional(),
   sttCloudflareAccountId: z.string().trim().optional(),
   sttCloudflareModel: z.string().trim().optional()

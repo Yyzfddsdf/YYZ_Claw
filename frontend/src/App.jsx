@@ -32,7 +32,7 @@ function createEmptyConfig() {
     compressionModel: "",
     compressionBaseURL: "",
     compressionApiKey: "",
-    sttProvider: "local",
+    sttProvider: "cloudflare",
     sttCloudflareApiToken: "",
     sttCloudflareAccountId: "",
     sttCloudflareModel: "@cf/openai/whisper-large-v3-turbo"
@@ -147,7 +147,7 @@ function MainApp() {
           compressionModel: response?.config?.compressionModel ?? "",
           compressionBaseURL: response?.config?.compressionBaseURL ?? "",
           compressionApiKey: response?.config?.compressionApiKey ?? "",
-          sttProvider: response?.config?.sttProvider ?? "local",
+          sttProvider: "cloudflare",
           sttCloudflareApiToken: response?.config?.sttCloudflareApiToken ?? "",
           sttCloudflareAccountId: response?.config?.sttCloudflareAccountId ?? "",
           sttCloudflareModel:

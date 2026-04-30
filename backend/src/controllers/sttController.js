@@ -6,11 +6,6 @@ function createValidationError(message) {
   return error;
 }
 
-function normalizeSttProvider(config) {
-  const provider = String(config?.sttProvider ?? "").trim().toLowerCase();
-  return provider === "cloudflare" ? "cloudflare" : "local";
-}
-
 export function createSttController({ speechToTextService, configStore }) {
   function parseOptions(payload) {
     const parseResult = sttTranscribeRequestSchema.safeParse(payload ?? {});
@@ -28,13 +23,11 @@ export function createSttController({ speechToTextService, configStore }) {
     const runtimeConfig = configStore && typeof configStore.read === "function"
       ? await configStore.read()
       : {};
-    const provider = normalizeSttProvider(runtimeConfig);
     const result = await speechToTextService.transcribe({
       audioBuffer,
       language: options.language,
       task: options.task,
       timeoutMs: options.timeoutMs,
-      provider,
       remoteConfig: {
         cloudflareApiToken: String(runtimeConfig?.sttCloudflareApiToken ?? "").trim(),
         cloudflareAccountId: String(runtimeConfig?.sttCloudflareAccountId ?? "").trim(),
@@ -45,7 +38,7 @@ export function createSttController({ speechToTextService, configStore }) {
     res.json({
       text: String(result?.text ?? "").trim(),
       durationMs: Number(result?.durationMs ?? 0),
-      provider: String(result?.provider ?? provider).trim() || "local",
+      provider: String(result?.provider ?? "cloudflare").trim() || "cloudflare",
       model: String(result?.model ?? "").trim(),
       language: options.language,
       task: options.task,

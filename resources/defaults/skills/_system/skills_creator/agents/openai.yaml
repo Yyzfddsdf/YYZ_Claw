@@ -1,0 +1,9 @@
+interface:
+  display_name: "Skills Creator"
+  short_description: "Create and update standard skills"
+  default_prompt: "Use $skills_creator to scaffold, validate, or update a skill. Generate openai.yaml only when UI metadata is needed."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#f97316"
+policy:
+  allow_implicit_invocation: true

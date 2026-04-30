@@ -65,10 +65,15 @@ async function buildFrontendBundle() {
 
 async function startService() {
   const buildOnly = process.argv.includes("--build-only");
+  const skipFrontendBuild = process.env.YYZ_CLAW_SKIP_FRONTEND_BUILD === "1";
   const port = Number(process.env.PORT) || 3000;
 
-  await buildFrontendBundle();
-  console.log("[service] frontend bundle generated");
+  if (buildOnly || !skipFrontendBuild) {
+    await buildFrontendBundle();
+    console.log("[service] frontend bundle generated");
+  } else {
+    console.log("[service] frontend bundle reuse enabled");
+  }
 
   if (buildOnly) {
     return;

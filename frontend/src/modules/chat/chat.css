@@ -848,7 +848,6 @@
   }
 }
 
-.history-item-fork,
 .history-item-delete {
   background: transparent;
   color: var(--text-placeholder);
@@ -860,11 +859,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.history-item-fork:hover {
-  color: var(--brand-hover);
-  background: var(--brand-light);
 }
 
 .history-item-delete:hover {
@@ -1990,8 +1984,72 @@
   background: color-mix(in srgb, var(--brand-light) 72%, #fff);
 }
 
+.bubble-action-rerun:hover:not(:disabled),
+.bubble-action-edit:hover:not(:disabled) {
+  color: var(--brand);
+}
+
 .bubble-action-btn:disabled {
   opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.message-edit-card {
+  min-width: min(520px, calc(100vw - 4rem));
+  padding: 0.75rem;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--brand) 92%, #111827);
+  box-shadow: 0 14px 32px rgb(15 23 42 / 0.18);
+  display: grid;
+  gap: 0.55rem;
+}
+
+.message-edit-card textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, #ffffff 36%, transparent);
+  border-radius: var(--radius-md);
+  background: rgb(255 255 255 / 0.96);
+  color: #111827;
+  padding: 0.7rem 0.78rem;
+  font: inherit;
+  line-height: 1.55;
+  outline: none;
+}
+
+.message-edit-card textarea:focus {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 0.22);
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.message-edit-actions button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.message-edit-cancel {
+  color: rgb(255 255 255 / 0.88);
+  background: rgb(255 255 255 / 0.16);
+}
+
+.message-edit-submit {
+  color: var(--brand);
+  background: #ffffff;
+}
+
+.message-edit-submit:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 

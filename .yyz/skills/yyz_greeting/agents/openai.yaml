@@ -1,7 +1,0 @@
-name: yyz_greeting
-displayName: YYZ 先生的问候
-shortDescription: 一个简单的技能，用于称呼用户为"yyz 先生"
-iconSmall: "assets/icon-small.svg"
-iconLarge: "assets/icon-large.svg"
-brandColor: "#2563eb"
-

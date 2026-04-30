@@ -30,9 +30,10 @@ export function fetchHistoryById(conversationId) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}`);
 }
 
-export function forkHistoryById(conversationId) {
+export function forkHistoryById(conversationId, payload = {}) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/fork`, {
-    method: "POST"
+    method: "POST",
+    body: payload
   });
 }
 

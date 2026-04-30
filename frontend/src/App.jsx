@@ -14,7 +14,9 @@ import { MemoryPanel } from "./modules/memory/MemoryPanel";
 import { PersonaPanel } from "./modules/personas/PersonaPanel";
 import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
+import { WorkspaceDock } from "./modules/workspace/WorkspaceDock";
 import { GlobalFeedbackHost } from "./shared/GlobalFeedbackHost";
+import appIconUrl from "./assets/yyz-claw-icon.png";
 
 function createEmptyConfig() {
   return {
@@ -101,7 +103,7 @@ function collectActiveSceneActors(chat) {
   return Array.from(actorsById.values());
 }
 
-export default function App() {
+function MainApp() {
   const [config, setConfig] = useState(createEmptyConfig);
   const [configError, setConfigError] = useState("");
   const [configLoading, setConfigLoading] = useState(true);
@@ -289,8 +291,8 @@ export default function App() {
       <GlobalFeedbackHost />
       <aside className="app-sidebar">
         <header className="app-sidebar-header">
-          <h1>Agent Console</h1>
-          <p>智能体服务控制台</p>
+          <img className="app-brand-icon" src={appIconUrl} alt="" />
+          <h1>YYZ_CLAW</h1>
         </header>
 
         <nav className="workspace-nav" role="tablist" aria-label="workspace folders">
@@ -533,4 +535,12 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+export default function App() {
+  if (window.location.pathname === "/workspace-window") {
+    return <WorkspaceDock standalone />;
+  }
+
+  return <MainApp />;
 }

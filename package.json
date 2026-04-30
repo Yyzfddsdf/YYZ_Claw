@@ -12,6 +12,7 @@
     "build": "node service.js --build-only",
     "build:backend": "npm run build --workspace backend",
     "build:frontend": "node service.js --build-only",
+    "electron:dev": "electron electron/main.cjs",
     "start:backend": "npm run start --workspace backend"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "d3-hierarchy": "^3.1.2",
     "d3-selection": "^3.0.0",
     "d3-shape": "^3.2.0",
-    "d3-zoom": "^3.0.0"
+    "d3-zoom": "^3.0.0",
+    "electron": "^41.3.0"
   }
 }

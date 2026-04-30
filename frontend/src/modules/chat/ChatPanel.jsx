@@ -11,6 +11,7 @@ import { createTtsStreamUrl, parseChatFiles, transcribeAudioBytes } from "../../
 import { formatTimestamp } from "../../shared/formatTimestamp";
 import { TimePickerDropdown } from "../../shared/TimePickerDropdown";
 import { notify } from "../../shared/feedback";
+import { WorkspaceDock } from "../workspace/WorkspaceDock";
 import { MarkdownMessage } from "./MarkdownMessage";
 import "./chat.css";
 import { parseToolMessagePayload } from "./toolMessageCodec";
@@ -94,6 +95,35 @@ function BubbleSpeakIcon({ playing = false }) {
       <path strokeLinecap="round" strokeLinejoin="round" d="M11 5 6 9H3v6h3l5 4V5Z" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M15.5 9.5a4 4 0 0 1 0 5" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M18 7a8 8 0 0 1 0 10" />
+    </svg>
+  );
+}
+
+function BubbleBranchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="6" cy="5" r="2.2" />
+      <circle cx="6" cy="19" r="2.2" />
+      <circle cx="18" cy="12" r="2.2" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 7.2v9.6M8 6.1c4.2.7 6.8 2.7 8 4.2M8 17.9c4.2-.7 6.8-2.7 8-4.2" />
+    </svg>
+  );
+}
+
+function BubbleRerunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20 12a8 8 0 1 1-2.35-5.65" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20 4v6h-6" />
+    </svg>
+  );
+}
+
+function BubbleEditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 20h9" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" />
     </svg>
   );
 }
@@ -640,6 +670,23 @@ function normalizeAutomationTime(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(normalized) ? normalized : "09:00";
 }
 
+function findPreviousRunnableUserMessageId(messages, currentIndex) {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let index = Number(currentIndex ?? -1) - 1; index >= 0; index -= 1) {
+    const candidate = list[index];
+    const candidateKind = getMessageMetaKind(candidate);
+    if (
+      String(candidate?.role ?? "").trim() === "user" &&
+      candidateKind !== "runtime_hook_injected" &&
+      candidateKind !== "tool_image_input"
+    ) {
+      return String(candidate?.id ?? "").trim();
+    }
+  }
+
+  return "";
+}
+
 export function ChatPanel({
   chat,
   modelContextWindow = 0,
@@ -688,6 +735,8 @@ export function ChatPanel({
   const [ttsPlayingMessageId, setTtsPlayingMessageId] = useState("");
   const [ttsLoadingMessageId, setTtsLoadingMessageId] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState("");
+  const [editingMessageId, setEditingMessageId] = useState("");
+  const [editingMessageText, setEditingMessageText] = useState("");
   const chatStreamRef = useRef(null);
   const inputRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -946,6 +995,8 @@ export function ChatPanel({
     !chat.historyLoaded ||
     !chat.activeConversationId ||
     Boolean(chat.pendingApproval);
+  const messageBranchDisabled = messageDeleteDisabled || isSubagentConversation;
+  const messageRerunDisabled = messageDeleteDisabled || isSubagentConversation;
   const activeConversationRuntimeReplyError =
     chat.activeConversationRuntimeReplyError &&
     typeof chat.activeConversationRuntimeReplyError === "object"
@@ -1151,6 +1202,8 @@ export function ChatPanel({
 
   useEffect(() => {
     activeConversationIdRef.current = String(chat.activeConversationId ?? "");
+    setEditingMessageId("");
+    setEditingMessageText("");
   }, [chat.activeConversationId]);
 
   useEffect(() => {
@@ -1916,6 +1969,34 @@ export function ChatPanel({
     });
   }
 
+  function handleStartEditMessage(message) {
+    const normalizedMessageId = String(message?.id ?? "").trim();
+    if (!normalizedMessageId || messageDeleteDisabled || isSubagentConversation) {
+      return;
+    }
+
+    setEditingMessageId(normalizedMessageId);
+    setEditingMessageText(String(message?.content ?? ""));
+  }
+
+  function handleCancelEditMessage() {
+    setEditingMessageId("");
+    setEditingMessageText("");
+  }
+
+  async function handleSubmitEditMessage(event, messageId) {
+    event.preventDefault();
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const nextText = editingMessageText.trim();
+    if (!normalizedMessageId || !nextText || messageRerunDisabled) {
+      return;
+    }
+
+    await chat.editAndRerunMessage(normalizedMessageId, nextText);
+    setEditingMessageId("");
+    setEditingMessageText("");
+  }
+
   function handleClarifyConfirm() {
     const selectedOption = String(clarifySelectedOption ?? "").trim();
     const additionalText = String(clarifyAdditionalText ?? "").trim();
@@ -2066,17 +2147,6 @@ export function ChatPanel({
                         )}
 
                         <div className="history-item-actions">
-                          {String(item.source ?? "").trim() !== "subagent" && (
-                            <button
-                              type="button"
-                              className="history-item-fork"
-                              onClick={() => chat.forkConversation(item.id)}
-                              disabled={chat.isStreaming}
-                              aria-label="Fork 该历史"
-                            >
-                              Fork
-                            </button>
-                          )}
                           <button
                             type="button"
                             className="history-item-delete"
@@ -2194,6 +2264,7 @@ export function ChatPanel({
                   </button>
                 )}
                 <h3>{chat.activeConversationTitle || "当前会话"}</h3>
+                <WorkspaceDock />
                 {isSubagentConversation && (
                   <span className="history-item-badge">
                     {chat.activeConversationAgentDisplayName || "子智能体"}
@@ -2709,9 +2780,35 @@ export function ChatPanel({
               const isPlayingThisMessage = ttsPlayingMessageId === String(message.id ?? "").trim();
               const isLoadingThisMessage = ttsLoadingMessageId === String(message.id ?? "").trim();
               const isCopiedThisMessage = copiedMessageId === String(message.id ?? "").trim();
+              const isEditingThisMessage =
+                editingMessageId === String(message.id ?? "").trim() && message.role === "user";
               const copyText = String(message.content ?? "").trim() || speakText;
               const canCopyMessage = copyText.length > 0;
-              const showBubbleActionRow = canCopyMessage || !isSpeakDisabled;
+              const canBranchMessage =
+                Boolean(message.id) &&
+                !isInternalToolImageMessage &&
+                !isRuntimeHookInjectedMessage &&
+                !isOrchestratorMessage &&
+                !isCompressionSummary;
+              const rerunAnchorMessageId =
+                message.role === "assistant"
+                  ? findPreviousRunnableUserMessageId(visibleMessages, index)
+                  : "";
+              const canRerunMessage =
+                message.role === "assistant" &&
+                Boolean(message.id) &&
+                Boolean(rerunAnchorMessageId) &&
+                !isSubagentConversation &&
+                !isCompressionSummary &&
+                !isOrchestratorMessage;
+              const canEditMessage =
+                message.role === "user" &&
+                Boolean(message.id) &&
+                !isSubagentConversation &&
+                !isRuntimeHookInjectedMessage &&
+                !isInternalToolImageMessage;
+              const showBubbleActionRow =
+                canCopyMessage || !isSpeakDisabled || canBranchMessage || canRerunMessage || canEditMessage;
               const copyButtonLabel = isCopiedThisMessage ? "已复制" : "复制消息";
               const speakButtonLabel = isPlayingThisMessage
                 ? "停止朗读"
@@ -2730,6 +2827,44 @@ export function ChatPanel({
                   删除
                 </button>
               );
+              const branchButton = canBranchMessage ? (
+                <button
+                  type="button"
+                  className="bubble-action-btn bubble-action-btn-icon"
+                  onClick={() =>
+                    chat.forkConversation(chat.activeConversationId, { messageId: message.id })
+                  }
+                  disabled={messageBranchDisabled}
+                  title="从这条消息创建分支会话"
+                  aria-label="从这条消息创建分支会话"
+                >
+                  <BubbleBranchIcon />
+                </button>
+              ) : null;
+              const rerunButton = canRerunMessage ? (
+                <button
+                  type="button"
+                  className="bubble-action-btn bubble-action-btn-icon bubble-action-rerun"
+                  onClick={() => chat.rerunFromMessage(rerunAnchorMessageId)}
+                  disabled={messageRerunDisabled}
+                  title="从这条回复重跑"
+                  aria-label="从这条回复重跑"
+                >
+                  <BubbleRerunIcon />
+                </button>
+              ) : null;
+              const editButton = canEditMessage ? (
+                <button
+                  type="button"
+                  className="bubble-action-btn bubble-action-btn-icon bubble-action-edit"
+                  onClick={() => handleStartEditMessage(message)}
+                  disabled={messageRerunDisabled}
+                  title="编辑并从这里重跑"
+                  aria-label="编辑并从这里重跑"
+                >
+                  <BubbleEditIcon />
+                </button>
+              ) : null;
 
               if (shouldHideAssistantToolCall) {
                 return null;
@@ -2811,6 +2946,7 @@ export function ChatPanel({
                         >
                           {isExpanded ? "收起" : "详情"}
                         </button>
+                        {branchButton}
                         {deleteButton}
                       </div>
 
@@ -2862,6 +2998,7 @@ export function ChatPanel({
                         >
                           {isExpanded ? "收起响应" : "展开响应"}
                         </button>
+                        {branchButton}
                         {deleteButton}
                       </div>
 
@@ -2928,7 +3065,35 @@ export function ChatPanel({
                         </div>
                       )}
 
-                      {messageText.length > 0 && (
+                      {isEditingThisMessage ? (
+                        <form
+                          className="message-edit-card"
+                          onSubmit={(event) => handleSubmitEditMessage(event, message.id)}
+                        >
+                          <textarea
+                            value={editingMessageText}
+                            onChange={(event) => setEditingMessageText(event.target.value)}
+                            autoFocus
+                            rows={Math.min(12, Math.max(3, editingMessageText.split(/\r?\n/).length + 1))}
+                          />
+                          <div className="message-edit-actions">
+                            <button
+                              type="button"
+                              className="message-edit-cancel"
+                              onClick={handleCancelEditMessage}
+                            >
+                              取消
+                            </button>
+                            <button
+                              type="submit"
+                              className="message-edit-submit"
+                              disabled={!editingMessageText.trim() || messageRerunDisabled}
+                            >
+                              发送
+                            </button>
+                          </div>
+                        </form>
+                      ) : messageText.length > 0 && (
                         <MarkdownMessage content={message.content || ""} className="bubble-content" />
                       )}
                       {imageAttachments.length > 0 && (
@@ -3006,6 +3171,9 @@ export function ChatPanel({
                       )}
                       {showBubbleActionRow && (
                         <div className="bubble-action-row">
+                          {branchButton}
+                          {rerunButton}
+                          {editButton}
                           <button
                             type="button"
                             className="bubble-action-btn bubble-action-btn-icon"

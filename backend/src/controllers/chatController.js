@@ -1222,6 +1222,7 @@ export function createChatController({
 
     forkHistoryById: async (req, res) => {
       const conversationId = String(req.params.conversationId || "").trim();
+      const cutoffMessageId = String(req.body?.messageId ?? req.body?.cutoffMessageId ?? "").trim();
 
       if (!conversationId) {
         throw createValidationError("conversationId is required");
@@ -1240,6 +1241,20 @@ export function createChatController({
         throw conflictError;
       }
 
+      const sourceMessages = Array.isArray(history.messages) ? history.messages : [];
+      let forkMessages = sourceMessages;
+      if (cutoffMessageId) {
+        const cutoffIndex = sourceMessages.findIndex(
+          (message) => String(message?.id ?? "").trim() === cutoffMessageId
+        );
+        if (cutoffIndex < 0) {
+          const notFoundError = createValidationError("message not found");
+          notFoundError.statusCode = 404;
+          throw notFoundError;
+        }
+        forkMessages = sourceMessages.slice(0, cutoffIndex + 1);
+      }
+
       const forkedHistory = historyStore.cloneConversationAsFork(conversationId, {
         conversationId: `conv_${randomUUID()}`,
         title: buildForkTitle(history.title),
@@ -1248,7 +1263,8 @@ export function createChatController({
         personaId: history.personaId,
         developerPrompt: history.developerPrompt,
         skills: history.skills,
-        model: history.model
+        model: history.model,
+        messages: forkMessages
       });
 
       res.status(201).json({
@@ -1620,7 +1636,7 @@ export function createChatController({
         title = DEFAULT_HISTORY_TITLE;
       }
 
-      let history = historyStore.mergeConversation({
+      const conversationPayload = {
         conversationId,
         title,
         workplacePath,
@@ -1632,7 +1648,10 @@ export function createChatController({
         personaId,
         developerPrompt: existing?.developerPrompt,
         messages: validation.data.messages
-      });
+      };
+      let history = validation.data.replaceMessages
+        ? historyStore.upsertConversation(conversationPayload)
+        : historyStore.mergeConversation(conversationPayload);
 
       if (firstUserMessage && !history.workplaceLocked) {
         history = historyStore.lockConversationWorkplace(conversationId) ?? history;

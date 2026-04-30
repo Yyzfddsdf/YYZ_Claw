@@ -24,6 +24,7 @@ import {
   SUBAGENTS_DIR,
   TOOLS_DIR
 } from "../config/paths.js";
+import { ensureYyzHome } from "../config/ensureYyzHome.js";
 import { ChatAgent } from "../services/agent/ChatAgent.js";
 import { ConfigStore } from "../services/config/ConfigStore.js";
 import { BackgroundStore } from "../services/appearance/BackgroundStore.js";
@@ -76,6 +77,8 @@ import { ToolRegistry } from "../services/tools/ToolRegistry.js";
 import { UnifiedToolRegistry } from "../services/tools/UnifiedToolRegistry.js";
 
 export async function createServices() {
+  await ensureYyzHome();
+
   const localToolRegistry = new ToolRegistry();
   await localToolRegistry.autoRegisterFromDir(TOOLS_DIR);
   const hookRegistry = new HookRegistry();

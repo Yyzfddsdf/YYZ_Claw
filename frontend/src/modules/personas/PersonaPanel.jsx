@@ -173,7 +173,7 @@ export function PersonaPanel({ chat, onNavigate }) {
       <div className="persona-layout">
         <aside className="persona-list">
           {personas.length === 0 ? (
-            <div className="persona-empty-list">暂无身份。可以新建，也可以直接编辑 `.yyz/personas/身份目录/persona.json`。</div>
+            <div className="persona-empty-list">暂无身份。可以新建，也可以直接编辑用户主目录 `.yyz/personas/身份目录/persona.json`。</div>
           ) : (
             personas.map((persona) => (
               <button
@@ -205,7 +205,7 @@ export function PersonaPanel({ chat, onNavigate }) {
               </div>
               <div>
                 <h3>{draft.id ? "编辑身份" : "新建身份"}</h3>
-                <p>{draft.id ? draft.id : "保存后会写入 .yyz/personas/身份名称/persona.json"}</p>
+                <p>{draft.id ? draft.id : "保存后会写入用户主目录 .yyz/personas/身份名称/persona.json"}</p>
                 {draft.id && (
                   <label className="persona-upload-btn">
                     上传头像

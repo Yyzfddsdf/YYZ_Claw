@@ -51,6 +51,30 @@
   color: var(--success);
 }
 
+.rc-connection.is-ok {
+  background: var(--success-light);
+  border-color: #a7f3d0;
+  color: var(--success);
+}
+
+.rc-connection.is-pending {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #a16207;
+}
+
+.rc-connection.is-error {
+  background: var(--danger-light);
+  border-color: #fecaca;
+  color: var(--danger);
+}
+
+.rc-connection.is-off {
+  background: var(--bg-main);
+  border-color: var(--border-light);
+  color: var(--text-muted);
+}
+
 .rc-card {
   background: var(--bg-elevated);
   border: 1px solid var(--border-light);

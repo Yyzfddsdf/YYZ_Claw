@@ -2038,12 +2038,14 @@ export function useChatSession(maxContextWindow = 0) {
     setError("");
   }
 
-  async function forkConversation(conversationId) {
+  async function forkConversation(conversationId, options = {}) {
     const normalizedConversationId = String(conversationId ?? "").trim();
+    const messageId = String(options?.messageId ?? "").trim();
 
     if (
       !normalizedConversationId ||
       activeConversationIsRunning ||
+      isCompressing ||
       status === "loading" ||
       !historyLoaded ||
       pendingApproval
@@ -2055,7 +2057,10 @@ export function useChatSession(maxContextWindow = 0) {
     setError("");
 
     try {
-      const response = await forkHistoryById(normalizedConversationId);
+      const response = await forkHistoryById(
+        normalizedConversationId,
+        messageId ? { messageId } : {}
+      );
       const history = response?.history;
 
       if (!history) {
@@ -2082,6 +2087,195 @@ export function useChatSession(maxContextWindow = 0) {
       setError(forkError?.message || "Fork 会话失败");
     } finally {
       setStatus("idle");
+    }
+  }
+
+  async function rerunFromMessage(messageId) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+
+    if (
+      !normalizedMessageId ||
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      status === "loading" ||
+      pendingApproval
+    ) {
+      return;
+    }
+
+    const currentMessages = messagesRef.current.map(normalizeChatMessage);
+    const targetIndex = currentMessages.findIndex(
+      (message) => String(message?.id ?? "").trim() === normalizedMessageId
+    );
+    const targetMessage = targetIndex >= 0 ? currentMessages[targetIndex] : null;
+
+    if (!targetMessage) {
+      setError("消息不存在");
+      return;
+    }
+
+    const targetRole = String(targetMessage.role ?? "").trim();
+    let rerunStartIndex = targetRole === "user" ? targetIndex : -1;
+    if (targetRole === "assistant") {
+      for (let index = targetIndex - 1; index >= 0; index -= 1) {
+        const candidate = currentMessages[index];
+        const candidateKind = getMessageMetaKind(candidate);
+        if (
+          String(candidate?.role ?? "").trim() === "user" &&
+          candidateKind !== "runtime_hook_injected" &&
+          candidateKind !== "tool_image_input"
+        ) {
+          rerunStartIndex = index;
+          break;
+        }
+      }
+    }
+
+    if (rerunStartIndex < 0) {
+      setError("没有找到可重跑的 user 起点");
+      return;
+    }
+
+    const confirmed = await confirmAction({
+      title: "重跑消息",
+      message: "会删除起点 user 消息之后的所有回复和工具结果，然后从这里重新生成。继续吗？",
+      confirmLabel: "重跑"
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    const targetConversationId = String(activeConversationId).trim();
+    const truncatedMessages = currentMessages.slice(0, rerunStartIndex + 1);
+    const persistPayload = buildConversationUpsertPayload({
+      title: activeConversationTitle || "新会话",
+      workplacePath: activeConversationWorkplace,
+      approvalMode: activeConversationApprovalMode,
+      personaId: activeConversationPersonaId,
+      developerPrompt: "",
+      skills: selectedSkillsRef.current,
+      messages: toPersistableMessages(truncatedMessages)
+    });
+    persistPayload.replaceMessages = true;
+
+    setStatus("loading");
+    setError("");
+    setRetryNotice("");
+    setPendingApprovalValue(null, { conversationId: targetConversationId });
+    clearConversationRuntimeReplyError(targetConversationId);
+
+    try {
+      const response = await upsertHistoryById(targetConversationId, persistPayload);
+      const history = response?.history;
+      if (!history) {
+        throw new Error("重跑前截断会话失败");
+      }
+
+      const normalizedMessages = applyPersistedHistorySnapshot(targetConversationId, history) ??
+        truncatedMessages;
+      updateQueuedUserMessageList((prev) =>
+        prev.filter(
+          (item) => String(item?.conversationId ?? "").trim() !== targetConversationId
+        )
+      );
+      setStatus("idle");
+
+      await runConversationStreamLoop({
+        conversationId: targetConversationId,
+        messages: normalizeForApi(normalizedMessages),
+        approvalMode: String(activeConversationApprovalMode),
+        personaId: activeConversationPersonaId,
+        enableDeepThinking: deepThinkingEnabled
+      });
+    } catch (rerunError) {
+      setStatus("idle");
+      setError(rerunError?.message || "重跑失败");
+    }
+  }
+
+  async function editAndRerunMessage(messageId, nextContent) {
+    const normalizedMessageId = String(messageId ?? "").trim();
+    const normalizedContent = String(nextContent ?? "").trim();
+
+    if (
+      !normalizedMessageId ||
+      !normalizedContent ||
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      status === "loading" ||
+      pendingApproval
+    ) {
+      return;
+    }
+
+    const currentMessages = messagesRef.current.map(normalizeChatMessage);
+    const targetIndex = currentMessages.findIndex(
+      (message) => String(message?.id ?? "").trim() === normalizedMessageId
+    );
+    const targetMessage = targetIndex >= 0 ? currentMessages[targetIndex] : null;
+
+    if (!targetMessage || String(targetMessage.role ?? "").trim() !== "user") {
+      setError("只能编辑 user 消息");
+      return;
+    }
+
+    const targetConversationId = String(activeConversationId).trim();
+    const editedMessage = {
+      ...targetMessage,
+      content: normalizedContent
+    };
+    const truncatedMessages = [
+      ...currentMessages.slice(0, targetIndex),
+      editedMessage
+    ];
+    const persistPayload = buildConversationUpsertPayload({
+      title: activeConversationTitle || "新会话",
+      workplacePath: activeConversationWorkplace,
+      approvalMode: activeConversationApprovalMode,
+      personaId: activeConversationPersonaId,
+      developerPrompt: "",
+      skills: selectedSkillsRef.current,
+      messages: toPersistableMessages(truncatedMessages)
+    });
+    persistPayload.replaceMessages = true;
+
+    setStatus("loading");
+    setError("");
+    setRetryNotice("");
+    setPendingApprovalValue(null, { conversationId: targetConversationId });
+    clearConversationRuntimeReplyError(targetConversationId);
+
+    try {
+      const response = await upsertHistoryById(targetConversationId, persistPayload);
+      const history = response?.history;
+      if (!history) {
+        throw new Error("编辑后截断会话失败");
+      }
+
+      const normalizedMessages = applyPersistedHistorySnapshot(targetConversationId, history) ??
+        truncatedMessages;
+      updateQueuedUserMessageList((prev) =>
+        prev.filter(
+          (item) => String(item?.conversationId ?? "").trim() !== targetConversationId
+        )
+      );
+      setStatus("idle");
+
+      await runConversationStreamLoop({
+        conversationId: targetConversationId,
+        messages: normalizeForApi(normalizedMessages),
+        approvalMode: String(activeConversationApprovalMode),
+        personaId: activeConversationPersonaId,
+        enableDeepThinking: deepThinkingEnabled
+      });
+    } catch (editError) {
+      setStatus("idle");
+      setError(editError?.message || "编辑重跑失败");
     }
   }
 
@@ -4303,6 +4497,8 @@ export function useChatSession(maxContextWindow = 0) {
       loadConversation,
       createConversation,
       forkConversation,
+      rerunFromMessage,
+      editAndRerunMessage,
       deleteConversation,
       deleteMessage,
       openWorkplaceBrowser,
@@ -4368,6 +4564,8 @@ export function useChatSession(maxContextWindow = 0) {
       loadConversation,
       createConversation,
       forkConversation,
+      rerunFromMessage,
+      editAndRerunMessage,
       deleteConversation,
       deleteMessage,
       openWorkplaceBrowser,

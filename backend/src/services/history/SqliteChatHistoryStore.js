@@ -1977,8 +1977,8 @@ export class SqliteChatHistoryStore {
           : sourceConversation.memorySummaryPrompt,
       createdAt: now,
       updatedAt: now,
-      messages: Array.isArray(sourceConversation.messages)
-        ? sourceConversation.messages.map((message) => ({
+      messages: Array.isArray(payload.messages)
+        ? payload.messages.map((message) => ({
             ...message,
             toolCalls: Array.isArray(message.toolCalls)
               ? message.toolCalls.map((toolCall) => ({
@@ -1992,7 +1992,22 @@ export class SqliteChatHistoryStore {
                 : {},
             tokenUsage: message.tokenUsage ? { ...message.tokenUsage } : null
           }))
-        : []
+        : Array.isArray(sourceConversation.messages)
+          ? sourceConversation.messages.map((message) => ({
+            ...message,
+            toolCalls: Array.isArray(message.toolCalls)
+              ? message.toolCalls.map((toolCall) => ({
+                  ...toolCall,
+                  function: toolCall?.function ? { ...toolCall.function } : undefined
+                }))
+              : [],
+            meta:
+              message.meta && typeof message.meta === "object" && !Array.isArray(message.meta)
+                ? { ...message.meta }
+                : {},
+            tokenUsage: message.tokenUsage ? { ...message.tokenUsage } : null
+            }))
+          : []
     });
   }
 

@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import { PROJECT_ROOT } from "../../config/paths.js";
+import { PROJECT_ROOT, YYZ_DIR } from "../../config/paths.js";
 import { configSchema } from "../../schemas/configSchema.js";
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
 
@@ -374,8 +374,10 @@ export function createWorkplaceSystemPrompt(workplacePath) {
     `系统详细版本: ${HOST_SYSTEM_INFO.version}`,
     `系统平台标识: ${HOST_SYSTEM_INFO.platform}`,
     `用户主目录(home): ${homeDirectory}`,
+    `用户主目录 .yyz: ${YYZ_DIR}`,
     `当前工作区(workplace): ${workplacePath}`,
-    "如果涉及文件、目录、命令执行等任务，请默认以该路径作为起点。"
+    "如果涉及代码文件、目录、命令执行等任务，请默认以当前工作区作为起点。",
+    "如果涉及身份、skills、背景、历史、模型、配置、长期记忆等 YYZ_CLAW 外部资源，请默认使用用户主目录 .yyz；项目根目录不再保存 .yyz 资源。"
   ].join("\n");
 }
 

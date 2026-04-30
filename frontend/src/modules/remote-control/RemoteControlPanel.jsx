@@ -81,6 +81,36 @@ function formatShortTime(value) {
   });
 }
 
+function normalizeConnectionStatus(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const active = Boolean(source.active);
+  const running = Boolean(source.running);
+  const lastError = String(source.lastError ?? source.error ?? "").trim();
+
+  if (!active) {
+    return {
+      tone: "off",
+      label: "连接未启用"
+    };
+  }
+  if (lastError) {
+    return {
+      tone: "error",
+      label: "连接异常"
+    };
+  }
+  if (running) {
+    return {
+      tone: "ok",
+      label: "已连接"
+    };
+  }
+  return {
+    tone: "pending",
+    label: "连接中"
+  };
+}
+
 function RemoteSelect({
   label,
   value,
@@ -215,7 +245,8 @@ export function RemoteControlPanel() {
     queuedCount: 0,
     activeConversationId: "",
     lastRunError: "",
-    lastRunAt: 0
+    lastRunAt: 0,
+    connection: null
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -262,6 +293,10 @@ export function RemoteControlPanel() {
     ],
     [histories]
   );
+  const connectionStatus = useMemo(
+    () => normalizeConnectionStatus(status.connection),
+    [status.connection]
+  );
 
   async function refreshStatus() {
     const response = await fetchRemoteControlStatus();
@@ -271,7 +306,11 @@ export function RemoteControlPanel() {
       queuedCount: Number(nextStatus.queuedCount ?? 0),
       activeConversationId: String(nextStatus.activeConversationId ?? ""),
       lastRunError: String(nextStatus.lastRunError ?? ""),
-      lastRunAt: Number(nextStatus.lastRunAt ?? 0)
+      lastRunAt: Number(nextStatus.lastRunAt ?? 0),
+      connection:
+        nextStatus.connection && typeof nextStatus.connection === "object"
+          ? nextStatus.connection
+          : null
     });
   }
 
@@ -384,6 +423,9 @@ export function RemoteControlPanel() {
           <span className="rc-metric">
             Provider：{formatProviderLabel(config.activeProviderKey, providers)}
           </span>
+          <span className={`rc-metric rc-connection is-${connectionStatus.tone}`}>
+            {connectionStatus.label}
+          </span>
         </div>
       </div>
 
@@ -408,7 +450,10 @@ export function RemoteControlPanel() {
                 onChange={(nextValue) =>
                   setConfig((previous) => ({
                     ...previous,
-                    activeProviderKey: normalizeProviderKey(nextValue)
+                    activeProviderKey: normalizeProviderKey(nextValue),
+                    targetConversationId: normalizeProviderKey(nextValue)
+                      ? previous.targetConversationId
+                      : ""
                   }))
                 }
               />

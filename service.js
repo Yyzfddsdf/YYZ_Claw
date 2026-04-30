@@ -8,6 +8,7 @@ const PROJECT_ROOT = __dirname;
 const FRONTEND_ROOT = path.join(PROJECT_ROOT, "frontend");
 const FRONTEND_DIST = path.join(FRONTEND_ROOT, "dist");
 const FRONTEND_ENTRY = path.join(FRONTEND_ROOT, "src", "main.jsx");
+const APP_ICON_FILE = path.join(FRONTEND_ROOT, "src", "assets", "yyz-claw-icon.png");
 
 function resolveModulePath(relativePath) {
   return pathToFileURL(path.join(PROJECT_ROOT, relativePath)).href;
@@ -16,6 +17,7 @@ function resolveModulePath(relativePath) {
 async function buildFrontendBundle() {
   await fs.rm(FRONTEND_DIST, { recursive: true, force: true });
   await fs.mkdir(FRONTEND_DIST, { recursive: true });
+  await fs.copyFile(APP_ICON_FILE, path.join(FRONTEND_DIST, "favicon.png"));
 
   await esbuild.build({
     entryPoints: [FRONTEND_ENTRY],
@@ -46,7 +48,8 @@ async function buildFrontendBundle() {
     "  <head>",
     "    <meta charset=\"UTF-8\" />",
     "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />",
-    "    <title>Agent Framework Console</title>",
+    "    <title>YYZ_CLAW</title>",
+    "    <link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\" />",
     "    <link rel=\"stylesheet\" href=\"/app.css\" />",
     "  </head>",
     "  <body>",
@@ -75,13 +78,17 @@ async function startService() {
     import(resolveModulePath("backend/src/bootstrap/createServices.js")),
     import(resolveModulePath("backend/src/app.js"))
   ]);
+  const { attachWorkspaceTerminalServer } = await import(
+    resolveModulePath("backend/src/services/workspace/workspaceTerminalServer.js")
+  );
 
   const services = await createServices();
   const app = createApp(services, { frontendDir: FRONTEND_DIST });
 
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`[service] listening at http://localhost:${port}`);
   });
+  attachWorkspaceTerminalServer(server, { cwd: PROJECT_ROOT });
 }
 
 startService().catch((error) => {

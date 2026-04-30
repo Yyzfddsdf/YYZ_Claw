@@ -153,7 +153,7 @@ export function BackgroundPanel({ appearance, onAppearanceChange }) {
         <div>
           <p className="background-kicker">Appearance</p>
           <h2>界面背景</h2>
-          <p>背景图保存在 .yyz/backgrounds，内置图和上传图都只是普通资产。</p>
+          <p>背景图保存在用户主目录 .yyz/backgrounds，内置图和上传图都只是普通资产。</p>
         </div>
         <div className="background-actions">
           <button

@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -6,7 +7,8 @@ const __dirname = path.dirname(__filename);
 
 export const BACKEND_ROOT = path.resolve(__dirname, "../..");
 export const PROJECT_ROOT = path.resolve(BACKEND_ROOT, "..");
-export const YYZ_DIR = path.join(PROJECT_ROOT, ".yyz");
+export const USER_HOME = os.homedir();
+export const YYZ_DIR = path.resolve(process.env.YYZ_CLAW_HOME || path.join(USER_HOME, ".yyz"));
 export const CONFIG_DIR = path.join(YYZ_DIR, "config");
 export const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 export const MCP_CONFIG_FILE = path.join(CONFIG_DIR, "mcp.json");

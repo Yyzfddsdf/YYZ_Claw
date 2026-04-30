@@ -1,13 +1,14 @@
 export default {
   name: "skill_view",
   description:
-    "View the full content of a skill from .yyz/skills, including SKILL.md and optional bundled files.",
+    "View the full content of an enabled skill. Global skills default to user-home .yyz/skills; project skills are resolved from the current workspace .yyz/skills.",
   parameters: {
     type: "object",
     properties: {
       workspacePath: {
         type: "string",
-        description: "Optional workspace path used to resolve project-level skills."
+        description:
+          "Optional workspace path used only to resolve project-level skills. Global skills do not come from the project root by default."
       },
       skillName: {
         type: "string",

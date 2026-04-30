@@ -164,7 +164,7 @@ export function createRemoteControlController({
       }
       if (validation.data.targetConversationId !== undefined) {
         const requestedConversationId = String(validation.data.targetConversationId ?? "").trim();
-        if (requestedConversationId) {
+        if (requestedConversationId && activeProviderKey) {
           const history = historyStore?.getConversation?.(requestedConversationId);
           if (!history) {
             throw createValidationError("target conversation not found");

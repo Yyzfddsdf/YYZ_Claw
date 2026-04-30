@@ -243,11 +243,20 @@ export class SkillCatalog {
           "- If `agents/openai.yaml` exists, use it.",
           "- If it does not exist, fall back to `SKILL.md` frontmatter and folder defaults.",
           "",
+          "## Skill Locations",
+          "",
+          "- Default global scope is user-home level: `<home>/.yyz/skills/<skill-name>`.",
+          "- `YYZ_CLAW_HOME` may override the YYZ resource root; when it is set, use `<YYZ_CLAW_HOME>/skills/<skill-name>`.",
+          "- The project/workplace root is for code files and command execution; do not create or use a project-root `.yyz` unless the user explicitly gives a custom path.",
+          "- System skills live under `_system`, for example `<home>/.yyz/skills/_system/<skill-name>`. Only platform or built-in skills should use `_system`.",
+          "- Do not add extra category folders unless the category is intentional and useful.",
+          "",
           "## Bundled Resources",
           "",
           "- `scripts/` for deterministic steps",
           "- `references/` for detailed docs",
-          "- `assets/` for output files",
+          "- `assets/` for output files and UI icons",
+          "- If a skill depends on bundled files, mention their relative paths in `SKILL.md` and explain when to use them.",
           "",
           "## Use the Bundled Scripts",
           "",
@@ -278,8 +287,7 @@ export class SkillCatalog {
     if (!(await fileExists(referenceFilePath))) {
       await fs.writeFile(
         referenceFilePath,
-        `# openai.yaml\n\n\`agents/openai.yaml\` stores UI metadata for a skill.\n\n## Fields\n\n- \`interface.display_name\`: user-facing name shown in skill lists\n- \`interface.short_description\`: short UI blurb\n- \`interface.default_prompt\`: example prompt that explicitly names the skill\n- \`interface.icon_small\`: optional icon path\n- \`interface.icon_large\`: optional larger icon path\n- \`interface.brand_color\`: optional accent color\n- \`policy.allow_implicit_invocation\`: whether the skill can be auto-injected\n\n## Rules\n\n- Quote string values.\n- Keep keys unquoted.\n- Keep the prompt short and action-oriented.\n- Use paths relative to the skill folder.\n\n## Example\n\n\`\`\`yaml\ninterface:\n  display_name: \"PDF Processing\"\n  short_description: \"Extract, edit, and generate PDFs\"\n  default_prompt: \"Use $pdf-processing to inspect and edit a PDF.\"\npolicy:\n  allow_implicit_invocation: true\n\`\`\`\n`,
-        `# openai.yaml\n\n\`agents/openai.yaml\` stores optional UI metadata for a skill.\n\nIt is an overlay, not the source of truth. If it exists, use it. If it does not exist, fall back to \`SKILL.md\` frontmatter and folder defaults.\n\n## Fields\n\n- \`interface.display_name\`: user-facing name shown in skill lists\n- \`interface.short_description\`: short UI blurb\n- \`interface.default_prompt\`: example prompt that explicitly names the skill\n- \`interface.icon_small\`: optional icon path\n- \`interface.icon_large\`: optional larger icon path\n- \`interface.brand_color\`: optional accent color\n- \`policy.allow_implicit_invocation\`: whether the skill can be auto-injected\n\n## Rules\n\n- Quote string values.\n- Keep keys unquoted.\n- Keep the prompt short and action-oriented.\n- Use paths relative to the skill folder.\n- Keep the file small and metadata-only.\n\n## Example\n\n\`\`\`yaml\ninterface:\n  display_name: \"PDF Processing\"\n  short_description: \"Extract, edit, and generate PDFs\"\n  default_prompt: \"Use $pdf-processing to inspect and edit a PDF.\"\npolicy:\n  allow_implicit_invocation: true\n\`\`\`\n`,
+        `# openai.yaml\n\n\`agents/openai.yaml\` stores optional UI metadata for a skill.\n\nIt is an overlay, not the source of truth. If it exists, use it. If it does not exist, fall back to \`SKILL.md\` frontmatter and folder defaults.\n\nImportant: icons are never auto-discovered. If a skill wants an icon, \`openai.yaml\` must explicitly set \`icon_small\` and/or \`icon_large\`.\n\n## Fields\n\n- \`interface.display_name\`: user-facing name shown in skill lists\n- \`interface.short_description\`: short UI blurb\n- \`interface.default_prompt\`: example prompt that explicitly names the skill\n- \`interface.icon_small\`: optional icon for skill lists. SVG and PNG are supported.\n- \`interface.icon_large\`: optional larger icon for detail views. SVG and PNG are supported.\n- \`interface.brand_color\`: optional UI accent color for card/detail styling\n- \`policy.allow_implicit_invocation\`: whether the skill can be auto-injected\n\n## Rules\n\n- Quote string values.\n- Keep keys unquoted.\n- Keep the prompt short and action-oriented.\n- Use paths relative to the skill folder.\n- Prefer \`assets/icon-small.svg\` and \`assets/icon-large.svg\`; PNG equivalents are also valid.\n- \`icon_small\` and \`icon_large\` may point to \`.svg\` or \`.png\` assets inside the skill folder, or to an \`http(s)\` / \`data:image\` URL.\n- \`brand_color\` is UI-only. Use a CSS color such as \`#2563eb\`; it should not describe model behavior.\n- Keep the file small and metadata-only.\n\n## Example\n\n\`\`\`yaml\ninterface:\n  display_name: \"PDF Processing\"\n  short_description: \"Extract, edit, and generate PDFs\"\n  default_prompt: \"Use $pdf-processing to inspect and edit a PDF.\"\n  icon_small: \"assets/icon-small.svg\"\n  icon_large: \"assets/icon-large.svg\"\n  brand_color: \"#dc2626\"\npolicy:\n  allow_implicit_invocation: true\n\`\`\`\n`,
         "utf8"
       );
     }

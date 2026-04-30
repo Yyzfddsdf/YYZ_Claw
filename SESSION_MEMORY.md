@@ -21,10 +21,15 @@
 - Remote 前端面板的 Provider 和“远程接收会话”已替换为定制 `RemoteSelect` 下拉，不再使用原生 select；会话菜单显示标题、预览和最近时间，Provider 菜单显示状态 badge。
 - 新增“界面背景”板块：背景资产保存在 `.yyz/backgrounds`，支持 png/jpg/jpeg/webp/gif/avif/svg 上传、选择、删除；当前配置写入 `.yyz/backgrounds/settings.json`。启用背景后背景图保持清晰不虚化，App 外壳和各模块卡片/表单/弹层通过同一个 `--app-surface-opacity` 透明度显示背景；已下载 `coastal-night.jpg`、`forest-light.jpg`、`soft-valley.jpg` 三张普通内置资产。
 - 外部运行态路径已统一迁入 `.yyz` 分区：模型缓存 `.yyz/models`、配置 `.yyz/config`、历史库 `.yyz/history`、飞书配置 `.yyz/integrations/feishu`、长期记忆库 `.yyz/memory.sqlite`。根目录旧 `config/`、`History/`、`models/`、`integrations/`、`memory.sqlite` 已迁移/清理；服务需要从新路径启动。
+- 资源根目录已从项目根 `.yyz` 改为跨平台用户主目录 `.yyz`：`os.homedir()/.yyz`，可用 `YYZ_CLAW_HOME` 覆盖；`PROJECT_ROOT` 仍只代表当前代码工作区/终端启动目录。启动时会执行非覆盖迁移：如果用户主目录 `.yyz` 不存在而项目根旧 `.yyz` 存在，则复制旧资源到用户主目录。
 - `active-scene` / 会话农场已重做为最终收敛版：左侧导航入口恢复，背景只使用用户放到根目录后复制进模块的 `frontend/src/modules/active-scene/assets/farm-background.png`，不再拼 tile、不再用带水印/固定人物的 sample 图；小人使用 Cozy People free 派生的 6 套 GIF 角色变体（berry/blue/green/gold/violet/mint，左右各一张），按会话 ID 稳定分配到背景工位上移动/干活，点击小人跳转对应会话。`service.js` 已增加 `.gif` esbuild loader。
 - `active-scene` 道具已替换为真实像素资产：`prop-broom.png` 使用 Galinda's Broom 完整扫把帧，`prop-feed.png` / `prop-harvest.png` / `prop-carry.png` 使用 Farming Set 裁成的喂食、收菜、搬运物件；CSS 红色占位物已移除。
 - `active-scene` 的活跃小人位置分配已改成模块级内存槽位缓存；App 中农场面板改为常驻 mounted，只用 `visibility/pointer-events/opacity` 隐藏，不再条件卸载，因此不刷新页面时切出再进入农场不会重置 DOM/CSS 动画。超过 6 个基础工位后按 lane/ring 偏移扩展，避免完全重叠。
 - `service.js` 的前端构建已改成每次先清空 `frontend/dist` 再重新生成，避免 esbuild `outfile` 模式把旧 hash 图片长期残留在 dist；当前 dist 图片只保留实际被引用的会话农场背景、角色、女巫和道具资产。
+- Chat 的旧会话级 Fork 入口已移除，改为消息级操作：每条普通可复现消息可点分支图标创建只包含该消息及之前上下文的新 fork 会话；assistant 消息显示圆形箭头重跑图标，渲染时直接锚定它前一条普通 user，点击后删除该 user 后续并重新生成；user 消息显示铅笔编辑图标，发送编辑后会用编辑后的 user 作为最新起点，删除其后的 assistant/tool 并重新运行。子智能体会话、runtime hook、调度提示、压缩摘要、内部 tool image 不提供消息级分支/重跑。编辑/重跑的截断保存必须走 `replaceMessages: true`，否则后端 `mergeConversation()` 会把旧 assistant/tool 合回去。
+- 新增全局右上角“工作区”抽屉，不占侧边栏导航：前端用 Monaco Editor 做文件编辑、xterm.js 做终端 UI；后端新增 `/api/workspace` 文件树/读写接口，并用 `node-pty` 接真 PTY websocket `/api/workspace/terminal`，终端固定从 `D:\Work\YYZ_Claw` 启动。编辑器已改成 VSCode 风格顶部文件 tabs，dirty 圆点显示未保存状态，保存只走 `Ctrl+S`，不再放保存按钮；终端退格/方向键由 PTY 支持，不再是普通 pipe 假终端。
+- 工作区终端 tab 已支持多个独立 PTY，并加载用户 PowerShell profile，不使用 `-NoProfile`，因此 conda/base 初始化应跟本机 PowerShell 一致；终端 tab 名不再是编号，默认显示 shell 名，回车执行命令时会先按输入命令更新为 `python`/`conda`/`npm`/`node` 等进程名，后台 Win32 子进程轮询作为兜底。
+- 新增开发期 Electron 壳：`npm run electron:dev` 启动 `electron/main.cjs`，主进程拉起 `service.js` 后端，主窗口加载本地服务；主窗口关闭时隐藏到托盘，不退出后端进程；托盘菜单支持显示主窗口、打开工作区、退出；工作区按钮触发 `/workspace-window` 时由 Electron `setWindowOpenHandler` 创建独立 `BrowserWindow`，不是浏览器弹窗。
 
 ## 下一步打算做什么
 - 如继续做趣味化 agent 功能，先看 `AGENT_IDEAS.md`。
@@ -34,6 +39,9 @@
 - 如继续完善 remote，优先用真实飞书回调联调：选择目标会话、发送飞书消息后是否在 Chat 里普通 user 落库、后台运行圈是否显示、assistant 完整 content 是否自动回飞书、`send_message/send_file` 是否只在 remote 轮次暴露。
 - 如继续完善外观系统，可做背景裁剪位置、遮罩强度；不要做背景虚化，不要把背景图片塞数据库，继续走 `.yyz/backgrounds` 资产目录。
 - 如继续完善会话农场，不要再生成地图或拼 tile；只在现有用户背景图上调整小人坐标、尺寸、工位动作和 UI。临时下载缓存 `.yyz/tmp/cozy-assets`、`active-scene-downloads`、`itch-extern.min.js` 已清理。
+- 如继续完善消息级分支/重跑，重点做真实服务手工联调：从 assistant/tool/user 消息分支后刷新仍只有截断历史；从中间 user 重跑后后续消息确实删除并重新生成；运行中/压缩中/审批中按钮不可用。
+- 如继续完善工作区抽屉，优先做真实浏览器手工联调：打开多个文件的 tab 切换、dirty 圆点、`Ctrl+S` 保存、终端退格/方向键/命令输出、终端窗口 resize 是否稳定。
+- 如继续做 Electron 打包，基于当前 `electron/main.cjs` 加 icon、安装包配置和后端进程退出清理；当前只是开发启动壳，未做 installer/build 配置。
 - 如新增前端操作提醒，不要再使用 `window.alert/confirm/prompt`；普通提示用 `notify({ tone, title, message })`，危险确认用 `await confirmAction({ title, message, confirmLabel })`。
 
 ## 关键约束 / 风险

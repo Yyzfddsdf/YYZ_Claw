@@ -46,6 +46,7 @@ export const conversationUpsertSchema = z.object({
   skills: z.array(z.string().trim().min(1)).optional(),
   personaId: z.string().trim().max(120).optional(),
   developerPrompt: z.string().max(20000).optional(),
+  replaceMessages: z.boolean().optional().default(false),
   messages: z.array(historyMessageSchema)
 });
 

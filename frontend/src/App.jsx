@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchBackgrounds } from "./api/backgroundApi";
 import { fetchConfig, saveConfig } from "./api/configApi";
 import { fetchMcpConfig, saveMcpConfig } from "./api/mcpApi";
+import { ActiveScenePanel } from "./modules/active-scene/ActiveScenePanel";
 import { AutomationPanel } from "./modules/automation/AutomationPanel";
 import { BackgroundPanel } from "./modules/backgrounds/BackgroundPanel";
 import { ChatPanel } from "./modules/chat/ChatPanel";
@@ -54,6 +55,50 @@ function createEmptyAppearance() {
 
 function hasRuntimeConfig(config) {
   return Boolean(config.model && config.baseURL && config.apiKey);
+}
+
+function collectActiveSceneActors(chat) {
+  const actorsById = new Map();
+  const conversationList = Array.isArray(chat?.conversationList) ? chat.conversationList : [];
+
+  for (const conversation of conversationList) {
+    const conversationId = String(conversation?.id ?? "").trim();
+    if (!conversationId) {
+      continue;
+    }
+
+    if (conversation.agentBusy) {
+      const isSubagent =
+        String(conversation?.source ?? "").trim().toLowerCase() === "subagent" ||
+        Boolean(String(conversation?.parentConversationId ?? "").trim());
+      actorsById.set(conversationId, {
+        id: conversationId,
+        conversationId,
+        title: String(conversation?.title ?? conversation?.agentDisplayName ?? "活跃会话"),
+        type: isSubagent ? "subagent" : "main"
+      });
+    }
+
+    const subagents = Array.isArray(conversation?.subagents) ? conversation.subagents : [];
+    for (const subagent of subagents) {
+      if (!subagent?.agentBusy) {
+        continue;
+      }
+      const subConversationId = String(subagent?.conversationId ?? "").trim();
+      const actorId = subConversationId || String(subagent?.agentId ?? "").trim();
+      if (!actorId) {
+        continue;
+      }
+      actorsById.set(actorId, {
+        id: actorId,
+        conversationId: subConversationId || conversationId,
+        title: String(subagent?.agentDisplayName ?? subagent?.agentType ?? "子智能体"),
+        type: "subagent"
+      });
+    }
+  }
+
+  return Array.from(actorsById.values());
 }
 
 export default function App() {
@@ -222,6 +267,7 @@ export default function App() {
       null,
     [appearance]
   );
+  const activeSceneActors = useMemo(() => collectActiveSceneActors(chat), [chat.conversationList]);
   const appShellStyle = activeBackground
     ? (() => {
         const surfaceOpacity = Number(appearance.settings?.surfaceOpacity ?? 0.68);
@@ -302,6 +348,22 @@ export default function App() {
               <path d="M8 8h.01" />
             </svg>
             界面背景
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeWorkspace === "active-scene"}
+            className={`nav-item ${activeWorkspace === "active-scene" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("active-scene")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M4 20h16" />
+              <path d="M5 20V9l7-5l7 5v11" />
+              <path d="M9 20v-6h6v6" />
+              <path d="M7 11h2M15 11h2" />
+            </svg>
+            会话农场
           </button>
 
           <button
@@ -401,6 +463,27 @@ export default function App() {
             <BackgroundPanel appearance={appearance} onAppearanceChange={setAppearance} />
           </section>
         )}
+
+        <section
+          className={`panel panel-active-scene panel-persistent ${
+            activeWorkspace === "active-scene" ? "is-visible" : "is-hidden"
+          }`}
+          role="tabpanel"
+          aria-label="active scene workspace"
+          aria-hidden={activeWorkspace !== "active-scene"}
+        >
+          <ActiveScenePanel
+            actors={activeSceneActors}
+            onActorClick={(actor) => {
+              const conversationId = String(actor?.conversationId ?? "").trim();
+              if (!conversationId) {
+                return;
+              }
+              void chat.loadConversation(conversationId);
+              setActiveWorkspace("chat");
+            }}
+          />
+        </section>
 
         {activeWorkspace === "debate" && (
           <section className="panel panel-debate" role="tabpanel" aria-label="debate workspace">

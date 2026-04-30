@@ -1,0 +1,26 @@
+Active scene assets
+
+- farm-background.png
+  Source: User-provided generated image placed in the project root.
+  Usage: Static scene background for the YYZ_CLAW active conversation farm panel.
+
+- cozy-worker-*-left.gif, cozy-worker-*-right.gif
+  Source: shubibubi, Cozy People Asset Pack, free version
+  URL: https://shubibubi.itch.io/cozy-people
+  Usage: Animated worker sprites layered over the farm background. These are palette-derived local variants so different active conversations do not all render as the same worker.
+
+- witch-001-NESW.png, witch-001-SWEN.png
+  Source: OpenGameArt, "Witch on broomstick" by Redshrike
+  URL: https://opengameart.org/content/witch-on-broomstick
+  License: OGA-BY 3.0 / CC-BY 3.0 / CC-BY 4.0
+  Usage: Fixed witch NPC near the farmhouse.
+
+- prop-watering-can.png, prop-hoe.png
+  Source: OpenGameArt, "[LPC] Hand Tools" by bluecarrot16, Pierre Vigier, Tuomo Untinen Johannes Sjolund (wulax), and Inboxninja
+  URL: https://opengameart.org/content/lpc-hand-tools
+  License: CC-BY-SA 3.0 / OGA-BY 3.0+ / CC-BY 4.0+ / GPL 2.0+
+  Usage: Pixel farm tool props for active worker animations.
+
+- prop-broom.svg, prop-feed.svg, prop-harvest.svg, prop-carry.svg
+  Source: Locally authored SVG pixel props.
+  Usage: Upright handheld props for sweeping, feeding, harvesting, and carrying worker animations.

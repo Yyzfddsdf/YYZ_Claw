@@ -238,6 +238,8 @@ body {
   .automation-item,
   .automation-conversation-card,
   .automation-binding-item,
+  .active-scene-header,
+  .active-scene-hint,
   .background-hero,
   .background-control-strip,
   .background-card,
@@ -278,6 +280,7 @@ body {
   .memory-panel,
   .persona-panel,
   .automation-panel,
+  .active-scene-panel,
   .background-module,
   .remote-control-module,
   .config-module,
@@ -325,6 +328,21 @@ body {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+}
+
+.panel-persistent {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+}
+
+.panel-persistent.is-visible {
+  pointer-events: auto;
+  visibility: visible;
+  opacity: 1;
 }
 
 .panel-automation {

@@ -14,6 +14,7 @@ function resolveModulePath(relativePath) {
 }
 
 async function buildFrontendBundle() {
+  await fs.rm(FRONTEND_DIST, { recursive: true, force: true });
   await fs.mkdir(FRONTEND_DIST, { recursive: true });
 
   await esbuild.build({
@@ -32,7 +33,9 @@ async function buildFrontendBundle() {
       ".ttf": "file",
       ".eot": "file",
       ".otf": "file",
-      ".svg": "file"
+      ".svg": "file",
+      ".png": "file",
+      ".gif": "file"
     },
     logLevel: "silent"
   });

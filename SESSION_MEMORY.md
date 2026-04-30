@@ -20,6 +20,11 @@
 - 已删除 backend 下 remote 独立 history、remote hook、remote runtime hook、remote 专属 tools 和 remote recorder；保留 remote API/config/provider/ingest/runtime 作为通用 IM 通道层。`REMOTE_CONTROL_CONFIG_FILE` 改到 `config/remote-control.json`，不再读取项目根 `integrations/remote-control/config.json`。
 - Remote 前端面板的 Provider 和“远程接收会话”已替换为定制 `RemoteSelect` 下拉，不再使用原生 select；会话菜单显示标题、预览和最近时间，Provider 菜单显示状态 badge。
 - 新增“界面背景”板块：背景资产保存在 `.yyz/backgrounds`，支持 png/jpg/jpeg/webp/gif/avif/svg 上传、选择、删除；当前配置写入 `.yyz/backgrounds/settings.json`。启用背景后背景图保持清晰不虚化，App 外壳和各模块卡片/表单/弹层通过同一个 `--app-surface-opacity` 透明度显示背景；已下载 `coastal-night.jpg`、`forest-light.jpg`、`soft-valley.jpg` 三张普通内置资产。
+- 外部运行态路径已统一迁入 `.yyz` 分区：模型缓存 `.yyz/models`、配置 `.yyz/config`、历史库 `.yyz/history`、飞书配置 `.yyz/integrations/feishu`、长期记忆库 `.yyz/memory.sqlite`。根目录旧 `config/`、`History/`、`models/`、`integrations/`、`memory.sqlite` 已迁移/清理；服务需要从新路径启动。
+- `active-scene` / 会话农场已重做为最终收敛版：左侧导航入口恢复，背景只使用用户放到根目录后复制进模块的 `frontend/src/modules/active-scene/assets/farm-background.png`，不再拼 tile、不再用带水印/固定人物的 sample 图；小人使用 Cozy People free 派生的 6 套 GIF 角色变体（berry/blue/green/gold/violet/mint，左右各一张），按会话 ID 稳定分配到背景工位上移动/干活，点击小人跳转对应会话。`service.js` 已增加 `.gif` esbuild loader。
+- `active-scene` 道具已替换为真实像素资产：`prop-broom.png` 使用 Galinda's Broom 完整扫把帧，`prop-feed.png` / `prop-harvest.png` / `prop-carry.png` 使用 Farming Set 裁成的喂食、收菜、搬运物件；CSS 红色占位物已移除。
+- `active-scene` 的活跃小人位置分配已改成模块级内存槽位缓存；App 中农场面板改为常驻 mounted，只用 `visibility/pointer-events/opacity` 隐藏，不再条件卸载，因此不刷新页面时切出再进入农场不会重置 DOM/CSS 动画。超过 6 个基础工位后按 lane/ring 偏移扩展，避免完全重叠。
+- `service.js` 的前端构建已改成每次先清空 `frontend/dist` 再重新生成，避免 esbuild `outfile` 模式把旧 hash 图片长期残留在 dist；当前 dist 图片只保留实际被引用的会话农场背景、角色、女巫和道具资产。
 
 ## 下一步打算做什么
 - 如继续做趣味化 agent 功能，先看 `AGENT_IDEAS.md`。
@@ -28,6 +33,7 @@
 - 如继续完善自动化系统，优先做真实服务 UI 联调：创建模板、绑定会话、刷新后闹钟标记保持、暂停绑定后手动立即执行、调度触发后消息是否作为普通 user 落库并自动压缩。
 - 如继续完善 remote，优先用真实飞书回调联调：选择目标会话、发送飞书消息后是否在 Chat 里普通 user 落库、后台运行圈是否显示、assistant 完整 content 是否自动回飞书、`send_message/send_file` 是否只在 remote 轮次暴露。
 - 如继续完善外观系统，可做背景裁剪位置、遮罩强度；不要做背景虚化，不要把背景图片塞数据库，继续走 `.yyz/backgrounds` 资产目录。
+- 如继续完善会话农场，不要再生成地图或拼 tile；只在现有用户背景图上调整小人坐标、尺寸、工位动作和 UI。临时下载缓存 `.yyz/tmp/cozy-assets`、`active-scene-downloads`、`itch-extern.min.js` 已清理。
 - 如新增前端操作提醒，不要再使用 `window.alert/confirm/prompt`；普通提示用 `notify({ tone, title, message })`，危险确认用 `await confirmAction({ title, message, confirmLabel })`。
 
 ## 关键约束 / 风险

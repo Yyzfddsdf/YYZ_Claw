@@ -1,26 +1,56 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  MODEL_PROVIDER_OPTIONS,
+  getModelProviderOption,
+  normalizeModelProvider
+} from "../../shared/modelProviders";
+import { NumericInput } from "../../shared/NumericInput";
 import "./config.css";
 
 function normalizeConfig(config) {
+  const profiles = Array.isArray(config?.modelProfiles)
+    ? config.modelProfiles.map((profile, index) => ({
+        id: String(profile?.id ?? `model_${index + 1}`).trim() || `model_${index + 1}`,
+        provider: normalizeModelProvider(profile?.provider),
+        name: String(profile?.name ?? "").trim(),
+        model: String(profile?.model ?? "").trim(),
+        baseURL: String(profile?.baseURL ?? "").trim(),
+        apiKey: String(profile?.apiKey ?? "").trim(),
+        maxContextWindow:
+          profile?.maxContextWindow === undefined || profile?.maxContextWindow === null
+            ? ""
+            : String(profile.maxContextWindow),
+        supportsVision: profile?.supportsVision !== false
+      }))
+    : [];
+  const firstProfileId = profiles[0]?.id ?? "";
   return {
-    model: config?.model ?? "",
-    baseURL: config?.baseURL ?? "",
-    apiKey: config?.apiKey ?? "",
+    modelProfiles: profiles,
+    defaultMainModelProfileId: config?.defaultMainModelProfileId ?? firstProfileId,
+    defaultSubagentModelProfileId: config?.defaultSubagentModelProfileId ?? firstProfileId,
+    defaultCompressionModelProfileId: config?.defaultCompressionModelProfileId ?? firstProfileId,
     tavilyApiKey: config?.tavilyApiKey ?? "",
-    subagentModel: config?.subagentModel ?? "",
-    subagentBaseURL: config?.subagentBaseURL ?? "",
-    subagentApiKey: config?.subagentApiKey ?? "",
-    compressionModel: config?.compressionModel ?? "",
-    compressionBaseURL: config?.compressionBaseURL ?? "",
-    compressionApiKey: config?.compressionApiKey ?? "",
+    compressionMaxOutputTokens:
+      config?.compressionMaxOutputTokens === undefined || config?.compressionMaxOutputTokens === null
+        ? ""
+        : String(config.compressionMaxOutputTokens),
     sttProvider: "cloudflare",
     sttCloudflareApiToken: config?.sttCloudflareApiToken ?? "",
     sttCloudflareAccountId: config?.sttCloudflareAccountId ?? "",
-    sttCloudflareModel: config?.sttCloudflareModel ?? "@cf/openai/whisper-large-v3-turbo",
-    maxContextWindow:
-      config?.maxContextWindow === undefined || config?.maxContextWindow === null
-        ? ""
-        : String(config.maxContextWindow)
+    sttCloudflareModel: config?.sttCloudflareModel ?? "@cf/openai/whisper-large-v3-turbo"
+  };
+}
+
+function createModelProfile(index = 1) {
+  return {
+    id: `model_${Date.now()}_${Math.random().toString(16).slice(2, 6)}`,
+    provider: "openai-completion",
+    name: `模型 ${index}`,
+    model: "",
+    baseURL: "",
+    apiKey: "",
+    maxContextWindow: "",
+    supportsVision: true
   };
 }
 
@@ -68,6 +98,8 @@ export function ConfigPanel({
   const [mcpSaveMessage, setMcpSaveMessage] = useState("");
   const [expandedServers, setExpandedServers] = useState({});
   const [openTransportMenuIndex, setOpenTransportMenuIndex] = useState(-1);
+  const [openProfileMenu, setOpenProfileMenu] = useState("");
+  const [openProviderMenuIndex, setOpenProviderMenuIndex] = useState(-1);
 
   useEffect(() => {
     setForm(normalizeConfig(initialConfig));
@@ -83,6 +115,8 @@ export function ConfigPanel({
         return;
       }
       setOpenTransportMenuIndex(-1);
+      setOpenProfileMenu("");
+      setOpenProviderMenuIndex(-1);
     }
 
     document.addEventListener("pointerdown", handleDocumentPointerDown);
@@ -99,16 +133,95 @@ export function ConfigPanel({
     ],
     []
   );
+  const profileOptions = useMemo(
+    () =>
+      form.modelProfiles.map((profile) => ({
+        value: profile.id,
+        label: profile.name || profile.model || profile.id
+      })),
+    [form.modelProfiles]
+  );
+
+  function updateModelProfile(index, field, value) {
+    setForm((prev) => {
+      const profiles = [...prev.modelProfiles];
+      profiles[index] = { ...profiles[index], [field]: value };
+      return { ...prev, modelProfiles: profiles };
+    });
+  }
+
+  function addModelProfile() {
+    setForm((prev) => {
+      const nextProfile = createModelProfile(prev.modelProfiles.length + 1);
+      const nextProfiles = [...prev.modelProfiles, nextProfile];
+      return {
+        ...prev,
+        modelProfiles: nextProfiles,
+        defaultMainModelProfileId: prev.defaultMainModelProfileId || nextProfile.id,
+        defaultSubagentModelProfileId: prev.defaultSubagentModelProfileId || nextProfile.id,
+        defaultCompressionModelProfileId: prev.defaultCompressionModelProfileId || nextProfile.id
+      };
+    });
+  }
+
+  function removeModelProfile(index) {
+    setForm((prev) => {
+      const targetId = prev.modelProfiles[index]?.id;
+      const nextProfiles = prev.modelProfiles.filter((_, itemIndex) => itemIndex !== index);
+      const firstProfileId = nextProfiles[0]?.id ?? "";
+      const keepDefault = (value) => (value && value !== targetId ? value : firstProfileId);
+      return {
+        ...prev,
+        modelProfiles: nextProfiles,
+        defaultMainModelProfileId: keepDefault(prev.defaultMainModelProfileId),
+        defaultSubagentModelProfileId: keepDefault(prev.defaultSubagentModelProfileId),
+        defaultCompressionModelProfileId: keepDefault(prev.defaultCompressionModelProfileId)
+      };
+    });
+  }
+
   async function handleConfigSubmit(event) {
     event.preventDefault();
-    if (!form.model || !form.baseURL || !form.apiKey) {
-      setLocalError("主模型的 Model / Base URL / API Key 均为必填项");
+    const finalProfiles = form.modelProfiles.map((profile) => ({
+      id: profile.id,
+      provider: normalizeModelProvider(profile.provider),
+      name: profile.name.trim(),
+      model: profile.model.trim(),
+      baseURL: profile.baseURL.trim(),
+      apiKey: profile.apiKey.trim(),
+      maxContextWindow: profile.maxContextWindow ? Number(profile.maxContextWindow) : undefined,
+      supportsVision: Boolean(profile.supportsVision)
+    }));
+
+    if (finalProfiles.length === 0) {
+      setLocalError("至少需要添加一个模型配置");
+      return;
+    }
+    if (finalProfiles.some((profile) => !profile.name || !profile.model || !profile.baseURL || !profile.apiKey)) {
+      setLocalError("每个模型配置的名称 / Model / Base URL / API Key 均为必填项");
+      return;
+    }
+    if (!form.defaultMainModelProfileId || !form.defaultSubagentModelProfileId || !form.defaultCompressionModelProfileId) {
+      setLocalError("主模型、子智能体模型、压缩模型默认项都必须选择");
       return;
     }
     setLocalError("");
     setSaveMessage("");
     try {
-      const payload = { ...form, maxContextWindow: form.maxContextWindow ? Number(form.maxContextWindow) : undefined };
+      const payload = {
+        modelProfiles: finalProfiles,
+        defaultMainModelProfileId: form.defaultMainModelProfileId,
+        defaultSubagentModelProfileId: form.defaultSubagentModelProfileId,
+        defaultCompressionModelProfileId: form.defaultCompressionModelProfileId,
+        tavilyApiKey: form.tavilyApiKey,
+        compressionMaxOutputTokens: form.compressionMaxOutputTokens
+          ? Number(form.compressionMaxOutputTokens)
+          : undefined,
+        sttProvider: "cloudflare",
+        sttCloudflareApiToken: form.sttCloudflareApiToken,
+        sttCloudflareAccountId: form.sttCloudflareAccountId,
+        sttCloudflareModel: form.sttCloudflareModel
+      };
       await onSave(payload);
       setSaveMessage("配置已成功保存");
     } catch { /* error handled by parent */ }
@@ -235,12 +348,168 @@ export function ConfigPanel({
 
       <form onSubmit={handleConfigSubmit}>
         <div className="config-section">
-          <div className="config-section-header"><h3>核心模型 (Core Model)</h3></div>
+          <div className="config-section-header">
+            <h3>模型配置组</h3>
+            <button type="button" className="text-btn-brand" onClick={addModelProfile} disabled={loading || saving}>
+              + 添加模型
+            </button>
+          </div>
           <div className="config-section-body">
-            <ConfigRow label="Model" desc="主语言模型标识" value={form.model} onChange={v => setForm({...form, model: v})} placeholder="gpt-4o" disabled={loading || saving} />
-            <ConfigRow label="Base URL" desc="API 基础地址" value={form.baseURL} onChange={v => setForm({...form, baseURL: v})} placeholder="https://api.openai.com/v1" disabled={loading || saving} />
-            <ConfigRow label="API Key" desc="鉴权密钥" value={form.apiKey} onChange={v => setForm({...form, apiKey: v})} isPassword disabled={loading || saving} />
-            <ConfigRow label="Max Tokens" desc="最大上下文限制" value={form.maxContextWindow} onChange={v => setForm({...form, maxContextWindow: v})} type="number" disabled={loading || saving} />
+            {form.modelProfiles.length === 0 && (
+              <div className="config-empty-state">
+                还没有模型配置。添加一个云端模型后，再设置主模型、子智能体模型和压缩模型默认项。
+              </div>
+            )}
+            {form.modelProfiles.map((profile, index) => (
+              <div key={profile.id} className="model-profile-card">
+                <div className="model-profile-head">
+                  <div>
+                    <strong>{profile.name || `模型 ${index + 1}`}</strong>
+                    <span>{profile.model || "未填写 model"}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-btn-danger"
+                    onClick={() => removeModelProfile(index)}
+                    disabled={loading || saving}
+                  >
+                    移除
+                  </button>
+                </div>
+                <div className="model-profile-grid">
+                  <input
+                    value={profile.name}
+                    onChange={(event) => updateModelProfile(index, "name", event.target.value)}
+                    placeholder="配置名称，例如 GPT-5 主力"
+                    disabled={loading || saving}
+                  />
+                  <div className="select-container model-provider-select">
+                    <button
+                      type="button"
+                      className={`select-trigger ${openProviderMenuIndex === index ? "is-active" : ""}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenProviderMenuIndex((prev) => (prev === index ? -1 : index));
+                      }}
+                      disabled={loading || saving}
+                    >
+                      <span>{getModelProviderOption(profile.provider).label}</span>
+                    </button>
+                    {openProviderMenuIndex === index && (
+                      <div className="select-dropdown" onClick={(event) => event.stopPropagation()}>
+                        {MODEL_PROVIDER_OPTIONS.map((option) => (
+                          <div
+                            key={`${profile.id}_${option.value}`}
+                            role="button"
+                            tabIndex={0}
+                            className={`select-option ${
+                              normalizeModelProvider(profile.provider) === option.value ? "is-selected" : ""
+                            }`}
+                            onClick={() => {
+                              updateModelProfile(index, "provider", option.value);
+                              setOpenProviderMenuIndex(-1);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                updateModelProfile(index, "provider", option.value);
+                                setOpenProviderMenuIndex(-1);
+                              }
+                            }}
+                          >
+                            <span>{option.label}</span>
+                            <small>{option.description}</small>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    value={profile.model}
+                    onChange={(event) => updateModelProfile(index, "model", event.target.value)}
+                    placeholder="Model，例如 gpt-5.2"
+                    disabled={loading || saving}
+                  />
+                  <input
+                    value={profile.baseURL}
+                    onChange={(event) => updateModelProfile(index, "baseURL", event.target.value)}
+                    placeholder="Base URL，例如 https://api.openai.com/v1"
+                    disabled={loading || saving}
+                  />
+                  <input
+                    type="password"
+                    value={profile.apiKey}
+                    onChange={(event) => updateModelProfile(index, "apiKey", event.target.value)}
+                    placeholder="API Key"
+                    disabled={loading || saving}
+                  />
+                  <NumericInput
+                    value={profile.maxContextWindow}
+                    onChange={(value) => updateModelProfile(index, "maxContextWindow", value)}
+                    placeholder="上下文窗口，例如 128000"
+                    disabled={loading || saving}
+                  />
+                  <div className="model-capability-row">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={profile.supportsVision}
+                        onChange={(event) => updateModelProfile(index, "supportsVision", event.target.checked)}
+                        disabled={loading || saving}
+                      />
+                      支持图片识别
+                    </label>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="config-section">
+          <div className="config-section-header"><h3>默认模型分配</h3></div>
+          <div className="config-section-body">
+            <ProfileSelectRow
+              label="主智能体默认"
+              desc="新建普通会话时使用，之后每个会话可单独切换。"
+              value={form.defaultMainModelProfileId}
+              options={profileOptions}
+              menuKey="main"
+              openMenu={openProfileMenu}
+              setOpenMenu={setOpenProfileMenu}
+              onChange={(value) => setForm({ ...form, defaultMainModelProfileId: value })}
+              disabled={loading || saving}
+            />
+            <ProfileSelectRow
+              label="子智能体默认"
+              desc="创建子对话时使用，子对话创建后也可独立切换。"
+              value={form.defaultSubagentModelProfileId}
+              options={profileOptions}
+              menuKey="subagent"
+              openMenu={openProfileMenu}
+              setOpenMenu={setOpenProfileMenu}
+              onChange={(value) => setForm({ ...form, defaultSubagentModelProfileId: value })}
+              disabled={loading || saving}
+            />
+            <ProfileSelectRow
+              label="压缩模型"
+              desc="全局统一使用，不跟随单个会话临时选择。"
+              value={form.defaultCompressionModelProfileId}
+              options={profileOptions}
+              menuKey="compression"
+              openMenu={openProfileMenu}
+              setOpenMenu={setOpenProfileMenu}
+              onChange={(value) => setForm({ ...form, defaultCompressionModelProfileId: value })}
+              disabled={loading || saving}
+            />
+            <ConfigRow
+              label="压缩输出上限"
+              desc="可选；限制压缩摘要生成的最大输出 token。"
+              value={form.compressionMaxOutputTokens}
+              onChange={v => setForm({ ...form, compressionMaxOutputTokens: v })}
+              type="number"
+              disabled={loading || saving}
+            />
           </div>
         </div>
 
@@ -248,16 +517,6 @@ export function ConfigPanel({
           <div className="config-section-header"><h3>辅助功能 (Optional)</h3></div>
           <div className="config-section-body">
             <ConfigRow label="Search Key" desc="Tavily 搜索 API Key" value={form.tavilyApiKey} onChange={v => setForm({...form, tavilyApiKey: v})} isPassword disabled={loading || saving} />
-            <ConfigRow label="Subagent" desc="子智能体独立配置 (Model, URL, Key)" isMulti 
-              values={[form.subagentModel, form.subagentBaseURL, form.subagentApiKey]} 
-              onChanges={[v => setForm({...form, subagentModel: v}), v => setForm({...form, subagentBaseURL: v}), v => setForm({...form, subagentApiKey: v})]} 
-              disabled={loading || saving} 
-            />
-            <ConfigRow label="Compression" desc="上下文压缩独立配置 (Model, URL, Key)" isMulti 
-              values={[form.compressionModel, form.compressionBaseURL, form.compressionApiKey]} 
-              onChanges={[v => setForm({...form, compressionModel: v}), v => setForm({...form, compressionBaseURL: v}), v => setForm({...form, compressionApiKey: v})]} 
-              disabled={loading || saving} 
-            />
             <div className="config-item">
               <div className="config-item-info">
                 <span className="config-item-label">STT 云端</span>
@@ -440,11 +699,11 @@ export function ConfigPanel({
                   <div className="config-item-control" style={{ flexDirection: 'row', gap: '1rem' }}>
                     <div style={{ flex: 1 }}>
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>启动超时</span>
-                      <input type="number" value={server.startupTimeoutMs} onChange={e => updateMcpServer(sIndex, 'startupTimeoutMs', e.target.value)} placeholder="默认 10000" disabled={mcpSaving} />
+                      <NumericInput value={server.startupTimeoutMs} onChange={value => updateMcpServer(sIndex, 'startupTimeoutMs', value)} placeholder="默认 10000" disabled={mcpSaving} />
                     </div>
                     <div style={{ flex: 1 }}>
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>请求超时</span>
-                      <input type="number" value={server.requestTimeoutMs} onChange={e => updateMcpServer(sIndex, 'requestTimeoutMs', e.target.value)} placeholder="默认 60000" disabled={mcpSaving} />
+                      <NumericInput value={server.requestTimeoutMs} onChange={value => updateMcpServer(sIndex, 'requestTimeoutMs', value)} placeholder="默认 60000" disabled={mcpSaving} />
                     </div>
                   </div>
                 </div>
@@ -466,6 +725,70 @@ export function ConfigPanel({
   );
 }
 
+function ProfileSelectRow({
+  label,
+  desc,
+  value,
+  options,
+  menuKey,
+  openMenu,
+  setOpenMenu,
+  onChange,
+  disabled
+}) {
+  const selected = options.find((option) => option.value === value);
+  const isOpen = openMenu === menuKey;
+
+  return (
+    <div className="config-item">
+      <div className="config-item-info">
+        <span className="config-item-label">{label}</span>
+        <span className="config-item-desc">{desc}</span>
+      </div>
+      <div className="config-item-control">
+        <div className="select-container">
+          <button
+            type="button"
+            className={`select-trigger ${isOpen ? "is-active" : ""}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpenMenu(isOpen ? "" : menuKey);
+            }}
+            disabled={disabled || options.length === 0}
+          >
+            <span>{selected?.label || "请选择模型配置"}</span>
+          </button>
+          {isOpen && (
+            <div className="select-dropdown" onClick={(event) => event.stopPropagation()}>
+              {options.map((option) => (
+                <div
+                  key={`${menuKey}_${option.value}`}
+                  role="button"
+                  tabIndex={0}
+                  className={`select-option ${value === option.value ? "is-selected" : ""}`}
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpenMenu("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onChange(option.value);
+                      setOpenMenu("");
+                    }
+                  }}
+                >
+                  {option.label}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfigRow({ label, desc, value, onChange, placeholder, isPassword, type = "text", disabled, isMulti, values, onChanges }) {
   return (
     <div className="config-item">
@@ -480,6 +803,8 @@ function ConfigRow({ label, desc, value, onChange, placeholder, isPassword, type
               <input key={i} value={v} onChange={e => onChanges[i](e.target.value)} placeholder={i === 0 ? "Model" : i === 1 ? "URL" : "Key"} type={i === 2 ? "password" : "text"} disabled={disabled} />
             ))}
           </div>
+        ) : type === "number" ? (
+          <NumericInput value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} />
         ) : (
           <input type={isPassword ? "password" : type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} disabled={disabled} />
         )}

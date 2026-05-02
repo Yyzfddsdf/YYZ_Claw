@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { resolveModelProfile } from "../config/modelProfileConfig.js";
 import { buildPrimaryAgentId, buildSubagentId } from "./agentIdentity.js";
 
 function normalizeText(value) {
@@ -21,6 +22,7 @@ export class OrchestratorSupervisorService {
     this.schedulerService = options.schedulerService ?? null;
     this.wakeDispatcher = options.wakeDispatcher ?? null;
     this.subagentDefinitionRegistry = options.subagentDefinitionRegistry ?? null;
+    this.configStore = options.configStore ?? null;
   }
 
   ensureSession(conversationId) {
@@ -84,6 +86,8 @@ export class OrchestratorSupervisorService {
     const agentId = buildSubagentId(sessionId, definition.agentType);
     const subagentConversationId = `conv_${randomUUID()}`;
     const displayName = normalizeText(options.displayName) || definition.displayName;
+    const config = this.configStore?.readSync?.() ?? null;
+    const subagentProfile = config ? resolveModelProfile(config, "", "subagent") : null;
 
     const subagentConversation = this.historyStore.upsertConversation({
       conversationId: subagentConversationId,
@@ -94,7 +98,8 @@ export class OrchestratorSupervisorService {
       approvalMode: conversation.approvalMode,
       skills: [],
       developerPrompt: "",
-      model: conversation.model,
+      model: normalizeText(subagentProfile?.model) || conversation.model,
+      modelProfileId: normalizeText(subagentProfile?.id) || conversation.modelProfileId,
       messages: []
     });
 

@@ -11,11 +11,13 @@ import {
 } from "../schemas/chatSchema.js";
 import { configSchema } from "../schemas/configSchema.js";
 import {
+  conversationModelProfileSchema,
   conversationPersonaSchema,
   conversationSkillsSchema,
   conversationUpsertSchema,
   conversationWorkplaceSchema
 } from "../schemas/historySchema.js";
+import { resolveModelProfile } from "../services/config/modelProfileConfig.js";
 import {
   DEFAULT_HISTORY_TITLE,
   DEFAULT_WORKPLACE_PATH,
@@ -173,6 +175,34 @@ function normalizeStreamRequestBody(body) {
 
 function normalizeMessageMeta(meta) {
   return meta && typeof meta === "object" && !Array.isArray(meta) ? { ...meta } : {};
+}
+
+function resolveConversationModelProfile(config, history = null, requestedProfileId = "") {
+  const role = String(history?.source ?? "").trim().toLowerCase() === "subagent"
+    ? "subagent"
+    : "main";
+  const profile = resolveModelProfile(
+    config,
+    String(requestedProfileId || history?.modelProfileId || "").trim(),
+    role
+  );
+  if (!profile) {
+    throw createValidationError("model profile is not configured");
+  }
+  return profile;
+}
+
+function hasImageInputMessages(messages = []) {
+  return Array.isArray(messages)
+    ? messages.some((message) => {
+        const attachments = Array.isArray(message?.meta?.attachments)
+          ? message.meta.attachments
+          : [];
+        return attachments.some((attachment) =>
+          String(attachment?.mimeType ?? attachment?.type ?? "").trim().toLowerCase().startsWith("image/")
+        );
+      })
+    : false;
 }
 
 async function resolvePersistablePersonaId(personaStore, ...candidates) {
@@ -1265,6 +1295,7 @@ export function createChatController({
         developerPrompt: history.developerPrompt,
         skills: history.skills,
         model: history.model,
+        modelProfileId: history.modelProfileId,
         messages: forkMessages
       });
 
@@ -1429,6 +1460,49 @@ export function createChatController({
       });
     },
 
+    updateModelProfileById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationModelProfileSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const configValidation = configSchema.safeParse(await configStore.read());
+      if (!configValidation.success) {
+        throw createValidationError(
+          "config/config.json is invalid. Save model profiles from frontend first."
+        );
+      }
+
+      const profile = resolveConversationModelProfile(
+        configValidation.data,
+        history,
+        validation.data.modelProfileId
+      );
+      const updated = historyStore.updateConversationModelProfile(
+        conversationId,
+        profile.id,
+        profile.model
+      );
+
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        modelProfileId: profile.id
+      });
+    },
+
     compressHistoryById: async (req, res) => {
       const conversationId = String(req.params.conversationId || "").trim();
 
@@ -1510,6 +1584,7 @@ export function createChatController({
         parentConversationId: existing.parentConversationId,
         source: existing.source,
         model: existing.model,
+        modelProfileId: existing.modelProfileId,
         approvalMode: existing.approvalMode,
         skills: existing.skills,
         personaId: existing.personaId,
@@ -1596,6 +1671,17 @@ export function createChatController({
               validation.data.personaId,
               existing?.personaId
             );
+      const configValidation = configSchema.safeParse(await configStore.read());
+      if (!configValidation.success) {
+        throw createValidationError(
+          "config/config.json is invalid. Save model profiles from frontend first."
+        );
+      }
+      const selectedProfile = resolveConversationModelProfile(
+        configValidation.data,
+        existing,
+        validation.data.modelProfileId
+      );
 
       if (
         existing?.workplaceLocked &&
@@ -1643,7 +1729,8 @@ export function createChatController({
         workplacePath,
         parentConversationId: existing?.parentConversationId,
         source: existing?.source,
-        model: existing?.model,
+        model: selectedProfile.model,
+        modelProfileId: selectedProfile.id,
         approvalMode: validation.data.approvalMode,
         skills: validation.data.skills,
         personaId,
@@ -2281,8 +2368,13 @@ export function createChatController({
           ? existingConversation.skills
           : [];
         const conversationSource = String(existingConversation?.source ?? "").trim().toLowerCase();
+        const selectedProfile = resolveConversationModelProfile(
+          configValidation.data,
+          existingConversation
+        );
         const historyRuntimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
-          isSubagent: conversationSource === "subagent"
+          isSubagent: conversationSource === "subagent",
+          modelProfileId: selectedProfile.id
         });
         const personaId =
           conversationSource === "subagent"
@@ -2300,6 +2392,10 @@ export function createChatController({
         let effectiveMessages = Array.isArray(chatValidation.data.messages)
           ? chatValidation.data.messages
           : [];
+
+        if (hasImageInputMessages(effectiveMessages) && historyRuntimeConfig.supportsVision === false) {
+          throw createValidationError("selected model profile does not support image input");
+        }
 
         const sessionInfo =
           orchestratorSupervisorService?.ensureSession?.(conversationId) ?? null;
@@ -2330,6 +2426,7 @@ export function createChatController({
         const runtimeChatAgent = resolvedRuntime?.chatAgent ?? chatAgent;
         const runtimeExecutionConfig = resolveAgentRuntimeConfig(configValidation.data, {
           isSubagent: Boolean(resolvedRuntime?.isSubagent),
+          modelProfileId: selectedProfile.id,
           enableDeepThinking: Boolean(chatValidation.data.enableDeepThinking),
           reasoningEffort: chatValidation.data.reasoningEffort
         });
@@ -2364,6 +2461,7 @@ export function createChatController({
             parentConversationId: existingConversation?.parentConversationId,
             source: existingConversation?.source,
             model: historyRuntimeConfig.model,
+            modelProfileId: historyRuntimeConfig.modelProfileId,
             approvalMode,
             skills: persistedSkillNames,
             personaId,
@@ -2396,7 +2494,7 @@ export function createChatController({
 
         const shouldAutoCompress = compressionService.shouldAutoCompress({
           messages: effectiveMessages,
-          maxContextWindow: configValidation.data.maxContextWindow,
+          maxContextWindow: historyRuntimeConfig.maxContextWindow,
           latestTokenUsage: existingConversation?.tokenUsage ?? null
         });
 
@@ -2426,6 +2524,7 @@ export function createChatController({
               parentConversationId: existingConversation?.parentConversationId,
               source: existingConversation?.source,
               model: existingConversation?.model,
+              modelProfileId: existingConversation?.modelProfileId,
               approvalMode: existingConversation?.approvalMode,
               skills: existingConversation?.skills,
               personaId: existingConversation?.personaId,
@@ -2507,6 +2606,7 @@ export function createChatController({
           activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
             ? resolvedRuntime.activeSkillNames
             : [],
+          runtimeConfig: runtimeExecutionConfig,
           definitionPrompt: resolvedRuntime?.definitionPrompt,
           includeAgentsPrompt: !resolvedRuntime?.isSubagent,
           includeMemorySummaryPrompt: !resolvedRuntime?.isSubagent,
@@ -2586,6 +2686,7 @@ export function createChatController({
           parentConversationId: existingConversation?.parentConversationId,
           source: existingConversation?.source,
           model: runtimeExecutionConfig.model,
+          modelProfileId: runtimeExecutionConfig.modelProfileId,
           approvalMode: existingConversation?.approvalMode ?? approvalMode,
           skills: existingConversation?.skills,
           personaId: existingConversation?.personaId,

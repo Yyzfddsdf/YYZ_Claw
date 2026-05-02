@@ -26,38 +26,6 @@ const RECORDER_MIME_TYPE_CANDIDATES = [
   "audio/ogg"
 ];
 const TTS_MAX_TEXT_LENGTH = 1000;
-const THINKING_MODE_OPTIONS = [
-  {
-    value: "off",
-    label: "关闭",
-    description: "不请求思考内容"
-  },
-  {
-    value: "default",
-    label: "默认",
-    description: "开启思考，但不传强度字段"
-  },
-  {
-    value: "low",
-    label: "低",
-    description: "传 reasoning_effort=low"
-  },
-  {
-    value: "medium",
-    label: "中",
-    description: "传 reasoning_effort=medium"
-  },
-  {
-    value: "high",
-    label: "高",
-    description: "传 reasoning_effort=high"
-  },
-  {
-    value: "xhigh",
-    label: "超高",
-    description: "传 reasoning_effort=xhigh"
-  }
-];
 const GENERAL_FILE_ACCEPT = [
   ".pdf",
   ".doc",
@@ -742,6 +710,7 @@ export function ChatPanel({
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
   const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [automationTemplateMenuOpen, setAutomationTemplateMenuOpen] = useState(false);
   const [automationConfigOpen, setAutomationConfigOpen] = useState(false);
   const [automationTemplates, setAutomationTemplates] = useState([]);
@@ -787,6 +756,7 @@ export function ChatPanel({
   const approvalMenuRef = useRef(null);
   const personaMenuRef = useRef(null);
   const thinkingMenuRef = useRef(null);
+  const modelMenuRef = useRef(null);
   const automationTemplateMenuRef = useRef(null);
 
   useEffect(() => {
@@ -841,6 +811,9 @@ export function ChatPanel({
       }
       if (thinkingMenuRef.current && !thinkingMenuRef.current.contains(event.target)) {
         setThinkingMenuOpen(false);
+      }
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target)) {
+        setModelMenuOpen(false);
       }
       if (
         automationTemplateMenuRef.current &&
@@ -1026,10 +999,23 @@ export function ChatPanel({
   ) ?? activeAutomationTemplate;
   const thinkingToggleDisabled =
     chat.isStreaming || !chat.historyLoaded || Boolean(chat.pendingApproval);
+  const modelSwitchDisabled =
+    chat.isStreaming || chat.isCompressing || !chat.historyLoaded || Boolean(chat.pendingApproval);
+  const modelProfiles = Array.isArray(chat.modelProfiles) ? chat.modelProfiles : [];
+  const activeModelProfile = chat.activeConversationModelProfile;
+  const activeModelProfileId = String(chat.activeConversationModelProfileId ?? "").trim();
+  const activeModelProfileLabel =
+    String(activeModelProfile?.name ?? activeModelProfile?.model ?? "").trim() || "选择模型";
+  const supportsThinking = Boolean(chat.supportsThinking);
+  const supportsVision = Boolean(chat.supportsVision);
   const activeThinkingMode = String(chat?.thinkingMode ?? "off").trim() || "off";
+  const thinkingModeOptions = Array.isArray(chat?.thinkingModeOptions)
+    ? chat.thinkingModeOptions
+    : [];
   const activeThinkingOption =
-    THINKING_MODE_OPTIONS.find((option) => option.value === activeThinkingMode) ??
-    THINKING_MODE_OPTIONS[0];
+    thinkingModeOptions.find((option) => option.value === activeThinkingMode) ??
+    thinkingModeOptions[0] ??
+    { value: "off", label: "关闭", description: "不请求思考内容" };
   const messageDeleteDisabled =
     chat.isStreaming ||
     chat.isCompressing ||
@@ -1051,6 +1037,11 @@ export function ChatPanel({
         String(message?.role ?? "").trim() === "assistant" &&
         String(message?.id ?? "").trim() === String(activeConversationRuntimeReplyError?.messageId ?? "").trim()
     );
+  const showWorkspaceDock =
+    chat.historyLoaded &&
+    !chat.isDraftConversation &&
+    Boolean(String(chat.activeConversationId ?? "").trim()) &&
+    Boolean(String(chat.activeConversationWorkplace ?? "").trim());
   const pendingApprovalArguments =
     chat?.pendingApproval?.arguments &&
     typeof chat.pendingApproval.arguments === "object" &&
@@ -1807,7 +1798,7 @@ export function ChatPanel({
   }
 
   function handleImagePickerClick() {
-    if (inputDisabled) {
+    if (inputDisabled || !supportsVision) {
       return;
     }
 
@@ -1995,6 +1986,10 @@ export function ChatPanel({
       inputDisabled ||
       isParsingFiles
     ) {
+      return;
+    }
+
+    if (pendingImages.length > 0 && !supportsVision) {
       return;
     }
 
@@ -2305,7 +2300,9 @@ export function ChatPanel({
                   </button>
                 )}
                 <h3>{chat.activeConversationTitle || "当前会话"}</h3>
-                <WorkspaceDock />
+                {showWorkspaceDock && (
+                  <WorkspaceDock workspaceRoot={chat.activeConversationWorkplace} />
+                )}
                 {isSubagentConversation && (
                   <span className="history-item-badge">
                     {chat.activeConversationAgentDisplayName || "子智能体"}
@@ -3599,76 +3596,80 @@ export function ChatPanel({
               />
 
               <div className="container-upload-files">
-                <div className="thinking-mode-picker" ref={thinkingMenuRef}>
-                  <button
-                    type="button"
-                    className={`upload-file thinking-mode-trigger ${chat.deepThinkingEnabled ? "is-active" : ""}`}
-                    onClick={() => setThinkingMenuOpen((prev) => !prev)}
-                    disabled={thinkingToggleDisabled}
-                    aria-label={`思考模式: ${activeThinkingOption.label}`}
-                    title={`思考模式: ${activeThinkingOption.label}`}
-                  >
-                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 4.5a5.5 5.5 0 0 0-3.63 9.63c.4.36.63.88.63 1.42V17a1 1 0 0 0 1 1h2.25m0 0V16.5m0 1.5h4.5m-4.5 0v1.25a1.75 1.75 0 0 0 3.5 0V18m0 0H16.5a1 1 0 0 0 1-1v-1.45c0-.54.23-1.06.63-1.42A5.5 5.5 0 1 0 9.5 4.5Z" />
-                    </svg>
-                    {activeThinkingMode !== "off" && (
-                      <span className="thinking-mode-badge">{activeThinkingOption.label}</span>
-                    )}
-                  </button>
+                {supportsThinking && (
+                  <div className="thinking-mode-picker" ref={thinkingMenuRef}>
+                    <button
+                      type="button"
+                      className={`upload-file thinking-mode-trigger ${chat.deepThinkingEnabled ? "is-active" : ""}`}
+                      onClick={() => setThinkingMenuOpen((prev) => !prev)}
+                      disabled={thinkingToggleDisabled}
+                      aria-label={`思考模式: ${activeThinkingOption.label}`}
+                      title={`思考模式: ${activeThinkingOption.label}`}
+                    >
+                      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 4.5a5.5 5.5 0 0 0-3.63 9.63c.4.36.63.88.63 1.42V17a1 1 0 0 0 1 1h2.25m0 0V16.5m0 1.5h4.5m-4.5 0v1.25a1.75 1.75 0 0 0 3.5 0V18m0 0H16.5a1 1 0 0 0 1-1v-1.45c0-.54.23-1.06.63-1.42A5.5 5.5 0 1 0 9.5 4.5Z" />
+                      </svg>
+                      {activeThinkingMode !== "off" && (
+                        <span className="thinking-mode-badge">{activeThinkingOption.label}</span>
+                      )}
+                    </button>
 
-                  {thinkingMenuOpen && !thinkingToggleDisabled && (
-                    <div className="thinking-mode-menu" role="menu">
-                      {THINKING_MODE_OPTIONS.map((option) => {
-                        const isActive = option.value === activeThinkingMode;
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            className={`thinking-mode-option ${isActive ? "is-active" : ""}`}
-                            onClick={() => {
-                              chat.setThinkingMode(option.value);
-                              setThinkingMenuOpen(false);
-                            }}
-                            role="menuitemradio"
-                            aria-checked={isActive}
-                          >
-                            <span className="thinking-mode-option-label">{option.label}</span>
-                            <small>{option.description}</small>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                    {thinkingMenuOpen && !thinkingToggleDisabled && (
+                      <div className="thinking-mode-menu" role="menu">
+                        {thinkingModeOptions.map((option) => {
+                          const isActive = option.value === activeThinkingMode;
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              className={`thinking-mode-option ${isActive ? "is-active" : ""}`}
+                              onClick={() => {
+                                chat.setThinkingMode(option.value);
+                                setThinkingMenuOpen(false);
+                              }}
+                              role="menuitemradio"
+                              aria-checked={isActive}
+                            >
+                              <span className="thinking-mode-option-label">{option.label}</span>
+                              <small>{option.description}</small>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* 图片上传 */}
-                <button
-                  type="button"
-                  className={`upload-file ${pendingImages.length > 0 ? "is-active" : ""}`}
-                  onClick={handleImagePickerClick}
-                  disabled={inputDisabled}
-                  aria-label="上传图片"
-                  title={pendingImages.length > 0 ? `继续添加图片（已选 ${pendingImages.length} 张）` : "上传图片"}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="24"
-                    height="24"
-                    viewBox="0 0 24 24"
+                {supportsVision && (
+                  <button
+                    type="button"
+                    className={`upload-file ${pendingImages.length > 0 ? "is-active" : ""}`}
+                    onClick={handleImagePickerClick}
+                    disabled={inputDisabled}
+                    aria-label="上传图片"
+                    title={pendingImages.length > 0 ? `继续添加图片（已选 ${pendingImages.length} 张）` : "上传图片"}
                   >
-                    <g
-                      fill="none"
-                      stroke="currentColor"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
                     >
-                      <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
-                      <circle cx="9" cy="9" r="2"></circle>
-                      <path d="m21 15l-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
-                    </g>
-                  </svg>
-                </button>
+                      <g
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                      >
+                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+                        <circle cx="9" cy="9" r="2"></circle>
+                        <path d="m21 15l-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+                      </g>
+                    </svg>
+                  </button>
+                )}
 
                 {/* 其他文件上传 */}
                 <button
@@ -3846,6 +3847,53 @@ export function ChatPanel({
                           {chat.isCompressing ? "压缩中..." : "手动压缩"}
                         </button>
                       </div>
+                    </div>
+                  )}
+                </div>
+
+                <div ref={modelMenuRef} className="chat-model-control">
+                  <button
+                    type="button"
+                    className="chat-model-trigger"
+                    onClick={() => !modelSwitchDisabled && setModelMenuOpen((prev) => !prev)}
+                    disabled={modelSwitchDisabled || modelProfiles.length === 0}
+                    title={`当前模型：${activeModelProfileLabel}`}
+                  >
+                    <span className="chat-model-dot" />
+                    <span>{activeModelProfileLabel}</span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" className={`approval-caret ${modelMenuOpen ? "is-open" : ""}`}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+
+                  {modelMenuOpen && !modelSwitchDisabled && (
+                    <div className="chat-model-menu">
+                      {modelProfiles.map((profile) => {
+                        const isActive = profile.id === activeModelProfileId;
+                        return (
+                          <button
+                            key={profile.id}
+                            type="button"
+                            className={isActive ? "is-active" : ""}
+                            onClick={() => {
+                              chat.setConversationModelProfile(profile.id);
+                              setModelMenuOpen(false);
+                            }}
+                          >
+                            <strong>{profile.name || profile.model || profile.id}</strong>
+                            <span>
+                              {profile.model}
+                              {profile.provider ? ` · ${profile.provider}` : ""}
+                              {profile.providerCapabilities?.supportsReasoningEffort ||
+                              profile.providerCapabilities?.supportsThinkingSwitch ||
+                              profile.providerCapabilities?.supportsReasoningContent
+                                ? " · 思考"
+                                : ""}
+                              {profile.supportsVision ? " · 图片" : ""}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

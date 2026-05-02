@@ -45,6 +45,7 @@ export const conversationUpsertSchema = z.object({
   approvalMode: approvalModeSchema.optional(),
   skills: z.array(z.string().trim().min(1)).optional(),
   personaId: z.string().trim().max(120).optional(),
+  modelProfileId: z.string().trim().max(120).optional(),
   developerPrompt: z.string().max(20000).optional(),
   replaceMessages: z.boolean().optional().default(false),
   messages: z.array(historyMessageSchema)
@@ -60,6 +61,10 @@ export const conversationSkillsSchema = z.object({
 
 export const conversationPersonaSchema = z.object({
   personaId: z.string().trim().max(120).optional().default("")
+});
+
+export const conversationModelProfileSchema = z.object({
+  modelProfileId: z.string().trim().min(1).max(120)
 });
 
 export const conversationDeveloperPromptSchema = z.object({

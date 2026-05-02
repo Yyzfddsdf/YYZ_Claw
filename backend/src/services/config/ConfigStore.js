@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import * as fsSync from "node:fs";
 import path from "node:path";
 
 import { safeJsonParse } from "../../utils/safeJsonParse.js";
+import { migrateLegacyModelConfig } from "./modelProfileConfig.js";
 
 async function fileExists(filePath) {
   try {
@@ -34,16 +36,37 @@ export class ConfigStore {
     const parsed = safeJsonParse(raw, {});
 
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      if (parsed.sttProvider !== undefined && parsed.sttProvider !== "cloudflare") {
-        return {
-          ...parsed,
-          sttProvider: "cloudflare"
-        };
+      const migrated = migrateLegacyModelConfig(parsed);
+      if (JSON.stringify(parsed) !== JSON.stringify(migrated)) {
+        await this.save(migrated);
       }
-      return parsed;
+      return migrated;
     }
 
-    return {};
+    const migrated = migrateLegacyModelConfig({});
+    await this.save(migrated);
+    return migrated;
+  }
+
+  readSync() {
+    const dirPath = path.dirname(this.configFilePath);
+    fsSync.mkdirSync(dirPath, { recursive: true });
+
+    if (!fsSync.existsSync(this.configFilePath)) {
+      fsSync.writeFileSync(this.configFilePath, "{}\n", "utf8");
+    }
+
+    const raw = fsSync.readFileSync(this.configFilePath, "utf8");
+    const parsed = safeJsonParse(raw, {});
+    const migrated = migrateLegacyModelConfig(
+      parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}
+    );
+
+    if (JSON.stringify(parsed) !== JSON.stringify(migrated)) {
+      fsSync.writeFileSync(this.configFilePath, JSON.stringify(migrated, null, 2) + "\n", "utf8");
+    }
+
+    return migrated;
   }
 
   async save(nextConfig) {

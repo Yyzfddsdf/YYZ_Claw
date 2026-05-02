@@ -1,0 +1,110 @@
+export const MODEL_PROVIDER_IDS = {
+  OPENAI_COMPLETION: "openai-completion",
+  DASHSCOPE_COMPLETION: "dashscope-completion"
+};
+
+export const DEFAULT_MODEL_PROVIDER = MODEL_PROVIDER_IDS.OPENAI_COMPLETION;
+
+export const MODEL_PROVIDER_OPTIONS = [
+  {
+    value: MODEL_PROVIDER_IDS.OPENAI_COMPLETION,
+    label: "OpenAI Completion",
+    description: "标准 OpenAI-compatible Chat Completions，支持 reasoning_effort 强度。",
+    capabilities: {
+      supportsReasoningEffort: true,
+      supportsThinkingSwitch: false,
+      supportsReasoningContent: false,
+      supportsVision: true
+    }
+  },
+  {
+    value: MODEL_PROVIDER_IDS.DASHSCOPE_COMPLETION,
+    label: "DashScope 百炼 Completion",
+    description: "百炼 OpenAI 兼容接口，使用 enable_thinking 控制思考开关。",
+    capabilities: {
+      supportsReasoningEffort: false,
+      supportsThinkingSwitch: true,
+      supportsReasoningContent: true,
+      supportsVision: true
+    }
+  }
+];
+
+const BASE_THINKING_OFF_OPTION = {
+  value: "off",
+  label: "关闭",
+  description: "不请求思考内容"
+};
+
+export function normalizeModelProvider(value) {
+  const provider = String(value ?? "").trim();
+  return MODEL_PROVIDER_OPTIONS.some((option) => option.value === provider)
+    ? provider
+    : DEFAULT_MODEL_PROVIDER;
+}
+
+export function getModelProviderOption(value) {
+  const provider = normalizeModelProvider(value);
+  return MODEL_PROVIDER_OPTIONS.find((option) => option.value === provider) ?? MODEL_PROVIDER_OPTIONS[0];
+}
+
+export function getProviderCapabilities(value) {
+  return { ...getModelProviderOption(value).capabilities };
+}
+
+export function getThinkingModeOptionsForProvider(value) {
+  const capabilities = getProviderCapabilities(value);
+
+  if (capabilities.supportsReasoningEffort) {
+    return [
+      BASE_THINKING_OFF_OPTION,
+      {
+        value: "default",
+        label: "默认",
+        description: "开启思考，但不传强度字段"
+      },
+      {
+        value: "low",
+        label: "低",
+        description: "传 reasoning_effort=low"
+      },
+      {
+        value: "medium",
+        label: "中",
+        description: "传 reasoning_effort=medium"
+      },
+      {
+        value: "high",
+        label: "高",
+        description: "传 reasoning_effort=high"
+      },
+      {
+        value: "xhigh",
+        label: "超高",
+        description: "传 reasoning_effort=xhigh"
+      }
+    ];
+  }
+
+  if (capabilities.supportsThinkingSwitch || capabilities.supportsReasoningContent) {
+    return [
+      BASE_THINKING_OFF_OPTION,
+      {
+        value: "default",
+        label: "开启",
+        description: "传 enable_thinking=true"
+      }
+    ];
+  }
+
+  return [BASE_THINKING_OFF_OPTION];
+}
+
+export function isThinkingModeSupportedByProvider(provider, thinkingMode) {
+  const mode = String(thinkingMode ?? "off").trim() || "off";
+  return getThinkingModeOptionsForProvider(provider).some((option) => option.value === mode);
+}
+
+export function providerSupportsThinking(provider) {
+  return getThinkingModeOptionsForProvider(provider).some((option) => option.value !== "off");
+}

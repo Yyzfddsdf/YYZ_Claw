@@ -20,18 +20,13 @@ import appIconUrl from "./assets/yyz-claw-icon.png";
 
 function createEmptyConfig() {
   return {
-    model: "",
-    baseURL: "",
-    apiKey: "",
+    modelProfiles: [],
+    defaultMainModelProfileId: "",
+    defaultSubagentModelProfileId: "",
+    defaultCompressionModelProfileId: "",
     webProvider: "",
     tavilyApiKey: "",
-    subagentModel: "",
-    subagentBaseURL: "",
-    subagentApiKey: "",
-    maxContextWindow: "",
-    compressionModel: "",
-    compressionBaseURL: "",
-    compressionApiKey: "",
+    compressionMaxOutputTokens: "",
     sttProvider: "cloudflare",
     sttCloudflareApiToken: "",
     sttCloudflareAccountId: "",
@@ -56,7 +51,13 @@ function createEmptyAppearance() {
 }
 
 function hasRuntimeConfig(config) {
-  return Boolean(config.model && config.baseURL && config.apiKey);
+  return (
+    Array.isArray(config.modelProfiles) &&
+    config.modelProfiles.length > 0 &&
+    Boolean(config.defaultMainModelProfileId) &&
+    Boolean(config.defaultSubagentModelProfileId) &&
+    Boolean(config.defaultCompressionModelProfileId)
+  );
 }
 
 function collectActiveSceneActors(chat) {
@@ -116,7 +117,7 @@ function MainApp() {
   const [appearance, setAppearance] = useState(createEmptyAppearance);
   const [activeWorkspace, setActiveWorkspace] = useState("chat");
 
-  const chat = useChatSession(Number(config.maxContextWindow || 0));
+  const chat = useChatSession(config);
 
   useEffect(() => {
     let mounted = true;
@@ -131,22 +132,19 @@ function MainApp() {
         if (!mounted) return;
 
         setConfig({
-          model: response?.config?.model ?? "",
-          baseURL: response?.config?.baseURL ?? "",
-          apiKey: response?.config?.apiKey ?? "",
+          modelProfiles: Array.isArray(response?.config?.modelProfiles)
+            ? response.config.modelProfiles
+            : [],
+          defaultMainModelProfileId: response?.config?.defaultMainModelProfileId ?? "",
+          defaultSubagentModelProfileId: response?.config?.defaultSubagentModelProfileId ?? "",
+          defaultCompressionModelProfileId: response?.config?.defaultCompressionModelProfileId ?? "",
           webProvider: response?.config?.webProvider ?? "",
           tavilyApiKey: response?.config?.tavilyApiKey ?? "",
-          subagentModel: response?.config?.subagentModel ?? "",
-          subagentBaseURL: response?.config?.subagentBaseURL ?? "",
-          subagentApiKey: response?.config?.subagentApiKey ?? "",
-          maxContextWindow:
-            response?.config?.maxContextWindow === undefined ||
-            response?.config?.maxContextWindow === null
+          compressionMaxOutputTokens:
+            response?.config?.compressionMaxOutputTokens === undefined ||
+            response?.config?.compressionMaxOutputTokens === null
               ? ""
-              : String(response.config.maxContextWindow),
-          compressionModel: response?.config?.compressionModel ?? "",
-          compressionBaseURL: response?.config?.compressionBaseURL ?? "",
-          compressionApiKey: response?.config?.compressionApiKey ?? "",
+              : String(response.config.compressionMaxOutputTokens),
           sttProvider: "cloudflare",
           sttCloudflareApiToken: response?.config?.sttCloudflareApiToken ?? "",
           sttCloudflareAccountId: response?.config?.sttCloudflareAccountId ?? "",
@@ -445,9 +443,9 @@ function MainApp() {
           <section className="panel panel-chat" role="tabpanel" aria-label="chat workspace">
             <ChatPanel
               chat={chat}
-              modelContextWindow={Number(config.maxContextWindow ?? 0)}
+              modelContextWindow={Number(chat.activeConversationModelProfile?.maxContextWindow ?? 0)}
               disabled={!canChat}
-              disabledReason="请先到配置中心保存 model / baseURL / apiKey"
+              disabledReason="请先到配置中心保存模型配置"
               onNavigate={(nav) => setActiveWorkspace(nav)}
             />
           </section>
@@ -553,7 +551,8 @@ function MainApp() {
 
 export default function App() {
   if (window.location.pathname === "/workspace-window") {
-    return <WorkspaceDock standalone />;
+    const workspaceRoot = new URLSearchParams(window.location.search).get("root") ?? "";
+    return <WorkspaceDock standalone workspaceRoot={workspaceRoot} />;
   }
 
   return <MainApp />;

@@ -1,4 +1,9 @@
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
+import { applyThinkingOptions } from "../openai/thinkingOptions.js";
+import {
+  applyModelProfileToRuntimeConfig,
+  resolveModelProfile
+} from "../config/modelProfileConfig.js";
 
 const MAX_SESSION_CHARS = 100_000;
 const MAX_SESSIONS_TO_SUMMARIZE = 5;
@@ -18,11 +23,13 @@ function getHistoryStore(executionContext = {}) {
 }
 
 function resolveSummaryRuntimeConfig(runtimeConfig = {}) {
-  const model = String(runtimeConfig?.compressionModel ?? "").trim() || String(runtimeConfig?.model ?? "").trim();
-  const baseURL =
-    String(runtimeConfig?.compressionBaseURL ?? "").trim() || String(runtimeConfig?.baseURL ?? "").trim();
-  const apiKey =
-    String(runtimeConfig?.compressionApiKey ?? "").trim() || String(runtimeConfig?.apiKey ?? "").trim();
+  const profiledConfig = applyModelProfileToRuntimeConfig(
+    runtimeConfig,
+    resolveModelProfile(runtimeConfig, "", "compression")
+  );
+  const model = String(profiledConfig?.model ?? "").trim();
+  const baseURL = String(profiledConfig?.baseURL ?? "").trim();
+  const apiKey = String(profiledConfig?.apiKey ?? "").trim();
   const maxTokens = Number(runtimeConfig?.compressionMaxOutputTokens ?? DEFAULT_SUMMARY_MAX_TOKENS);
 
   if (!model || !baseURL || !apiKey) {
@@ -33,6 +40,8 @@ function resolveSummaryRuntimeConfig(runtimeConfig = {}) {
     model,
     baseURL,
     apiKey,
+    provider: profiledConfig.provider,
+    providerCapabilities: profiledConfig.providerCapabilities,
     maxTokens:
       Number.isFinite(maxTokens) && maxTokens > 0
         ? Math.min(Math.max(Math.trunc(maxTokens), 300), 8000)
@@ -235,7 +244,7 @@ async function summarizeConversation({
   const client = createOpenAIClient(summaryRuntimeConfig);
   for (let attempt = 0; attempt < MAX_SUMMARY_RETRIES; attempt += 1) {
     try {
-      const completion = await client.chat.completions.create({
+      const completion = await client.chat.completions.create(applyThinkingOptions({
         model: summaryRuntimeConfig.model,
         temperature: 0.1,
         max_tokens: summaryRuntimeConfig.maxTokens,
@@ -259,7 +268,7 @@ async function summarizeConversation({
             ].join("\n")
           }
         ]
-      });
+      }, summaryRuntimeConfig));
 
       const content = String(completion?.choices?.[0]?.message?.content ?? "").trim();
       if (content) {

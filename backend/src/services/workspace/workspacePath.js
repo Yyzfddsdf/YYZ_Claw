@@ -20,6 +20,20 @@ export function normalizeWorkspaceRelativePath(inputPath = "") {
   return normalized.replace(/^\/+/, "");
 }
 
+export async function resolveWorkspaceRoot(inputRoot = "", fallbackRoot = process.cwd()) {
+  const normalizedRoot = String(inputRoot ?? "").trim();
+  const rootDir = path.resolve(normalizedRoot || fallbackRoot);
+  const stat = await fs.stat(rootDir);
+
+  if (!stat.isDirectory()) {
+    const error = new Error("工作区根目录必须是目录");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return rootDir;
+}
+
 export function resolveWorkspacePath(rootDir, inputPath = "") {
   const relativePath = normalizeWorkspaceRelativePath(inputPath);
   const absolutePath = path.resolve(rootDir, relativePath);

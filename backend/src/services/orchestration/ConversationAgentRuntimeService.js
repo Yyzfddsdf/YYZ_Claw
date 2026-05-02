@@ -188,10 +188,19 @@ export class ConversationAgentRuntimeService {
     const resolved = await this.resolveConversationRuntime(conversationId);
     const runtimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
       isSubagent: Boolean(resolved?.isSubagent),
+      modelProfileId: resolved?.history?.modelProfileId,
       enableDeepThinking: Boolean(options.enableDeepThinking),
       reasoningEffort: options.reasoningEffort
     });
     let existingConversation = resolved.history;
+    if (!normalizeText(existingConversation?.modelProfileId) && normalizeText(runtimeConfig?.modelProfileId)) {
+      existingConversation =
+        this.historyStore.updateConversationModelProfile(
+          conversationId,
+          runtimeConfig.modelProfileId,
+          runtimeConfig.model
+        ) ?? existingConversation;
+    }
     let effectiveMessages = Array.isArray(existingConversation?.messages)
       ? existingConversation.messages
       : [];
@@ -223,6 +232,7 @@ export class ConversationAgentRuntimeService {
           parentConversationId: existingConversation?.parentConversationId,
           source: existingConversation?.source,
           model: existingConversation?.model,
+          modelProfileId: existingConversation?.modelProfileId,
           approvalMode: existingConversation?.approvalMode,
           skills: existingConversation?.skills,
           developerPrompt: existingConversation?.developerPrompt,
@@ -288,6 +298,7 @@ export class ConversationAgentRuntimeService {
       developerPrompt: resolved.developerPrompt,
       personaPrompt: resolved.personaPrompt,
       activeSkillNames: resolved.activeSkillNames,
+      runtimeConfig,
       definitionPrompt: resolved.definitionPrompt,
       includeAgentsPrompt: !resolved.isSubagent,
       includeMemorySummaryPrompt: !resolved.isSubagent,

@@ -10,6 +10,7 @@ import {
 import { MarkdownMessage } from "../chat/MarkdownMessage";
 import { formatTimestamp } from "../../shared/formatTimestamp";
 import { confirmAction } from "../../shared/feedback";
+import { NumericInput } from "../../shared/NumericInput";
 import "./debate.css";
 
 function normalizeDebate(value) {
@@ -379,12 +380,11 @@ export function DebatePanel({ disabled = false, disabledReason = "" }) {
               <div className="debate-form-row">
                 <label>
                   <span>最大轮数</span>
-                  <input
-                    type="number"
+                  <NumericInput
                     min="1"
                     max="20"
                     value={maxRounds}
-                    onChange={(event) => setMaxRounds(event.target.value)}
+                    onChange={setMaxRounds}
                     disabled={running}
                   />
                 </label>

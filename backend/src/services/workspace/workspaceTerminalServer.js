@@ -1,10 +1,25 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 import pty from "node-pty";
 import WebSocket, { WebSocketServer } from "ws";
 
 const PROCESS_TITLE_POLL_MS = 1400;
+
+function resolveTerminalCwd(inputRoot = "", fallbackCwd = process.cwd()) {
+  const normalizedRoot = String(inputRoot ?? "").trim();
+  const candidate = path.resolve(normalizedRoot || fallbackCwd);
+
+  try {
+    if (fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  } catch {}
+
+  return fallbackCwd;
+}
 
 function normalizeProcessTitle(processName = "") {
   const rawName = String(processName ?? "").trim();
@@ -229,7 +244,9 @@ export function attachWorkspaceTerminalServer(server, options = {}) {
     });
   });
 
-  wss.on("connection", (socket) => {
+  wss.on("connection", (socket, request) => {
+    const url = new URL(request.url, "http://localhost");
+    const connectionCwd = resolveTerminalCwd(url.searchParams.get("root") ?? "", cwd);
     const shellTitle = resolveShellTitle();
     let lastSentTitle = shellTitle;
     let titlePollInFlight = false;
@@ -249,7 +266,7 @@ export function attachWorkspaceTerminalServer(server, options = {}) {
 
     sendJson(socket, {
       type: "meta",
-      cwd,
+      cwd: connectionCwd,
       title: shellTitle
     });
 
@@ -258,7 +275,7 @@ export function attachWorkspaceTerminalServer(server, options = {}) {
       title: shellTitle
     });
 
-    const shell = createShellProcess(cwd);
+    const shell = createShellProcess(connectionCwd);
 
     function startTitlePolling() {
       if (titlePoll) {

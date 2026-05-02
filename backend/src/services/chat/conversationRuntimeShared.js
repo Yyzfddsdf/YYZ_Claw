@@ -4,6 +4,11 @@ import path from "node:path";
 import { PROJECT_ROOT, YYZ_DIR } from "../../config/paths.js";
 import { configSchema } from "../../schemas/configSchema.js";
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
+import { applyThinkingOptions } from "../openai/thinkingOptions.js";
+import {
+  applyModelProfileToRuntimeConfig,
+  resolveModelProfile
+} from "../config/modelProfileConfig.js";
 
 export const DEFAULT_HISTORY_TITLE = "新会话";
 export const DEFAULT_WORKPLACE_PATH = path.resolve(PROJECT_ROOT);
@@ -103,9 +108,12 @@ async function generateConversationTitle({ configStore, firstSentence }) {
   }
 
   try {
-    const runtimeConfig = configValidation.data;
+    const runtimeConfig = applyModelProfileToRuntimeConfig(
+      configValidation.data,
+      resolveModelProfile(configValidation.data, "", "main")
+    );
     const client = createOpenAIClient(runtimeConfig);
-    const completion = await client.chat.completions.create({
+    const completion = await client.chat.completions.create(applyThinkingOptions({
       model: runtimeConfig.model,
       temperature: 0.2,
       max_tokens: 48,
@@ -120,7 +128,7 @@ async function generateConversationTitle({ configStore, firstSentence }) {
           content: firstSentence
         }
       ]
-    });
+    }, runtimeConfig));
 
     const candidateTitle = sanitizeTitle(completion?.choices?.[0]?.message?.content ?? "");
 
@@ -363,12 +371,35 @@ export function buildSubagentGuardPrompt() {
   ].join("\n");
 }
 
-export function createWorkplaceSystemPrompt(workplacePath) {
+function createRuntimeModelLines(runtimeConfig = {}) {
+  const model = String(runtimeConfig?.model ?? "").trim();
+  const provider = String(runtimeConfig?.provider ?? "").trim();
+  const profileName = String(runtimeConfig?.modelProfileName ?? "").trim();
+  const profileId = String(runtimeConfig?.modelProfileId ?? "").trim();
+  const lines = [];
+
+  if (model) {
+    lines.push(`当前运行模型(model): ${model}`);
+  }
+  if (provider) {
+    lines.push(`当前模型接口(provider): ${provider}`);
+  }
+  if (profileName || profileId) {
+    lines.push(
+      `当前模型配置(profile): ${profileName || profileId}${profileName && profileId ? ` (${profileId})` : ""}`
+    );
+  }
+
+  return lines;
+}
+
+export function createWorkplaceSystemPrompt(workplacePath, runtimeConfig = {}) {
   const homeDirectory = String(os.homedir?.() ?? "").trim();
 
   return [
     "你是 YYZ_CLAW，一个通用智能助手。",
     "你正在本地智能体工作模式。",
+    ...createRuntimeModelLines(runtimeConfig),
     `当前操作系统: ${HOST_SYSTEM_INFO.normalizedSystem}`,
     `系统版本号: ${HOST_SYSTEM_INFO.release}`,
     `系统详细版本: ${HOST_SYSTEM_INFO.version}`,
@@ -417,6 +448,10 @@ export async function buildConversationPromptMessages(options = {}) {
   const includeSkillsPrompt = options.includeSkillsPrompt !== false;
   const includeSubagentGuardPrompt = Boolean(options.includeSubagentGuardPrompt);
   const definitionPrompt = String(options.definitionPrompt ?? "").trim();
+  const runtimeConfig =
+    options.runtimeConfig && typeof options.runtimeConfig === "object" && !Array.isArray(options.runtimeConfig)
+      ? options.runtimeConfig
+      : {};
   const hasPinnedMemorySummaryPrompt = typeof options.memorySummaryPrompt === "string";
   const promptMessages = [];
 
@@ -455,7 +490,7 @@ export async function buildConversationPromptMessages(options = {}) {
   if (includeWorkplacePrompt) {
     promptMessages.push({
       role: "system",
-      content: createWorkplaceSystemPrompt(workplacePath)
+      content: createWorkplaceSystemPrompt(workplacePath, runtimeConfig)
     });
   }
 
@@ -527,33 +562,26 @@ export function normalizeUsageRecordPayload(usage) {
 }
 
 export function resolveAgentRuntimeConfig(config = {}, options = {}) {
-  const normalizedModel = String(config?.model ?? "").trim();
-  const normalizedBaseURL = String(config?.baseURL ?? "").trim();
-  const normalizedApiKey = String(config?.apiKey ?? "").trim();
   const useSubagentConfig = Boolean(options?.isSubagent);
-  const enableDeepThinking = Boolean(options?.enableDeepThinking);
+  const profile = resolveModelProfile(
+    config,
+    String(options?.modelProfileId ?? "").trim(),
+    useSubagentConfig ? "subagent" : "main"
+  );
+  const profiledConfig = applyModelProfileToRuntimeConfig(config, profile);
+  const providerCapabilities =
+    profiledConfig.providerCapabilities && typeof profiledConfig.providerCapabilities === "object"
+      ? profiledConfig.providerCapabilities
+      : {};
+  const supportsThinking =
+    providerCapabilities.supportsReasoningEffort ||
+    providerCapabilities.supportsThinkingSwitch ||
+    providerCapabilities.supportsReasoningContent;
+  const enableDeepThinking = Boolean(options?.enableDeepThinking) && supportsThinking;
   const reasoningEffort = String(options?.reasoningEffort ?? "").trim();
 
-  if (!useSubagentConfig) {
-    return {
-      ...config,
-      model: normalizedModel,
-      baseURL: normalizedBaseURL,
-      apiKey: normalizedApiKey,
-      enableDeepThinking,
-      reasoningEffort
-    };
-  }
-
-  const subagentModel = String(config?.subagentModel ?? "").trim();
-  const subagentBaseURL = String(config?.subagentBaseURL ?? "").trim();
-  const subagentApiKey = String(config?.subagentApiKey ?? "").trim();
-
   return {
-    ...config,
-    model: subagentModel || normalizedModel,
-    baseURL: subagentBaseURL || normalizedBaseURL,
-    apiKey: subagentApiKey || normalizedApiKey,
+    ...profiledConfig,
     enableDeepThinking,
     reasoningEffort
   };

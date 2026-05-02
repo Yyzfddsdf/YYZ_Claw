@@ -1,31 +1,48 @@
 import { z } from "zod";
 
-function createOptionalUrlWithBlankSchema(fieldName) {
-  return z
-    .string()
-    .trim()
-    .refine((value) => value.length === 0 || z.string().url().safeParse(value).success, {
-      message: `${fieldName} must be a valid URL`
-    })
-    .optional();
-}
+import { COMPLETION_PROVIDERS } from "../services/providers/completionProviders.js";
 
-export const configSchema = z.object({
-  model: z.string().trim().min(1, "model is required"),
+const modelProfileSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  provider: z.enum([
+    COMPLETION_PROVIDERS.OPENAI_COMPLETION,
+    COMPLETION_PROVIDERS.DASHSCOPE_COMPLETION
+  ]),
+  name: z.string().trim().min(1).max(120),
+  model: z.string().trim().min(1),
   baseURL: z.string().trim().url("baseURL must be a valid URL"),
-  apiKey: z.string().trim().min(1, "apiKey is required"),
-  webProvider: z.string().trim().optional(),
-  tavilyApiKey: z.string().trim().optional(),
-  subagentModel: z.string().trim().optional(),
-  subagentBaseURL: createOptionalUrlWithBlankSchema("subagentBaseURL"),
-  subagentApiKey: z.string().trim().optional(),
+  apiKey: z.string().trim().min(1),
   maxContextWindow: z.number().int().positive().optional(),
-  compressionModel: z.string().trim().optional(),
-  compressionBaseURL: createOptionalUrlWithBlankSchema("compressionBaseURL"),
-  compressionApiKey: z.string().trim().optional(),
-  compressionMaxOutputTokens: z.number().int().positive().optional(),
-  sttProvider: z.literal("cloudflare").optional(),
-  sttCloudflareApiToken: z.string().trim().optional(),
-  sttCloudflareAccountId: z.string().trim().optional(),
-  sttCloudflareModel: z.string().trim().optional()
+  supportsVision: z.boolean().optional()
 });
+
+export const configSchema = z
+  .object({
+    modelProfiles: z.array(modelProfileSchema).min(1, "at least one model profile is required"),
+    defaultMainModelProfileId: z.string().trim().min(1),
+    defaultSubagentModelProfileId: z.string().trim().min(1),
+    defaultCompressionModelProfileId: z.string().trim().min(1),
+    webProvider: z.string().trim().optional(),
+    tavilyApiKey: z.string().trim().optional(),
+    compressionMaxOutputTokens: z.number().int().positive().optional(),
+    sttProvider: z.literal("cloudflare").optional(),
+    sttCloudflareApiToken: z.string().trim().optional(),
+    sttCloudflareAccountId: z.string().trim().optional(),
+    sttCloudflareModel: z.string().trim().optional()
+  })
+  .superRefine((value, context) => {
+    const ids = new Set(value.modelProfiles.map((profile) => profile.id));
+    for (const field of [
+      "defaultMainModelProfileId",
+      "defaultSubagentModelProfileId",
+      "defaultCompressionModelProfileId"
+    ]) {
+      if (!ids.has(value[field])) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: "must reference an existing model profile"
+        });
+      }
+    }
+  });

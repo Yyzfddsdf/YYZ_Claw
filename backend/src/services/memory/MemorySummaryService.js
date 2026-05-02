@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
+import { applyThinkingOptions } from "../openai/thinkingOptions.js";
+import {
+  applyModelProfileToRuntimeConfig,
+  resolveModelProfile
+} from "../config/modelProfileConfig.js";
 import { safeJsonParse } from "../../utils/safeJsonParse.js";
 
 const DEFAULT_MEMORY_SUMMARY_MAX_OUTPUT_TOKENS = 1200;
@@ -210,12 +215,13 @@ function resolveStageMaxTokens(runtimeConfig = {}, stage = "evidence") {
 }
 
 function resolveSummaryRuntimeConfig(runtimeConfig = {}) {
-  const model =
-    normalizeText(runtimeConfig?.compressionModel) || normalizeText(runtimeConfig?.model);
-  const baseURL =
-    normalizeText(runtimeConfig?.compressionBaseURL) || normalizeText(runtimeConfig?.baseURL);
-  const apiKey =
-    normalizeText(runtimeConfig?.compressionApiKey) || normalizeText(runtimeConfig?.apiKey);
+  const profiledConfig = applyModelProfileToRuntimeConfig(
+    runtimeConfig,
+    resolveModelProfile(runtimeConfig, "", "compression")
+  );
+  const model = normalizeText(profiledConfig?.model);
+  const baseURL = normalizeText(profiledConfig?.baseURL);
+  const apiKey = normalizeText(profiledConfig?.apiKey);
   const enableDeepThinking = Boolean(runtimeConfig?.enableDeepThinking);
   const maxOutputTokens = Number(
     runtimeConfig?.compressionMaxOutputTokens ?? DEFAULT_MEMORY_SUMMARY_MAX_OUTPUT_TOKENS
@@ -229,6 +235,8 @@ function resolveSummaryRuntimeConfig(runtimeConfig = {}) {
     model,
     baseURL,
     apiKey,
+    provider: profiledConfig.provider,
+    providerCapabilities: profiledConfig.providerCapabilities,
     enableDeepThinking,
     maxOutputTokens:
       Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
@@ -516,7 +524,7 @@ async function runToolCompletion({
   prompt,
   stage
 }) {
-  const completion = await client.chat.completions.create({
+  const completion = await client.chat.completions.create(applyThinkingOptions({
     model: runtimeConfig.model,
     temperature: 0,
     max_tokens: resolveStageMaxTokens(runtimeConfig, stage),
@@ -526,11 +534,8 @@ async function runToolCompletion({
         role: "user",
         content: prompt
       }
-    ],
-    extra_body: {
-      enable_thinking: Boolean(runtimeConfig.enableDeepThinking)
-    }
-  });
+    ]
+  }, runtimeConfig));
 
   return extractToolPayload(completion, toolName);
 }
@@ -541,7 +546,7 @@ async function runMarkdownCompletion({
   prompt,
   stage
 }) {
-  const completion = await client.chat.completions.create({
+  const completion = await client.chat.completions.create(applyThinkingOptions({
     model: runtimeConfig.model,
     temperature: 0,
     max_tokens: resolveStageMaxTokens(runtimeConfig, stage),
@@ -550,11 +555,8 @@ async function runMarkdownCompletion({
         role: "user",
         content: prompt
       }
-    ],
-    extra_body: {
-      enable_thinking: Boolean(runtimeConfig.enableDeepThinking)
-    }
-  });
+    ]
+  }, runtimeConfig));
 
   return normalizeMemoryMarkdown(completion?.choices?.[0]?.message?.content ?? "");
 }

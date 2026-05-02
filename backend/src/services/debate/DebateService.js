@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import { configSchema } from "../../schemas/configSchema.js";
+import {
+  applyModelProfileToRuntimeConfig,
+  resolveModelProfile
+} from "../config/modelProfileConfig.js";
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
+import { applyThinkingOptions } from "../openai/thinkingOptions.js";
 
 const AGREE_TOOL_NAME = "agree";
 const DEFAULT_MAX_ROUNDS = 4;
@@ -227,16 +232,19 @@ export class DebateService {
       throw new Error("config/config.json is invalid. Save model/baseURL/apiKey first.");
     }
 
-    return validation.data;
+    return applyModelProfileToRuntimeConfig(
+      validation.data,
+      resolveModelProfile(validation.data, "", "main")
+    );
   }
 
   async runConversationTurn({ client, runtimeConfig, messages, allowAgree }) {
-    const completion = await client.chat.completions.create({
+    const completion = await client.chat.completions.create(applyThinkingOptions({
       model: runtimeConfig.model,
       temperature: 0.3,
       tools: allowAgree ? [createAgreeToolDefinition()] : undefined,
       messages
-    });
+    }, runtimeConfig));
 
     const content = normalizeText(completion?.choices?.[0]?.message?.content);
     const agree = allowAgree ? extractAgreeCall(completion) : { agreed: false, reason: "" };
@@ -248,11 +256,11 @@ export class DebateService {
   }
 
   async runFinalTurn({ client, runtimeConfig, messages }) {
-    const completion = await client.chat.completions.create({
+    const completion = await client.chat.completions.create(applyThinkingOptions({
       model: runtimeConfig.model,
       temperature: 0.2,
       messages
-    });
+    }, runtimeConfig));
 
     return normalizeText(completion?.choices?.[0]?.message?.content);
   }

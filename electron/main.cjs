@@ -117,7 +117,8 @@ function createMainWindow() {
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.includes("/workspace-window")) {
-      openWorkspaceWindow();
+      const parsedUrl = new URL(url);
+      openWorkspaceWindow(parsedUrl.searchParams.get("root") || "");
       return { action: "deny" };
     }
 
@@ -125,8 +126,19 @@ function createMainWindow() {
   });
 }
 
-function openWorkspaceWindow() {
+function buildWorkspaceWindowUrl(workspaceRoot = "") {
+  const normalizedRoot = String(workspaceRoot || "").trim();
+  const nextUrl = new URL("/workspace-window", SERVER_URL);
+  if (normalizedRoot) {
+    nextUrl.searchParams.set("root", normalizedRoot);
+  }
+  return nextUrl.toString();
+}
+
+function openWorkspaceWindow(workspaceRoot = "") {
+  const targetUrl = buildWorkspaceWindowUrl(workspaceRoot);
   if (workspaceWindow && !workspaceWindow.isDestroyed()) {
+    workspaceWindow.loadURL(targetUrl);
     workspaceWindow.show();
     workspaceWindow.focus();
     return;
@@ -147,7 +159,7 @@ function openWorkspaceWindow() {
     }
   });
 
-  workspaceWindow.loadURL(`${SERVER_URL}/workspace-window`);
+  workspaceWindow.loadURL(targetUrl);
   workspaceWindow.once("ready-to-show", () => {
     workspaceWindow.show();
   });
@@ -171,7 +183,7 @@ function createTray() {
       },
       {
         label: "打开工作区",
-        click: openWorkspaceWindow
+        click: () => openWorkspaceWindow()
       },
       { type: "separator" },
       {
@@ -192,7 +204,7 @@ function createTray() {
 app.whenReady().then(async () => {
   backendProcess = startBackendService();
   await waitForServer(SERVER_URL);
-  ipcMain.on("workspace:open", openWorkspaceWindow);
+  ipcMain.on("workspace:open", (_event, workspaceRoot) => openWorkspaceWindow(workspaceRoot));
   createMainWindow();
   createTray();
 });

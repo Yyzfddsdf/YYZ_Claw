@@ -1,0 +1,52 @@
+.numeric-input {
+  position: relative;
+  display: flex;
+  width: 100%;
+}
+
+.numeric-input input {
+  width: 100%;
+  padding-right: 3.4rem;
+}
+
+.numeric-input-actions {
+  position: absolute;
+  top: 50%;
+  right: 0.35rem;
+  display: flex;
+  gap: 0.22rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.numeric-input-actions button {
+  width: 1.28rem;
+  height: 1.28rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border-light));
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--bg-elevated), var(--brand-light));
+  color: var(--brand);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.numeric-input-actions button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--brand) 58%, var(--border-light));
+  background: color-mix(in srgb, var(--brand-light) 72%, var(--bg-elevated));
+  transform: translateY(-1px);
+}
+
+.numeric-input-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.numeric-input-actions svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}

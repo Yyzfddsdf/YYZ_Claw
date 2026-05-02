@@ -1,4 +1,9 @@
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
+import { applyThinkingOptions } from "../openai/thinkingOptions.js";
+import {
+  applyModelProfileToRuntimeConfig,
+  resolveModelProfile
+} from "../config/modelProfileConfig.js";
 import {
   appendToolResultHooksToContent,
   normalizeToolResultHooks
@@ -658,19 +663,18 @@ function createFallbackSummary({ previousSummary = "", newMessages = [] }) {
 }
 
 function resolveCompressionRuntimeConfig(runtimeConfig = {}) {
-  const model = String(runtimeConfig?.compressionModel ?? "").trim() || String(runtimeConfig?.model ?? "").trim();
-  const baseURL =
-    String(runtimeConfig?.compressionBaseURL ?? "").trim() || String(runtimeConfig?.baseURL ?? "").trim();
-  const apiKey =
-    String(runtimeConfig?.compressionApiKey ?? "").trim() || String(runtimeConfig?.apiKey ?? "").trim();
+  const profiledConfig = applyModelProfileToRuntimeConfig(
+    runtimeConfig,
+    resolveModelProfile(runtimeConfig, "", "compression")
+  );
   const compressionMaxOutputTokens = Number(
     runtimeConfig?.compressionMaxOutputTokens ?? DEFAULT_COMPRESSION_MAX_OUTPUT_TOKENS
   );
 
   return {
-    model,
-    baseURL,
-    apiKey,
+    model: String(profiledConfig?.model ?? "").trim(),
+    baseURL: String(profiledConfig?.baseURL ?? "").trim(),
+    apiKey: String(profiledConfig?.apiKey ?? "").trim(),
     compressionMaxOutputTokens:
       Number.isFinite(compressionMaxOutputTokens) && compressionMaxOutputTokens > 0
         ? Math.floor(compressionMaxOutputTokens)
@@ -888,7 +892,7 @@ export class ConversationCompressionService {
     );
     const prompt = buildSummaryPrompt({ previousSummary, messages, targetTokens });
     const client = createOpenAIClient(compressionRuntimeConfig);
-    const completion = await client.chat.completions.create({
+    const completion = await client.chat.completions.create(applyThinkingOptions({
       model: compressionRuntimeConfig.model,
       temperature: 0.2,
       max_tokens: compressionRuntimeConfig.compressionMaxOutputTokens,
@@ -898,7 +902,7 @@ export class ConversationCompressionService {
           content: prompt
         }
       ]
-    });
+    }, compressionRuntimeConfig));
 
     const summary = String(completion?.choices?.[0]?.message?.content ?? "").trim();
     return summary || createFallbackSummary({ previousSummary, newMessages: messages });

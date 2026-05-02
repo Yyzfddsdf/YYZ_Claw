@@ -319,7 +319,8 @@ export async function createServices() {
     orchestratorStore,
     schedulerService: orchestratorSchedulerService,
     wakeDispatcher,
-    subagentDefinitionRegistry
+    subagentDefinitionRegistry,
+    configStore
   });
   wakeDispatcher.orchestratorSupervisorService = orchestratorSupervisorService;
 

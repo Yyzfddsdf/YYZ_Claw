@@ -65,6 +65,13 @@ export function updateHistoryPersonaById(conversationId, personaId) {
   });
 }
 
+export function updateHistoryModelProfileById(conversationId, modelProfileId) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/model-profile`, {
+    method: "PUT",
+    body: { modelProfileId }
+  });
+}
+
 export function upsertHistoryById(conversationId, payload) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}`, {
     method: "PUT",

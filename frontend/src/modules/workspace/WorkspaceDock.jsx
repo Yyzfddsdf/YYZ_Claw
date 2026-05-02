@@ -145,7 +145,7 @@ function WorkspaceFileTreeNode({
   );
 }
 
-function WorkspaceTerminal({ enabled, active, onTitleChange }) {
+function WorkspaceTerminal({ enabled, active, workspaceRoot = "", onTitleChange }) {
   const hostRef = useRef(null);
   const terminalRef = useRef(null);
   const fitAddonRef = useRef(null);
@@ -192,7 +192,10 @@ function WorkspaceTerminal({ enabled, active, onTitleChange }) {
     terminal.writeln("Starting in project root...");
 
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${scheme}://${window.location.host}/api/workspace/terminal`);
+    const rootQuery = String(workspaceRoot ?? "").trim()
+      ? `?root=${encodeURIComponent(String(workspaceRoot).trim())}`
+      : "";
+    const socket = new WebSocket(`${scheme}://${window.location.host}/api/workspace/terminal${rootQuery}`);
     socketRef.current = socket;
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -271,7 +274,7 @@ function WorkspaceTerminal({ enabled, active, onTitleChange }) {
       fitAddonRef.current = null;
       socketRef.current = null;
     };
-  }, [enabled]);
+  }, [enabled, workspaceRoot]);
 
   useEffect(() => {
     if (enabled && active && fitAddonRef.current) {
@@ -285,9 +288,11 @@ function WorkspaceTerminal({ enabled, active, onTitleChange }) {
   return <div ref={hostRef} className="workspace-terminal-host" />;
 }
 
-function openWorkspaceWindow() {
+function openWorkspaceWindow(workspaceRoot = "") {
+  const normalizedRoot = String(workspaceRoot ?? "").trim();
+  const query = normalizedRoot ? `?root=${encodeURIComponent(normalizedRoot)}` : "";
   if (window.yyzClaw?.openWorkspaceWindow) {
-    window.yyzClaw.openWorkspaceWindow();
+    window.yyzClaw.openWorkspaceWindow(normalizedRoot);
     return;
   }
 
@@ -301,11 +306,11 @@ function openWorkspaceWindow() {
     "scrollbars=no",
     "noopener=no"
   ].join(",");
-  const openedWindow = window.open("/workspace-window", "yyz-claw-workspace", features);
+  const openedWindow = window.open(`/workspace-window${query}`, "yyz-claw-workspace", features);
   openedWindow?.focus();
 }
 
-export function WorkspaceDock({ standalone = false } = {}) {
+export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWorkspaceRoot = "" } = {}) {
   const editorHostRef = useRef(null);
   const editorRef = useRef(null);
   const activeFilePathRef = useRef("");
@@ -345,6 +350,13 @@ export function WorkspaceDock({ standalone = false } = {}) {
   }, [standalone]);
 
   useEffect(() => {
+    setWorkspaceRoot("");
+    setRootEntries([]);
+    setChildrenByPath(new Map());
+    setExpandedPaths(new Set());
+  }, [requestedWorkspaceRoot]);
+
+  useEffect(() => {
     monaco.editor.defineTheme(EDITOR_THEME, {
       base: "vs-dark",
       inherit: true,
@@ -371,7 +383,10 @@ export function WorkspaceDock({ standalone = false } = {}) {
       setError("");
       setLoadingPath("__root__");
       try {
-        const [info, tree] = await Promise.all([fetchWorkspaceInfo(), fetchWorkspaceTree("")]);
+        const [info, tree] = await Promise.all([
+          fetchWorkspaceInfo(requestedWorkspaceRoot),
+          fetchWorkspaceTree("", requestedWorkspaceRoot)
+        ]);
         if (!mounted) return;
         setWorkspaceRoot(info.root ?? "");
         setRootEntries(tree.entries ?? []);
@@ -388,7 +403,7 @@ export function WorkspaceDock({ standalone = false } = {}) {
     return () => {
       mounted = false;
     };
-  }, [isOpen, rootEntries.length]);
+  }, [isOpen, rootEntries.length, requestedWorkspaceRoot]);
 
   useEffect(() => {
     if (!editorHostRef.current || editorRef.current) {
@@ -452,7 +467,7 @@ export function WorkspaceDock({ standalone = false } = {}) {
     setLoadingPath(path);
     setError("");
     try {
-      const response = await fetchWorkspaceTree(path);
+      const response = await fetchWorkspaceTree(path, requestedWorkspaceRoot);
       setChildrenByPath((current) => {
         const next = new Map(current);
         next.set(path, response.entries ?? []);
@@ -486,7 +501,7 @@ export function WorkspaceDock({ standalone = false } = {}) {
 
     setError("");
     try {
-      const file = await readWorkspaceFile(path);
+      const file = await readWorkspaceFile(path, requestedWorkspaceRoot);
       const content = file.content ?? "";
       const model = monaco.editor.createModel(content, getLanguageForPath(path));
       fileStatesRef.current.set(path, {
@@ -517,7 +532,7 @@ export function WorkspaceDock({ standalone = false } = {}) {
     setError("");
     const content = state.model.getValue();
     try {
-      const response = await writeWorkspaceFile(filePath, content);
+      const response = await writeWorkspaceFile(filePath, content, requestedWorkspaceRoot);
       state.savedContent = content;
       state.currentContent = content;
       state.file = {
@@ -656,7 +671,7 @@ export function WorkspaceDock({ standalone = false } = {}) {
         <button
           type="button"
           className="workspace-dock-launcher"
-          onClick={openWorkspaceWindow}
+          onClick={() => openWorkspaceWindow(requestedWorkspaceRoot)}
           title="打开独立工作区窗口"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -881,6 +896,7 @@ export function WorkspaceDock({ standalone = false } = {}) {
                       <WorkspaceTerminal
                         enabled={isOpen}
                         active={terminalVisible && activeTerminalId === tab.id}
+                        workspaceRoot={requestedWorkspaceRoot}
                         onTitleChange={(title) => updateTerminalTitle(tab.id, title)}
                       />
                     </div>

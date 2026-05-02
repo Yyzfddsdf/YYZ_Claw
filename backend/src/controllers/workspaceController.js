@@ -2,32 +2,39 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { PROJECT_ROOT } from "../config/paths.js";
-import { readWorkspaceDirectory, resolveWorkspacePath } from "../services/workspace/workspacePath.js";
+import {
+  readWorkspaceDirectory,
+  resolveWorkspacePath,
+  resolveWorkspaceRoot
+} from "../services/workspace/workspacePath.js";
 
 const MAX_EDITABLE_FILE_BYTES = 2 * 1024 * 1024;
 
-function toPublicWorkspaceRoot() {
-  return PROJECT_ROOT.replace(/\\/g, "/");
+function toPublicWorkspaceRoot(rootDir = PROJECT_ROOT) {
+  return String(rootDir ?? PROJECT_ROOT).replace(/\\/g, "/");
 }
 
 export function createWorkspaceController() {
   return {
-    async getWorkspaceInfo(_req, res) {
+    async getWorkspaceInfo(req, res) {
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
       res.json({
-        root: toPublicWorkspaceRoot()
+        root: toPublicWorkspaceRoot(rootDir)
       });
     },
 
     async listTree(req, res) {
-      const entries = await readWorkspaceDirectory(PROJECT_ROOT, req.query.path ?? "");
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
+      const entries = await readWorkspaceDirectory(rootDir, req.query.path ?? "");
       res.json({
-        root: toPublicWorkspaceRoot(),
+        root: toPublicWorkspaceRoot(rootDir),
         entries
       });
     },
 
     async readFile(req, res) {
-      const { absolutePath, relativePath } = resolveWorkspacePath(PROJECT_ROOT, req.query.path ?? "");
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
+      const { absolutePath, relativePath } = resolveWorkspacePath(rootDir, req.query.path ?? "");
       const stat = await fs.stat(absolutePath);
 
       if (!stat.isFile()) {
@@ -62,7 +69,8 @@ export function createWorkspaceController() {
         throw error;
       }
 
-      const { absolutePath, relativePath } = resolveWorkspacePath(PROJECT_ROOT, targetPath);
+      const rootDir = await resolveWorkspaceRoot(req.body?.root ?? "", PROJECT_ROOT);
+      const { absolutePath, relativePath } = resolveWorkspacePath(rootDir, targetPath);
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, content, "utf8");
       const stat = await fs.stat(absolutePath);

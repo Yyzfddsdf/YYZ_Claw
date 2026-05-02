@@ -1,4 +1,9 @@
 import { createOpenAIClient } from "../openai/createOpenAIClient.js";
+import { applyThinkingOptions } from "../openai/thinkingOptions.js";
+import {
+  createProviderCapabilities,
+  normalizeCompletionProvider
+} from "../providers/completionProviders.js";
 import { StreamAssembler } from "../stream/StreamAssembler.js";
 import {
   getApprovalGroupForToolCall,
@@ -214,14 +219,35 @@ export class ChatAgent {
     const model = runtimeConfig?.model?.trim();
     const baseURL = runtimeConfig?.baseURL?.trim();
     const apiKey = runtimeConfig?.apiKey?.trim();
+    const provider = normalizeCompletionProvider(runtimeConfig?.provider);
+    const providerCapabilities =
+      runtimeConfig?.providerCapabilities && typeof runtimeConfig.providerCapabilities === "object"
+        ? runtimeConfig.providerCapabilities
+        : createProviderCapabilities(provider);
     const enableDeepThinking = Boolean(runtimeConfig?.enableDeepThinking);
     const reasoningEffort = String(runtimeConfig?.reasoningEffort ?? "").trim();
+    const supportsThinking =
+      providerCapabilities.supportsReasoningEffort ||
+      providerCapabilities.supportsThinkingSwitch ||
+      providerCapabilities.supportsReasoningContent;
+    const supportsVision =
+      runtimeConfig?.supportsVision !== false && providerCapabilities.supportsVision !== false;
 
     if (!model || !baseURL || !apiKey) {
       throw createStatusError("Invalid runtime config. Please save model/baseURL/apiKey first.", 400);
     }
 
-    return { model, baseURL, apiKey, enableDeepThinking, reasoningEffort };
+    return {
+      model,
+      baseURL,
+      apiKey,
+      provider,
+      providerCapabilities,
+      enableDeepThinking: enableDeepThinking && supportsThinking,
+      reasoningEffort,
+      supportsThinking,
+      supportsVision
+    };
   }
 
   createChatCompletionRequest(validatedConfig, conversation, executionContext = {}) {
@@ -235,19 +261,7 @@ export class ChatAgent {
       stream: true
     };
 
-    request.extra_body = {
-      enable_thinking: Boolean(validatedConfig.enableDeepThinking)
-    };
-
-    if (
-      validatedConfig.enableDeepThinking &&
-      validatedConfig.reasoningEffort &&
-      validatedConfig.reasoningEffort !== "default"
-    ) {
-      request.reasoning_effort = validatedConfig.reasoningEffort;
-    }
-
-    return request;
+    return applyThinkingOptions(request, validatedConfig);
   }
 
   isRetryable(error) {

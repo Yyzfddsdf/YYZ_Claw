@@ -415,6 +415,7 @@ export class SqliteChatHistoryStore {
         parent_conversation_id TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'chat',
         model TEXT NOT NULL DEFAULT '',
+        model_profile_id TEXT NOT NULL DEFAULT '',
         approval_mode TEXT NOT NULL DEFAULT 'confirm',
         skills_json TEXT NOT NULL DEFAULT '[]',
         persona_id TEXT NOT NULL DEFAULT '',
@@ -433,6 +434,7 @@ export class SqliteChatHistoryStore {
 
     this.ensureConversationWorkplaceColumns();
     this.ensureConversationLineageColumns();
+    this.ensureConversationModelProfileColumn();
     this.ensureConversationApprovalModeColumn();
     this.ensureConversationSkillsColumn();
     this.ensureConversationPersonaColumn();
@@ -546,6 +548,16 @@ export class SqliteChatHistoryStore {
 
     if (!columnNames.has("approval_mode")) {
       db.exec("ALTER TABLE conversations ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'confirm'");
+    }
+  }
+
+  ensureConversationModelProfileColumn() {
+    const db = this.ensureDb();
+    const columns = db.prepare("PRAGMA table_info(conversations)").all();
+    const columnNames = new Set(columns.map((item) => String(item.name)));
+
+    if (!columnNames.has("model_profile_id")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN model_profile_id TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -878,6 +890,7 @@ export class SqliteChatHistoryStore {
         c.parent_conversation_id,
         c.source,
         c.model,
+        c.model_profile_id,
         c.approval_mode,
         c.skills_json,
         c.persona_id,
@@ -927,6 +940,7 @@ export class SqliteChatHistoryStore {
       parentConversationId: normalizeConversationParentId(item.parent_conversation_id),
       source: normalizeConversationSource(item.source),
       model: String(item.model ?? "").trim(),
+      modelProfileId: String(item.model_profile_id ?? "").trim(),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -989,6 +1003,7 @@ export class SqliteChatHistoryStore {
             c.parent_conversation_id,
             c.source,
             c.model,
+            c.model_profile_id,
             c.approval_mode,
             c.skills_json,
             c.persona_id,
@@ -1041,6 +1056,7 @@ export class SqliteChatHistoryStore {
       parentConversationId: normalizeConversationParentId(item.parent_conversation_id),
       source: normalizeConversationSource(item.source),
       model: String(item.model ?? "").trim(),
+      modelProfileId: String(item.model_profile_id ?? "").trim(),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -1069,6 +1085,7 @@ export class SqliteChatHistoryStore {
             parent_conversation_id,
             source,
             model,
+            model_profile_id,
             approval_mode,
             skills_json,
             persona_id,
@@ -1131,6 +1148,7 @@ export class SqliteChatHistoryStore {
       parentConversationId: normalizeConversationParentId(conversation.parent_conversation_id),
       source: normalizeConversationSource(conversation.source),
       model: String(conversation.model ?? "").trim(),
+      modelProfileId: String(conversation.model_profile_id ?? "").trim(),
       approvalMode: normalizeApprovalMode(conversation.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(conversation.skills_json, [])),
       personaId: String(conversation.persona_id ?? "").trim(),
@@ -1480,6 +1498,7 @@ export class SqliteChatHistoryStore {
         parent_conversation_id,
         source,
         model,
+        model_profile_id,
         approval_mode,
         skills_json,
         workplace_locked,
@@ -1511,6 +1530,8 @@ export class SqliteChatHistoryStore {
     const source = normalizeConversationSource(payload.source ?? existing?.source);
     const model =
       String(payload.model ?? existing?.model ?? "").trim();
+    const modelProfileId =
+      String(payload.modelProfileId ?? existing?.model_profile_id ?? "").trim();
     const developerPrompt =
       String(payload.developerPrompt ?? existing?.developer_prompt ?? "").trim();
     const personaId = String(payload.personaId ?? existing?.persona_id ?? "").trim();
@@ -1562,6 +1583,7 @@ export class SqliteChatHistoryStore {
             parent_conversation_id = ?,
             source = ?,
             model = ?,
+            model_profile_id = ?,
             approval_mode = ?,
             skills_json = ?,
             persona_id = ?,
@@ -1576,6 +1598,7 @@ export class SqliteChatHistoryStore {
           parentConversationId,
           source,
           model,
+          modelProfileId,
           approvalMode,
           JSON.stringify(skills),
           personaId,
@@ -1595,6 +1618,7 @@ export class SqliteChatHistoryStore {
               parent_conversation_id,
               source,
               model,
+              model_profile_id,
               approval_mode,
               skills_json,
               persona_id,
@@ -1604,7 +1628,7 @@ export class SqliteChatHistoryStore {
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
           `
         ).run(
           conversationId,
@@ -1613,6 +1637,7 @@ export class SqliteChatHistoryStore {
           parentConversationId,
           source,
           model,
+          modelProfileId,
           approvalMode,
           JSON.stringify(skills),
           personaId,
@@ -1672,6 +1697,7 @@ export class SqliteChatHistoryStore {
       parentConversationId: payload.parentConversationId ?? existing.parentConversationId,
       source: payload.source ?? existing.source,
       model: payload.model ?? existing.model,
+      modelProfileId: payload.modelProfileId ?? existing.modelProfileId,
       approvalMode: payload.approvalMode ?? existing.approvalMode,
       skills: payload.skills ?? existing.skills,
       personaId: payload.personaId ?? existing.personaId,
@@ -1967,6 +1993,7 @@ export class SqliteChatHistoryStore {
       parentConversationId: sourceConversation.id,
       source: "fork",
       model: payload.model ?? sourceConversation.model,
+      modelProfileId: payload.modelProfileId ?? sourceConversation.modelProfileId,
       approvalMode: payload.approvalMode ?? sourceConversation.approvalMode,
       skills: payload.skills ?? sourceConversation.skills,
       personaId: payload.personaId ?? sourceConversation.personaId,
@@ -2164,6 +2191,36 @@ export class SqliteChatHistoryStore {
         WHERE id = ?
       `
     ).run(normalizedPersonaId, Date.now(), conversationId);
+
+    return this.getConversation(conversationId);
+  }
+
+  updateConversationModelProfile(conversationId, modelProfileId, model = "") {
+    const db = this.ensureDb();
+    const normalizedModelProfileId = String(modelProfileId ?? "").trim();
+    const normalizedModel = String(model ?? "").trim();
+
+    const existing = db
+      .prepare(
+        `
+          SELECT id
+          FROM conversations
+          WHERE id = ?
+        `
+      )
+      .get(conversationId);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET model_profile_id = ?, model = ?, updated_at = ?
+        WHERE id = ?
+      `
+    ).run(normalizedModelProfileId, normalizedModel, Date.now(), conversationId);
 
     return this.getConversation(conversationId);
   }

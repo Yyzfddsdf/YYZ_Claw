@@ -2,6 +2,7 @@ import { MODEL_PROVIDERS, normalizeModelProvider } from "./modelProviderDefiniti
 import { buildAnthropicMessagesRequest } from "./requestTemplates/anthropicMessages.js";
 import { buildDashScopeCompletionRequest } from "./requestTemplates/dashscopeCompletion.js";
 import { buildOpenAICompletionRequest } from "./requestTemplates/openaiCompletion.js";
+import { buildOpenAIResponsesRequest } from "./requestTemplates/openaiResponses.js";
 
 export function buildModelProviderRequest(runtimeConfig = {}, params = {}) {
   const provider = normalizeModelProvider(runtimeConfig.provider);
@@ -12,6 +13,10 @@ export function buildModelProviderRequest(runtimeConfig = {}, params = {}) {
 
   if (provider === MODEL_PROVIDERS.ANTHROPIC_MESSAGES) {
     return buildAnthropicMessagesRequest(runtimeConfig, params);
+  }
+
+  if (provider === MODEL_PROVIDERS.OPENAI_RESPONSES) {
+    return buildOpenAIResponsesRequest(runtimeConfig, params);
   }
 
   return buildOpenAICompletionRequest(runtimeConfig, params);

@@ -1,11 +1,13 @@
 export const MODEL_PROVIDERS = Object.freeze({
   OPENAI_COMPLETION: "openai-completion",
+  OPENAI_RESPONSES: "openai-responses",
   DASHSCOPE_COMPLETION: "dashscope-completion",
   ANTHROPIC_MESSAGES: "anthropic-messages"
 });
 
 export const MODEL_PROVIDER_PROTOCOLS = Object.freeze({
   OPENAI_CHAT_COMPLETIONS: "openai-chat-completions",
+  OPENAI_RESPONSES: "openai-responses",
   ANTHROPIC_MESSAGES: "anthropic-messages"
 });
 
@@ -19,6 +21,15 @@ const PROVIDER_DEFINITIONS = Object.freeze({
     supportsReasoningEffort: true,
     supportsThinkingSwitch: false,
     supportsReasoningContent: false,
+    supportsVision: true
+  }),
+  [MODEL_PROVIDERS.OPENAI_RESPONSES]: Object.freeze({
+    id: MODEL_PROVIDERS.OPENAI_RESPONSES,
+    label: "OpenAI Responses",
+    protocol: MODEL_PROVIDER_PROTOCOLS.OPENAI_RESPONSES,
+    supportsReasoningEffort: true,
+    supportsThinkingSwitch: false,
+    supportsReasoningContent: true,
     supportsVision: true
   }),
   [MODEL_PROVIDERS.DASHSCOPE_COMPLETION]: Object.freeze({

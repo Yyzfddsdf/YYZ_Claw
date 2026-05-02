@@ -1,5 +1,6 @@
 export const MODEL_PROVIDER_IDS = {
   OPENAI_COMPLETION: "openai-completion",
+  OPENAI_RESPONSES: "openai-responses",
   DASHSCOPE_COMPLETION: "dashscope-completion",
   ANTHROPIC_MESSAGES: "anthropic-messages"
 };
@@ -15,6 +16,17 @@ export const MODEL_PROVIDER_OPTIONS = [
       supportsReasoningEffort: true,
       supportsThinkingSwitch: false,
       supportsReasoningContent: false,
+      supportsVision: true
+    }
+  },
+  {
+    value: MODEL_PROVIDER_IDS.OPENAI_RESPONSES,
+    label: "OpenAI Responses",
+    description: "OpenAI Responses API，使用 input/tools/reasoning 格式并内部转换为现有消息流。",
+    capabilities: {
+      supportsReasoningEffort: true,
+      supportsThinkingSwitch: false,
+      supportsReasoningContent: true,
       supportsVision: true
     }
   },
@@ -94,6 +106,32 @@ export function getThinkingModeOptionsForProvider(value) {
         value: "max",
         label: "最高",
         description: "传 output_config.effort=max"
+      }
+    ];
+  }
+
+  if (provider === MODEL_PROVIDER_IDS.OPENAI_RESPONSES) {
+    return [
+      BASE_THINKING_OFF_OPTION,
+      {
+        value: "default",
+        label: "默认",
+        description: "传 reasoning.summary=auto，不指定强度"
+      },
+      {
+        value: "low",
+        label: "低",
+        description: "传 reasoning.effort=low"
+      },
+      {
+        value: "medium",
+        label: "中",
+        description: "传 reasoning.effort=medium"
+      },
+      {
+        value: "high",
+        label: "高",
+        description: "传 reasoning.effort=high"
       }
     ];
   }

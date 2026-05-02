@@ -29,5 +29,13 @@ export function createOpenAIClient(runtimeConfig) {
     return parseStringifiedJsonResponse(result);
   };
 
+  if (client.responses?.create) {
+    const createResponse = client.responses.create.bind(client.responses);
+    client.responses.create = async (...args) => {
+      const result = await createResponse(...args);
+      return parseStringifiedJsonResponse(result);
+    };
+  }
+
   return client;
 }

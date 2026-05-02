@@ -15,6 +15,7 @@ import {
   conversationPersonaSchema,
   conversationSkillsSchema,
   conversationThinkingModeSchema,
+  conversationToolsSchema,
   conversationUpsertSchema,
   conversationWorkplaceSchema
 } from "../schemas/historySchema.js";
@@ -1299,6 +1300,7 @@ export function createChatController({
         personaId: history.personaId,
         developerPrompt: history.developerPrompt,
         skills: history.skills,
+        disabledTools: history.disabledTools,
         model: history.model,
         modelProfileId: history.modelProfileId,
         thinkingMode: history.thinkingMode,
@@ -1308,6 +1310,19 @@ export function createChatController({
       res.status(201).json({
         history: enrichHistoryDetail(forkedHistory, orchestratorStore, historyStore)
       });
+    },
+
+    listTools: async (req, res) => {
+      if (toolRegistry && typeof toolRegistry.refresh === "function") {
+        await toolRegistry.refresh();
+      }
+
+      const tools = (toolRegistry?.listTools?.() ?? []).map((tool) => ({
+        name: String(tool?.name ?? "").trim(),
+        description: String(tool?.description ?? "").trim()
+      })).filter((tool) => tool.name);
+
+      res.json({ tools });
     },
 
     updateWorkplaceById: async (req, res) => {
@@ -1419,6 +1434,42 @@ export function createChatController({
         history: enrichHistoryDetail(responseHistory, orchestratorStore, historyStore),
         skills: validation.data.skills,
         skillOwnerConversationId: targetConversationId
+      });
+    },
+
+    updateToolsById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationToolsSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const availableToolNames = new Set(
+        (toolRegistry?.listTools?.() ?? []).map((tool) => String(tool?.name ?? "").trim())
+      );
+      const disabledTools = validation.data.disabledTools.filter((toolName) =>
+        availableToolNames.has(toolName)
+      );
+      const updated = historyStore.updateConversationDisabledTools(
+        conversationId,
+        disabledTools
+      );
+
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        disabledTools
       });
     },
 
@@ -1629,6 +1680,7 @@ export function createChatController({
         thinkingMode: existing.thinkingMode,
         approvalMode: existing.approvalMode,
         skills: existing.skills,
+        disabledTools: existing.disabledTools,
         personaId: existing.personaId,
         developerPrompt: existing.developerPrompt,
         messages: nextMessages
@@ -1778,6 +1830,7 @@ export function createChatController({
         ),
         approvalMode: validation.data.approvalMode,
         skills: validation.data.skills,
+        disabledTools: validation.data.disabledTools,
         personaId,
         developerPrompt: existing?.developerPrompt,
         messages: validation.data.messages
@@ -2211,6 +2264,7 @@ export function createChatController({
           model: runtimeModel || resumedHistory?.model,
           approvalMode: resumedHistory?.approvalMode,
           skills: resumedHistory?.skills,
+          disabledTools: resumedHistory?.disabledTools,
           personaId: resumedHistory?.personaId,
           developerPrompt: resumedHistory?.developerPrompt,
           messages: nextMessages
@@ -2484,6 +2538,10 @@ export function createChatController({
           enableDeepThinking: thinkingRuntimeOptions.enableDeepThinking,
           reasoningEffort: thinkingRuntimeOptions.reasoningEffort
         });
+        const visionRuntimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
+          role: "vision",
+          modelProfileId: configValidation.data.defaultVisionModelProfileId
+        });
 
         const nextForegroundRun = wakeDispatcher?.beginForegroundRun?.({
           sessionId: resolvedRuntime?.sessionId,
@@ -2519,6 +2577,7 @@ export function createChatController({
             thinkingMode: thinkingRuntimeOptions.thinkingMode,
             approvalMode,
             skills: persistedSkillNames,
+            disabledTools: existingConversation?.disabledTools,
             personaId,
             developerPrompt,
             messages: effectiveMessages
@@ -2583,6 +2642,7 @@ export function createChatController({
               thinkingMode: existingConversation?.thinkingMode,
               approvalMode: existingConversation?.approvalMode,
               skills: existingConversation?.skills,
+              disabledTools: existingConversation?.disabledTools,
               personaId: existingConversation?.personaId,
               developerPrompt: existingConversation?.developerPrompt,
               messages: compressionResult.messages
@@ -2682,6 +2742,10 @@ export function createChatController({
           historyStore,
           rawConversationMessages: effectiveMessages,
           runtimeConfig: runtimeExecutionConfig,
+          visionRuntimeConfig,
+          disabledTools: Array.isArray(existingConversation?.disabledTools)
+            ? existingConversation.disabledTools
+            : [],
           memoryStore,
           skillCatalog,
           skillValidator,
@@ -2746,6 +2810,7 @@ export function createChatController({
           thinkingMode: thinkingRuntimeOptions.thinkingMode,
           approvalMode: existingConversation?.approvalMode ?? approvalMode,
           skills: existingConversation?.skills,
+          disabledTools: existingConversation?.disabledTools,
           personaId: existingConversation?.personaId,
           developerPrompt: existingConversation?.developerPrompt,
           messages: nextMessages

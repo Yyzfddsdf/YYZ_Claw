@@ -21,6 +21,7 @@ export const configSchema = z
     defaultMainModelProfileId: z.string().trim().min(1),
     defaultSubagentModelProfileId: z.string().trim().min(1),
     defaultCompressionModelProfileId: z.string().trim().min(1),
+    defaultVisionModelProfileId: z.string().trim().min(1),
     webProvider: z.string().trim().optional(),
     tavilyApiKey: z.string().trim().optional(),
     compressionMaxOutputTokens: z.number().int().positive().optional(),
@@ -34,7 +35,8 @@ export const configSchema = z
     for (const field of [
       "defaultMainModelProfileId",
       "defaultSubagentModelProfileId",
-      "defaultCompressionModelProfileId"
+      "defaultCompressionModelProfileId",
+      "defaultVisionModelProfileId"
     ]) {
       if (!ids.has(value[field])) {
         context.addIssue({
@@ -43,5 +45,16 @@ export const configSchema = z
           message: "must reference an existing model profile"
         });
       }
+    }
+
+    const visionProfile = value.modelProfiles.find(
+      (profile) => profile.id === value.defaultVisionModelProfileId
+    );
+    if (visionProfile && visionProfile.supportsVision === false) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultVisionModelProfileId"],
+        message: "must reference a model profile with image recognition enabled"
+      });
     }
   });

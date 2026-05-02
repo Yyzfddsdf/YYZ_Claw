@@ -4,8 +4,25 @@ function normalizeToolName(toolCall) {
   return String(toolCall?.function?.name ?? "").trim();
 }
 
+function normalizeDisabledTools(executionContext = {}) {
+  return new Set(
+    (Array.isArray(executionContext?.disabledTools)
+      ? executionContext.disabledTools
+      : Array.isArray(executionContext?.toolSettings?.disabledTools)
+        ? executionContext.toolSettings.disabledTools
+        : []
+    )
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean)
+  );
+}
+
 function isToolAvailable(tool, executionContext = {}) {
   if (!tool || typeof tool !== "object") {
+    return false;
+  }
+
+  if (normalizeDisabledTools(executionContext).has(String(tool.name ?? "").trim())) {
     return false;
   }
 
@@ -38,15 +55,15 @@ export class UnifiedToolRegistry {
     return this.localToolRegistry.autoRegisterFromDir(dirPath);
   }
 
-  listTools() {
+  listTools(executionContext = null) {
     const toolMap = new Map();
 
-    for (const tool of this.localToolRegistry.listTools()) {
+    for (const tool of this.localToolRegistry.listTools(executionContext)) {
       toolMap.set(tool.name, tool);
     }
 
     for (const tool of this.mcpManager?.listTools?.() ?? []) {
-      if (!toolMap.has(tool.name)) {
+      if (!toolMap.has(tool.name) && (!executionContext || isToolAvailable(tool, executionContext))) {
         toolMap.set(tool.name, tool);
       }
     }
@@ -55,8 +72,7 @@ export class UnifiedToolRegistry {
   }
 
   getOpenAITools(executionContext = {}) {
-    return this.listTools()
-      .filter((tool) => isToolAvailable(tool, executionContext))
+    return this.listTools(executionContext)
       .map((tool) => ({
       type: "function",
       function: {
@@ -72,6 +88,11 @@ export class UnifiedToolRegistry {
 
     if (!toolName) {
       throw new Error("Tool call is missing function name.");
+    }
+
+    const availableTool = this.listTools(executionContext).find((tool) => tool.name === toolName);
+    if (!availableTool) {
+      throw new Error(`Tool is not available in the current runtime: ${toolName}`);
     }
 
     if (this.localToolRegistry.hasTool(toolName)) {

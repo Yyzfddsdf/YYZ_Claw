@@ -20,6 +20,7 @@ export function createChatRoutes(services) {
   router.post("/chat/workplace/select", asyncHandler(controller.selectWorkplaceBySystemDialog));
   router.post("/chat/files/parse", upload.array("files", 8), asyncHandler(controller.parseUploadedFiles));
   router.get("/chat/events/subscribe", asyncHandler(controller.subscribeConversationEvents));
+  router.get("/chat/tools", asyncHandler(controller.listTools));
   router.post(
     "/chat/histories/:conversationId/stop",
     asyncHandler(controller.stopRunByConversationId)
@@ -44,6 +45,7 @@ export function createChatRoutes(services) {
     asyncHandler(controller.updateApprovalModeById)
   );
   router.put("/chat/histories/:conversationId/skills", asyncHandler(controller.updateSkillsById));
+  router.put("/chat/histories/:conversationId/tools", asyncHandler(controller.updateToolsById));
   router.put("/chat/histories/:conversationId/persona", asyncHandler(controller.updatePersonaById));
   router.put(
     "/chat/histories/:conversationId/model-profile",

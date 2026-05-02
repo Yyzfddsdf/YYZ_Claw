@@ -711,6 +711,7 @@ export function ChatPanel({
   const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
   const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [automationTemplateMenuOpen, setAutomationTemplateMenuOpen] = useState(false);
   const [automationConfigOpen, setAutomationConfigOpen] = useState(false);
   const [automationTemplates, setAutomationTemplates] = useState([]);
@@ -757,6 +758,7 @@ export function ChatPanel({
   const personaMenuRef = useRef(null);
   const thinkingMenuRef = useRef(null);
   const modelMenuRef = useRef(null);
+  const toolMenuRef = useRef(null);
   const automationTemplateMenuRef = useRef(null);
 
   useEffect(() => {
@@ -814,6 +816,9 @@ export function ChatPanel({
       }
       if (modelMenuRef.current && !modelMenuRef.current.contains(event.target)) {
         setModelMenuOpen(false);
+      }
+      if (toolMenuRef.current && !toolMenuRef.current.contains(event.target)) {
+        setToolMenuOpen(false);
       }
       if (
         automationTemplateMenuRef.current &&
@@ -1001,7 +1006,16 @@ export function ChatPanel({
     chat.isStreaming || !chat.historyLoaded || Boolean(chat.pendingApproval);
   const modelSwitchDisabled =
     chat.isStreaming || chat.isCompressing || !chat.historyLoaded || Boolean(chat.pendingApproval);
+  const toolSwitchDisabled =
+    chat.isStreaming || chat.isCompressing || !chat.historyLoaded || Boolean(chat.pendingApproval);
   const modelProfiles = Array.isArray(chat.modelProfiles) ? chat.modelProfiles : [];
+  const toolCatalog = Array.isArray(chat.toolCatalog) ? chat.toolCatalog : [];
+  const disabledToolSet = new Set(
+    Array.isArray(chat.activeConversationDisabledTools)
+      ? chat.activeConversationDisabledTools.map((toolName) => String(toolName ?? "").trim())
+      : []
+  );
+  const enabledToolCount = toolCatalog.filter((tool) => !disabledToolSet.has(tool.name)).length;
   const activeModelProfile = chat.activeConversationModelProfile;
   const activeModelProfileId = String(chat.activeConversationModelProfileId ?? "").trim();
   const activeModelProfileLabel =
@@ -3896,6 +3910,52 @@ export function ChatPanel({
                                 : ""}
                               {profile.supportsVision ? " · 图片" : ""}
                             </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div ref={toolMenuRef} className="chat-tool-control">
+                  <button
+                    type="button"
+                    className="chat-tool-trigger"
+                    onClick={() => !toolSwitchDisabled && setToolMenuOpen((prev) => !prev)}
+                    disabled={toolSwitchDisabled || toolCatalog.length === 0}
+                    title="管理当前会话可用工具"
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.7 6.3a4 4 0 0 0-5.66 5.66l-4.24 4.24a2 2 0 1 0 2.83 2.83l4.24-4.24a4 4 0 0 0 5.66-5.66l-2.12 2.12-2.83-2.83 2.12-2.12Z" />
+                    </svg>
+                    <span>工具 {enabledToolCount}/{toolCatalog.length}</span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" className={`chat-tool-caret ${toolMenuOpen ? "is-open" : ""}`}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+
+                  {toolMenuOpen && !toolSwitchDisabled && (
+                    <div className="chat-tool-menu">
+                      {toolCatalog.map((tool) => {
+                        const toolName = String(tool?.name ?? "").trim();
+                        const isEnabled = !disabledToolSet.has(toolName);
+                        return (
+                          <button
+                            key={toolName}
+                            type="button"
+                            className={`chat-tool-option ${isEnabled ? "is-enabled" : "is-disabled"}`}
+                            onClick={() => {
+                              const nextDisabledTools = isEnabled
+                                ? [...disabledToolSet, toolName]
+                                : Array.from(disabledToolSet).filter((item) => item !== toolName);
+                              chat.setConversationDisabledTools(nextDisabledTools);
+                            }}
+                          >
+                            <span className="chat-tool-switch" aria-hidden="true">
+                              <span />
+                            </span>
+                            <strong>{toolName}</strong>
+                            <small>{tool.description || "无描述"}</small>
                           </button>
                         );
                       })}

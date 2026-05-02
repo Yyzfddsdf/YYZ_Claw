@@ -151,14 +151,28 @@ function sanitizeConversationForModel(conversation = []) {
           return message;
         }
 
+        const reasoningContent = String(
+          message.reasoning_content ?? message.reasoningContent ?? ""
+        );
         if (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
-          return message;
+          return reasoningContent
+            ? {
+                ...message,
+                reasoning_content: reasoningContent
+              }
+            : message;
         }
 
-        return {
+        const sanitizedMessage = {
           ...message,
           tool_calls: sanitizeToolCallsForModel(message.tool_calls)
         };
+
+        if (reasoningContent) {
+          sanitizedMessage.reasoning_content = reasoningContent;
+        }
+
+        return sanitizedMessage;
       })
     : [];
 }
@@ -415,6 +429,11 @@ export class ChatAgent {
       role: "assistant",
       content: assistantText
     };
+
+    if (reasoningText) {
+      assistantMessage.reasoning_content = reasoningText;
+      assistantMessage.reasoningContent = reasoningText;
+    }
 
     if (toolCalls.length > 0) {
       assistantMessage.tool_calls = toolCalls;

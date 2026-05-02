@@ -129,6 +129,28 @@ function normalizeSkillNames(value) {
   return normalized;
 }
 
+function normalizeToolNames(value) {
+  const list = Array.isArray(value) ? value : [];
+  const normalized = [];
+  const seen = new Set();
+
+  for (const item of list) {
+    const toolName = String(item ?? "").trim();
+    if (!toolName) {
+      continue;
+    }
+
+    if (seen.has(toolName)) {
+      continue;
+    }
+
+    seen.add(toolName);
+    normalized.push(toolName);
+  }
+
+  return normalized;
+}
+
 function normalizeJsonText(value, fallback) {
   if (typeof value !== "string" || value.trim().length === 0) {
     return fallback;
@@ -426,6 +448,7 @@ export class SqliteChatHistoryStore {
         thinking_mode TEXT NOT NULL DEFAULT 'off',
         approval_mode TEXT NOT NULL DEFAULT 'confirm',
         skills_json TEXT NOT NULL DEFAULT '[]',
+        disabled_tools_json TEXT NOT NULL DEFAULT '[]',
         persona_id TEXT NOT NULL DEFAULT '',
         developer_prompt TEXT NOT NULL DEFAULT '',
         memory_summary_prompt TEXT DEFAULT NULL,
@@ -446,6 +469,7 @@ export class SqliteChatHistoryStore {
     this.ensureConversationThinkingModeColumn();
     this.ensureConversationApprovalModeColumn();
     this.ensureConversationSkillsColumn();
+    this.ensureConversationDisabledToolsColumn();
     this.ensureConversationPersonaColumn();
     this.ensureConversationDeveloperPromptColumn();
     this.ensureConversationMemorySummaryPromptColumn();
@@ -913,6 +937,7 @@ export class SqliteChatHistoryStore {
         c.thinking_mode,
         c.approval_mode,
         c.skills_json,
+        c.disabled_tools_json,
         c.persona_id,
         c.developer_prompt,
         c.memory_summary_prompt,
@@ -964,6 +989,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
+      disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
       developerPrompt: String(item.developer_prompt ?? ""),
       memorySummaryPrompt:
@@ -1028,6 +1054,7 @@ export class SqliteChatHistoryStore {
             c.thinking_mode,
             c.approval_mode,
             c.skills_json,
+            c.disabled_tools_json,
             c.persona_id,
             c.developer_prompt,
             c.memory_summary_prompt,
@@ -1082,6 +1109,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
+      disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
       developerPrompt: String(item.developer_prompt ?? ""),
       memorySummaryPrompt:
@@ -1112,6 +1140,7 @@ export class SqliteChatHistoryStore {
             thinking_mode,
             approval_mode,
             skills_json,
+            disabled_tools_json,
             persona_id,
             developer_prompt,
             memory_summary_prompt,
@@ -1176,6 +1205,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: normalizeThinkingMode(conversation.thinking_mode),
       approvalMode: normalizeApprovalMode(conversation.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(conversation.skills_json, [])),
+      disabledTools: normalizeToolNames(normalizeJsonText(conversation.disabled_tools_json, [])),
       personaId: String(conversation.persona_id ?? "").trim(),
       developerPrompt: String(conversation.developer_prompt ?? ""),
       memorySummaryPrompt:
@@ -1527,6 +1557,7 @@ export class SqliteChatHistoryStore {
         thinking_mode,
         approval_mode,
         skills_json,
+        disabled_tools_json,
         workplace_locked,
         created_at,
         persona_id,
@@ -1549,6 +1580,9 @@ export class SqliteChatHistoryStore {
     );
     const skills = normalizeSkillNames(
       payload.skills ?? normalizeJsonText(existing?.skills_json, [])
+    );
+    const disabledTools = normalizeToolNames(
+      payload.disabledTools ?? normalizeJsonText(existing?.disabled_tools_json, [])
     );
     const parentConversationId = normalizeConversationParentId(
       payload.parentConversationId ?? existing?.parent_conversation_id
@@ -1614,6 +1648,7 @@ export class SqliteChatHistoryStore {
             thinking_mode = ?,
             approval_mode = ?,
             skills_json = ?,
+            disabled_tools_json = ?,
             persona_id = ?,
             developer_prompt = ?,
             memory_summary_prompt = ?,
@@ -1630,6 +1665,7 @@ export class SqliteChatHistoryStore {
           thinkingMode,
           approvalMode,
           JSON.stringify(skills),
+          JSON.stringify(disabledTools),
           personaId,
           developerPrompt,
           memorySummaryPrompt,
@@ -1651,6 +1687,7 @@ export class SqliteChatHistoryStore {
               thinking_mode,
               approval_mode,
               skills_json,
+              disabled_tools_json,
               persona_id,
               developer_prompt,
               memory_summary_prompt,
@@ -1658,7 +1695,7 @@ export class SqliteChatHistoryStore {
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
           `
         ).run(
           conversationId,
@@ -1671,6 +1708,7 @@ export class SqliteChatHistoryStore {
           thinkingMode,
           approvalMode,
           JSON.stringify(skills),
+          JSON.stringify(disabledTools),
           personaId,
           developerPrompt,
           memorySummaryPrompt,
@@ -1732,6 +1770,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: payload.thinkingMode ?? existing.thinkingMode,
       approvalMode: payload.approvalMode ?? existing.approvalMode,
       skills: payload.skills ?? existing.skills,
+      disabledTools: payload.disabledTools ?? existing.disabledTools,
       personaId: payload.personaId ?? existing.personaId,
       developerPrompt: payload.developerPrompt ?? existing.developerPrompt,
       memorySummaryPrompt:
@@ -2029,6 +2068,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: payload.thinkingMode ?? sourceConversation.thinkingMode,
       approvalMode: payload.approvalMode ?? sourceConversation.approvalMode,
       skills: payload.skills ?? sourceConversation.skills,
+      disabledTools: payload.disabledTools ?? sourceConversation.disabledTools,
       personaId: payload.personaId ?? sourceConversation.personaId,
       developerPrompt: payload.developerPrompt ?? sourceConversation.developerPrompt,
       memorySummaryPrompt:
@@ -2199,6 +2239,35 @@ export class SqliteChatHistoryStore {
     return this.getConversation(conversationId);
   }
 
+  updateConversationDisabledTools(conversationId, disabledTools) {
+    const db = this.ensureDb();
+    const normalizedDisabledTools = normalizeToolNames(disabledTools);
+
+    const existing = db
+      .prepare(
+        `
+          SELECT id
+          FROM conversations
+          WHERE id = ?
+        `
+      )
+      .get(conversationId);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET disabled_tools_json = ?, updated_at = ?
+        WHERE id = ?
+      `
+    ).run(JSON.stringify(normalizedDisabledTools), Date.now(), conversationId);
+
+    return this.getConversation(conversationId);
+  }
+
   updateConversationPersona(conversationId, personaId) {
     const db = this.ensureDb();
     const normalizedPersonaId = String(personaId ?? "").trim();
@@ -2226,6 +2295,16 @@ export class SqliteChatHistoryStore {
     ).run(normalizedPersonaId, Date.now(), conversationId);
 
     return this.getConversation(conversationId);
+  }
+
+  ensureConversationDisabledToolsColumn() {
+    const db = this.ensureDb();
+    const columns = db.prepare("PRAGMA table_info(conversations)").all();
+    const columnNames = new Set(columns.map((item) => String(item.name)));
+
+    if (!columnNames.has("disabled_tools_json")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN disabled_tools_json TEXT NOT NULL DEFAULT '[]'");
+    }
   }
 
   updateConversationModelProfile(conversationId, modelProfileId, model = "") {

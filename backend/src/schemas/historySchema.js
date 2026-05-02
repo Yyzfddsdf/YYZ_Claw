@@ -44,6 +44,7 @@ export const conversationUpsertSchema = z.object({
   workplacePath: z.string().trim().min(1, "workplacePath cannot be empty").optional(),
   approvalMode: approvalModeSchema.optional(),
   skills: z.array(z.string().trim().min(1)).optional(),
+  disabledTools: z.array(z.string().trim().min(1)).optional(),
   personaId: z.string().trim().max(120).optional(),
   modelProfileId: z.string().trim().max(120).optional(),
   thinkingMode: thinkingModeSchema.optional(),
@@ -58,6 +59,10 @@ export const conversationWorkplaceSchema = z.object({
 
 export const conversationSkillsSchema = z.object({
   skills: z.array(z.string().trim().min(1))
+});
+
+export const conversationToolsSchema = z.object({
+  disabledTools: z.array(z.string().trim().min(1)).default([])
 });
 
 export const conversationPersonaSchema = z.object({

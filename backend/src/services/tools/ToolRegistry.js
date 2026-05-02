@@ -9,6 +9,19 @@ function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function normalizeDisabledTools(executionContext = {}) {
+  return new Set(
+    (Array.isArray(executionContext?.disabledTools)
+      ? executionContext.disabledTools
+      : Array.isArray(executionContext?.toolSettings?.disabledTools)
+        ? executionContext.toolSettings.disabledTools
+        : []
+    )
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean)
+  );
+}
+
 function normalizeTool(toolModule) {
   const candidate = toolModule?.default ?? toolModule?.tool ?? toolModule;
 
@@ -47,6 +60,10 @@ function normalizeTool(toolModule) {
 
 function isToolAvailable(tool, executionContext = {}) {
   if (!tool || typeof tool !== "object") {
+    return false;
+  }
+
+  if (normalizeDisabledTools(executionContext).has(String(tool.name ?? "").trim())) {
     return false;
   }
 

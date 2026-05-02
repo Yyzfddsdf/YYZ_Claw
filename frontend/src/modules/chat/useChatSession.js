@@ -14,6 +14,7 @@ import {
   deleteHistoryMessageById,
   fetchHistories,
   fetchHistoryById,
+  fetchChatTools,
   fetchConversationRuntimeById,
   forkHistoryById,
   fetchSkills,
@@ -29,6 +30,7 @@ import {
   updateHistoryThinkingModeById,
   updateHistoryWorkplaceById,
   updateHistorySkillsById,
+  updateHistoryToolsById,
   upsertHistoryById,
   streamChat
 } from "../../api/chatApi";
@@ -135,6 +137,29 @@ function normalizeParsedFileAttachments(attachments) {
         })
         .filter(Boolean)
     : [];
+}
+
+function normalizeToolNames(value) {
+  const seen = new Set();
+  const normalized = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    const toolName = String(item ?? "").trim();
+    if (!toolName || seen.has(toolName)) {
+      continue;
+    }
+    seen.add(toolName);
+    normalized.push(toolName);
+  }
+  return normalized;
+}
+
+function normalizeToolCatalog(tools) {
+  return (Array.isArray(tools) ? tools : [])
+    .map((tool) => ({
+      name: String(tool?.name ?? "").trim(),
+      description: String(tool?.description ?? "").trim()
+    }))
+    .filter((tool) => tool.name);
 }
 
 function normalizeThinkingMode(value, fallback = "off") {
@@ -407,6 +432,7 @@ function toSummary(history) {
     skills: Array.isArray(history?.skills)
       ? history.skills.map((item) => String(item ?? "").trim()).filter(Boolean)
       : [],
+    disabledTools: normalizeToolNames(history?.disabledTools),
     preview: String(history?.preview ?? buildPreviewFromMessages(safeMessages)),
     createdAt: Number(history?.createdAt ?? 0),
     updatedAt: Number(history?.updatedAt ?? Date.now()),
@@ -439,6 +465,7 @@ function normalizeSummaryList(histories) {
     skills: Array.isArray(item.skills)
       ? item.skills.map((value) => String(value ?? "").trim()).filter(Boolean)
       : [],
+    disabledTools: normalizeToolNames(item.disabledTools),
     preview: String(item.preview ?? ""),
     createdAt: Number(item.createdAt ?? 0),
     updatedAt: Number(item.updatedAt ?? Date.now()),
@@ -733,6 +760,7 @@ function buildConversationUpsertPayload({
   thinkingMode = "off",
   developerPrompt = "",
   skills = [],
+  disabledTools = [],
   messages = []
 } = {}) {
   const payload = {
@@ -749,6 +777,7 @@ function buildConversationUpsertPayload({
           )
         )
       : [],
+    disabledTools: normalizeToolNames(disabledTools),
     messages: toPersistableMessages(messages)
   };
 
@@ -768,7 +797,8 @@ function buildPersistenceSignature({
   approvalMode = "confirm",
   personaId = "",
   thinkingMode = "off",
-  developerPrompt = ""
+  developerPrompt = "",
+  disabledTools = []
 } = {}) {
   return JSON.stringify({
     title: String(title ?? "").trim() || "新会话",
@@ -778,7 +808,8 @@ function buildPersistenceSignature({
     approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
     personaId: String(personaId ?? "").trim(),
     thinkingMode: normalizeThinkingMode(thinkingMode),
-    developerPrompt: normalizeDeveloperPrompt(developerPrompt)
+    developerPrompt: normalizeDeveloperPrompt(developerPrompt),
+    disabledTools: normalizeToolNames(disabledTools)
   });
 }
 
@@ -799,6 +830,7 @@ function isSameSummary(left, right) {
     left?.approvalMode === right?.approvalMode &&
     left?.developerPrompt === right?.developerPrompt &&
     JSON.stringify(left?.skills ?? []) === JSON.stringify(right?.skills ?? []) &&
+    JSON.stringify(left?.disabledTools ?? []) === JSON.stringify(right?.disabledTools ?? []) &&
     left?.preview === right?.preview &&
     left?.createdAt === right?.createdAt &&
     left?.updatedAt === right?.updatedAt &&
@@ -1038,6 +1070,8 @@ export function useChatSession(runtimeConfig = {}) {
   const [skillsDrawerOpen, setSkillsDrawerOpen] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState([]);
   const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
+  const [toolCatalog, setToolCatalog] = useState([]);
+  const [toolCatalogLoaded, setToolCatalogLoaded] = useState(false);
   const [personaCatalog, setPersonaCatalog] = useState([]);
   const [personaCatalogLoaded, setPersonaCatalogLoaded] = useState(false);
   const [tokenUsageRecords, setTokenUsageRecords] = useState([]);
@@ -1064,6 +1098,7 @@ export function useChatSession(runtimeConfig = {}) {
   const externalStreamStatesRef = useRef(new Map());
   const externalAgentEventHandlerRef = useRef(null);
   const activeAgentRunConversationIdsRef = useRef(new Set());
+  const recentlyDeletedConversationIdsRef = useRef(new Set());
   const processedRunEventSeqByRunIdRef = useRef(new Map());
 
   const isStreaming = foregroundStreamingConversationIds.length > 0;
@@ -1137,6 +1172,15 @@ export function useChatSession(runtimeConfig = {}) {
 
   const activeConversationSkills = useMemo(() => {
     return resolveConversationSkills(activeConversationId, conversationList, draftConversation);
+  }, [conversationList, activeConversationId, draftConversation]);
+
+  const activeConversationDisabledTools = useMemo(() => {
+    if (draftConversation?.id === activeConversationId) {
+      return normalizeToolNames(draftConversation.disabledTools);
+    }
+
+    const current = conversationList.find((item) => item.id === activeConversationId);
+    return normalizeToolNames(current?.disabledTools);
   }, [conversationList, activeConversationId, draftConversation]);
 
   const activeConversationSource = useMemo(() => {
@@ -1551,6 +1595,38 @@ export function useChatSession(runtimeConfig = {}) {
     };
   }, [activeConversationWorkplace]);
 
+  async function refreshToolCatalog() {
+    try {
+      const response = await fetchChatTools();
+      setToolCatalog(normalizeToolCatalog(response?.tools));
+    } finally {
+      setToolCatalogLoaded(true);
+    }
+  }
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadToolCatalog() {
+      try {
+        const response = await fetchChatTools();
+        if (!mounted) {
+          return;
+        }
+        setToolCatalog(normalizeToolCatalog(response?.tools));
+      } finally {
+        if (mounted) {
+          setToolCatalogLoaded(true);
+        }
+      }
+    }
+
+    loadToolCatalog();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   async function refreshPersonaCatalog() {
     try {
       const response = await fetchPersonas();
@@ -1593,7 +1669,7 @@ export function useChatSession(runtimeConfig = {}) {
 
       try {
         const response = await fetchConversationRuntimeById(normalizedConversationId);
-        if (!mounted) {
+        if (!mounted || activeConversationIdRef.current !== normalizedConversationId) {
           return;
         }
 
@@ -1910,6 +1986,14 @@ export function useChatSession(runtimeConfig = {}) {
     );
   }
 
+  function isDraftConversationId(conversationId) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    return Boolean(
+      normalizedConversationId &&
+      String(draftConversationRef.current?.id ?? "").trim() === normalizedConversationId
+    );
+  }
+
   function applyPersistedHistorySnapshot(conversationId, history) {
     const normalizedConversationId = String(conversationId ?? history?.id ?? "").trim();
     if (!normalizedConversationId || !history || !Array.isArray(history.messages)) {
@@ -1989,6 +2073,7 @@ export function useChatSession(runtimeConfig = {}) {
       personaId: String(summary.personaId ?? "").trim(),
       developerPrompt: normalizeDeveloperPrompt(summary.developerPrompt ?? ""),
       skills: Array.isArray(effectiveSkills) ? effectiveSkills : [],
+      disabledTools: normalizeToolNames(summary.disabledTools),
       isDraft: false
     };
   }
@@ -2026,6 +2111,7 @@ export function useChatSession(runtimeConfig = {}) {
       title,
       messages: payloadMessages,
       skills: [...selectedSkillsRef.current],
+      disabledTools: activeConversationDisabledTools,
       personaId: activeConversationPersonaId,
       thinkingMode,
       developerPrompt: activeConversationDeveloperPrompt
@@ -2056,6 +2142,7 @@ export function useChatSession(runtimeConfig = {}) {
             title: String(history.title ?? title),
             messages: Array.isArray(history.messages) ? history.messages : payloadMessages,
             skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
+            disabledTools: normalizeToolNames(history.disabledTools ?? activeConversationDisabledTools),
             workplacePath: String(history.workplacePath ?? payload.workplacePath ?? ""),
             approvalMode: String(
               history.approvalMode ?? activeConversationApprovalMode ?? "confirm"
@@ -2090,6 +2177,7 @@ export function useChatSession(runtimeConfig = {}) {
     activeConversationTitle,
     draftConversation,
     activeConversationPersonaId,
+    activeConversationDisabledTools,
     thinkingMode,
     activeConversationDeveloperPrompt,
     activeConversationApprovalMode
@@ -2097,6 +2185,10 @@ export function useChatSession(runtimeConfig = {}) {
 
   async function loadConversation(conversationId) {
     const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return;
+    }
+
     const targetConversationBusy =
       activeAgentRunConversationIdsRef.current.has(normalizedConversationId) ||
       Boolean(
@@ -2105,10 +2197,6 @@ export function useChatSession(runtimeConfig = {}) {
     const targetHasForegroundStream = isConversationForegroundStreaming(normalizedConversationId);
     const preserveStreamingState =
       targetConversationBusy || targetHasForegroundStream || foregroundStreamingConversationIdsRef.current.size > 0;
-
-    if (!normalizedConversationId) {
-      return;
-    }
 
     if (!preserveStreamingState) {
       setStatus("loading");
@@ -2144,7 +2232,13 @@ export function useChatSession(runtimeConfig = {}) {
       setTokenUsageRecords(nextTokenUsageRecords);
       setConversationList(nextConversationList);
     } catch (loadError) {
-      setError(loadError?.message || "加载会话失败");
+      const loadErrorMessage = String(loadError?.message || "");
+      const isRecentlyDeletedMissingHistory =
+        recentlyDeletedConversationIdsRef.current.has(normalizedConversationId) &&
+        /history not found|历史不存在/i.test(loadErrorMessage);
+      if (!isRecentlyDeletedMissingHistory) {
+        setError(loadError?.message || "加载会话失败");
+      }
     } finally {
       if (!preserveStreamingState) {
         setStatus("idle");
@@ -2171,8 +2265,20 @@ export function useChatSession(runtimeConfig = {}) {
       modelProfileId: defaultMainModelProfileId,
       thinkingMode: "off",
       developerPrompt: "",
-      skills: [...selectedSkillsRef.current]
+      skills: [...selectedSkillsRef.current],
+      disabledTools: []
     });
+    draftConversationRef.current = {
+      id: conversationId,
+      workplacePath: String(activeConversationWorkplace ?? "").trim(),
+      approvalMode: String(activeConversationApprovalMode ?? "confirm"),
+      personaId: "",
+      modelProfileId: defaultMainModelProfileId,
+      thinkingMode: "off",
+      developerPrompt: "",
+      skills: [...selectedSkillsRef.current],
+      disabledTools: []
+    };
     setActiveConversationId(conversationId);
     lastPersistedSignatureRef.current = "";
     setMessages([]);
@@ -2464,11 +2570,28 @@ export function useChatSession(runtimeConfig = {}) {
           deletedConversationIdSet.add(normalizedDeletedConversationId);
         }
       }
+      for (const deletedConversationId of deletedConversationIdSet) {
+        recentlyDeletedConversationIdsRef.current.add(deletedConversationId);
+      }
+      window.setTimeout(() => {
+        for (const deletedConversationId of deletedConversationIdSet) {
+          recentlyDeletedConversationIdsRef.current.delete(deletedConversationId);
+        }
+      }, 15000);
+
+      const deletesActiveConversation = deletedConversationIdSet.has(
+        String(activeConversationIdRef.current || activeConversationId || "").trim()
+      );
+      if (deletesActiveConversation) {
+        activeConversationIdRef.current = "";
+        setActiveConversationId("");
+        setMessages([]);
+        setTokenUsageRecords([]);
+      }
 
       const remained = currentConversationList.filter(
         (item) => !deletedConversationIdSet.has(String(item?.id ?? "").trim())
       );
-      setConversationList(remained);
       updateQueuedUserMessageList((prev) =>
         prev.filter(
           (item) => !deletedConversationIdSet.has(String(item?.conversationId ?? "").trim())
@@ -2480,6 +2603,13 @@ export function useChatSession(runtimeConfig = {}) {
         activeAgentRunConversationIdsRef.current.delete(deletedConversationId);
         externalStreamStatesRef.current.delete(deletedConversationId);
       }
+      setRuntimeStatusByConversation((prev) => {
+        const next = { ...prev };
+        for (const deletedConversationId of deletedConversationIdSet) {
+          delete next[String(deletedConversationId ?? "").trim()];
+        }
+        return next;
+      });
       updatePendingApprovalsByConversation((prev) => {
         const next = { ...prev };
         for (const deletedConversationId of deletedConversationIdSet) {
@@ -2488,12 +2618,23 @@ export function useChatSession(runtimeConfig = {}) {
         return next;
       });
 
-      if (!deletedConversationIdSet.has(String(activeConversationId ?? "").trim())) {
+      let refreshedSummaries = remained;
+      try {
+        const refreshedResponse = await fetchHistories();
+        refreshedSummaries = normalizeSummaryList(refreshedResponse?.histories).filter(
+          (item) => !deletedConversationIdSet.has(String(item?.id ?? "").trim())
+        );
+        setConversationList(refreshedSummaries);
+      } catch {
+        setConversationList(remained);
+      }
+
+      if (!deletesActiveConversation) {
         return;
       }
 
-      if (remained.length > 0) {
-        await loadConversation(remained[0].id);
+      if (refreshedSummaries.length > 0) {
+        await loadConversation(refreshedSummaries[0].id);
         return;
       }
 
@@ -2655,7 +2796,7 @@ export function useChatSession(runtimeConfig = {}) {
       return;
     }
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {
         if (!prev || prev.id !== activeConversationId) {
           return prev;
@@ -2701,7 +2842,7 @@ export function useChatSession(runtimeConfig = {}) {
       ? "auto"
       : "confirm";
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {
         if (!prev || prev.id !== activeConversationId) {
           return prev;
@@ -2754,7 +2895,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationSkillOwnerId || activeConversationId
     ).trim();
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {
         if (!prev || prev.id !== activeConversationId) {
           return prev;
@@ -2793,6 +2934,55 @@ export function useChatSession(runtimeConfig = {}) {
     }
   }
 
+  async function setConversationDisabledTools(nextDisabledTools) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
+      return;
+    }
+
+    const normalizedDisabledTools = normalizeToolNames(nextDisabledTools);
+
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
+      setDraftConversation((prev) => {
+        if (!prev || prev.id !== activeConversationId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          disabledTools: normalizedDisabledTools
+        };
+      });
+      setError("");
+      return;
+    }
+
+    try {
+      setConversationList((prev) =>
+        prev.map((item) =>
+          item.id === activeConversationId
+            ? {
+                ...item,
+                disabledTools: normalizedDisabledTools
+              }
+            : item
+        )
+      );
+
+      const response = await updateHistoryToolsById(activeConversationId, normalizedDisabledTools);
+      const updatedSummary = toSummary(response?.history ?? {});
+      setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
+      setError("");
+    } catch (toolsError) {
+      setError(toolsError?.message || "设置工具失败");
+    }
+  }
+
   async function setConversationPersona(nextPersonaId) {
     if (
       !historyLoaded ||
@@ -2811,7 +3001,7 @@ export function useChatSession(runtimeConfig = {}) {
 
     const normalizedPersonaId = String(nextPersonaId ?? "").trim();
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {
         if (!prev || prev.id !== activeConversationId) {
           return prev;
@@ -2863,7 +3053,7 @@ export function useChatSession(runtimeConfig = {}) {
       return;
     }
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {
         if (!prev || prev.id !== activeConversationId) {
           return prev;
@@ -2953,7 +3143,7 @@ export function useChatSession(runtimeConfig = {}) {
 
     setThinkingMode(normalizedThinkingMode);
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {
         if (!prev || prev.id !== activeConversationId) {
           return prev;
@@ -3005,7 +3195,7 @@ export function useChatSession(runtimeConfig = {}) {
 
     const normalizedDeveloperPrompt = normalizeDeveloperPrompt(nextDeveloperPrompt);
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {
         if (!prev || prev.id !== activeConversationId) {
           return prev;
@@ -3051,7 +3241,7 @@ export function useChatSession(runtimeConfig = {}) {
       return null;
     }
 
-    if (isDraftConversationActive) {
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setError("草稿会话尚未保存，暂时不能手动压缩");
       return null;
     }
@@ -4549,6 +4739,7 @@ export function useChatSession(runtimeConfig = {}) {
         thinkingMode,
         developerPrompt: "",
         skills: selectedSkillsRef.current,
+        disabledTools: activeConversationDisabledTools,
         messages: toPersistableMessages(nextMessages)
       });
 
@@ -4770,6 +4961,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
+      activeConversationDisabledTools,
       activeConversationSource,
       activeConversationModelProfileId,
       activeConversationModelProfile,
@@ -4782,6 +4974,8 @@ export function useChatSession(runtimeConfig = {}) {
       canManualCompress,
       skillCatalog,
       skillCatalogLoaded,
+      toolCatalog,
+      toolCatalogLoaded,
       personaCatalog,
       personaCatalogLoaded,
       tokenUsageRecords,
@@ -4790,6 +4984,7 @@ export function useChatSession(runtimeConfig = {}) {
       skillsDrawerOpen,
       setSkillsDrawerOpen,
       reloadSkillCatalog: refreshSkillCatalog,
+      reloadToolCatalog: refreshToolCatalog,
       reloadPersonaCatalog: refreshPersonaCatalog,
       workplaceSelecting,
       pendingApproval,
@@ -4828,6 +5023,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationModelProfile,
       setConversationThinkingMode,
       setConversationSkills,
+      setConversationDisabledTools,
       setConversationDeveloperPrompt,
       compressConversation,
       sendMessage,
@@ -4850,6 +5046,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
+      activeConversationDisabledTools,
       activeConversationSource,
       activeConversationModelProfileId,
       activeConversationModelProfile,
@@ -4862,6 +5059,8 @@ export function useChatSession(runtimeConfig = {}) {
       canManualCompress,
       skillCatalog,
       skillCatalogLoaded,
+      toolCatalog,
+      toolCatalogLoaded,
       personaCatalog,
       personaCatalogLoaded,
       tokenUsageRecords,
@@ -4870,6 +5069,7 @@ export function useChatSession(runtimeConfig = {}) {
       skillsDrawerOpen,
       setSkillsDrawerOpen,
       refreshSkillCatalog,
+      refreshToolCatalog,
       refreshPersonaCatalog,
       workplaceSelecting,
       pendingApproval,
@@ -4905,6 +5105,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationModelProfile,
       setConversationThinkingMode,
       setConversationSkills,
+      setConversationDisabledTools,
       setConversationDeveloperPrompt,
       compressConversation,
       sendMessage,

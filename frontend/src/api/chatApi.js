@@ -17,6 +17,10 @@ export function fetchHistories() {
   return requestJson("/chat/histories");
 }
 
+export function fetchChatTools() {
+  return requestJson("/chat/tools");
+}
+
 export function selectWorkplaceBySystemDialog(initialPath) {
   return requestJson("/chat/workplace/select", {
     method: "POST",
@@ -55,6 +59,13 @@ export function updateHistorySkillsById(conversationId, skills) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/skills`, {
     method: "PUT",
     body: { skills }
+  });
+}
+
+export function updateHistoryToolsById(conversationId, disabledTools) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/tools`, {
+    method: "PUT",
+    body: { disabledTools }
   });
 }
 

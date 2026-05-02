@@ -3,6 +3,7 @@
   "defaultMainModelProfileId": "",
   "defaultSubagentModelProfileId": "",
   "defaultCompressionModelProfileId": "",
+  "defaultVisionModelProfileId": "",
   "webProvider": "",
   "tavilyApiKey": "",
   "compressionMaxOutputTokens": 32000,

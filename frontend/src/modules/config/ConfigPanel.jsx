@@ -24,11 +24,13 @@ function normalizeConfig(config) {
       }))
     : [];
   const firstProfileId = profiles[0]?.id ?? "";
+  const firstVisionProfileId = profiles.find((profile) => profile.supportsVision)?.id ?? "";
   return {
     modelProfiles: profiles,
     defaultMainModelProfileId: config?.defaultMainModelProfileId ?? firstProfileId,
     defaultSubagentModelProfileId: config?.defaultSubagentModelProfileId ?? firstProfileId,
     defaultCompressionModelProfileId: config?.defaultCompressionModelProfileId ?? firstProfileId,
+    defaultVisionModelProfileId: config?.defaultVisionModelProfileId ?? firstVisionProfileId,
     tavilyApiKey: config?.tavilyApiKey ?? "",
     compressionMaxOutputTokens:
       config?.compressionMaxOutputTokens === undefined || config?.compressionMaxOutputTokens === null
@@ -97,12 +99,14 @@ export function ConfigPanel({
   const [mcpLocalError, setMcpLocalError] = useState("");
   const [mcpSaveMessage, setMcpSaveMessage] = useState("");
   const [expandedServers, setExpandedServers] = useState({});
+  const [expandedModelProfiles, setExpandedModelProfiles] = useState({});
   const [openTransportMenuIndex, setOpenTransportMenuIndex] = useState(-1);
   const [openProfileMenu, setOpenProfileMenu] = useState("");
   const [openProviderMenuIndex, setOpenProviderMenuIndex] = useState(-1);
 
   useEffect(() => {
     setForm(normalizeConfig(initialConfig));
+    setExpandedModelProfiles({});
   }, [initialConfig]);
 
   useEffect(() => {
@@ -141,43 +145,89 @@ export function ConfigPanel({
       })),
     [form.modelProfiles]
   );
+  const visionProfileOptions = useMemo(
+    () =>
+      form.modelProfiles
+        .filter((profile) => profile.supportsVision)
+        .map((profile) => ({
+          value: profile.id,
+          label: profile.name || profile.model || profile.id
+        })),
+    [form.modelProfiles]
+  );
 
   function updateModelProfile(index, field, value) {
     setForm((prev) => {
       const profiles = [...prev.modelProfiles];
       profiles[index] = { ...profiles[index], [field]: value };
-      return { ...prev, modelProfiles: profiles };
+      const selectedVisionProfile = profiles.find(
+        (profile) => profile.id === prev.defaultVisionModelProfileId
+      );
+      const nextVisionProfileId =
+        selectedVisionProfile?.supportsVision
+          ? prev.defaultVisionModelProfileId
+          : profiles.find((profile) => profile.supportsVision)?.id ?? "";
+      return {
+        ...prev,
+        modelProfiles: profiles,
+        defaultVisionModelProfileId: nextVisionProfileId
+      };
     });
   }
 
   function addModelProfile() {
+    const nextProfile = createModelProfile(form.modelProfiles.length + 1);
     setForm((prev) => {
-      const nextProfile = createModelProfile(prev.modelProfiles.length + 1);
       const nextProfiles = [...prev.modelProfiles, nextProfile];
       return {
         ...prev,
         modelProfiles: nextProfiles,
         defaultMainModelProfileId: prev.defaultMainModelProfileId || nextProfile.id,
         defaultSubagentModelProfileId: prev.defaultSubagentModelProfileId || nextProfile.id,
-        defaultCompressionModelProfileId: prev.defaultCompressionModelProfileId || nextProfile.id
+        defaultCompressionModelProfileId: prev.defaultCompressionModelProfileId || nextProfile.id,
+        defaultVisionModelProfileId: prev.defaultVisionModelProfileId || nextProfile.id
       };
     });
+    setExpandedModelProfiles((prev) => ({ ...prev, [nextProfile.id]: true }));
   }
 
   function removeModelProfile(index) {
+    const removedProfileId = form.modelProfiles[index]?.id;
     setForm((prev) => {
       const targetId = prev.modelProfiles[index]?.id;
       const nextProfiles = prev.modelProfiles.filter((_, itemIndex) => itemIndex !== index);
       const firstProfileId = nextProfiles[0]?.id ?? "";
+      const firstVisionProfileId = nextProfiles.find((profile) => profile.supportsVision)?.id ?? "";
       const keepDefault = (value) => (value && value !== targetId ? value : firstProfileId);
+      const keepVisionDefault = (value) =>
+        value &&
+        value !== targetId &&
+        nextProfiles.some((profile) => profile.id === value && profile.supportsVision)
+          ? value
+          : firstVisionProfileId;
       return {
         ...prev,
         modelProfiles: nextProfiles,
         defaultMainModelProfileId: keepDefault(prev.defaultMainModelProfileId),
         defaultSubagentModelProfileId: keepDefault(prev.defaultSubagentModelProfileId),
-        defaultCompressionModelProfileId: keepDefault(prev.defaultCompressionModelProfileId)
+        defaultCompressionModelProfileId: keepDefault(prev.defaultCompressionModelProfileId),
+        defaultVisionModelProfileId: keepVisionDefault(prev.defaultVisionModelProfileId)
       };
     });
+    if (removedProfileId) {
+      setExpandedModelProfiles((prev) => {
+        const next = { ...prev };
+        delete next[removedProfileId];
+        return next;
+      });
+    }
+  }
+
+  function toggleModelProfile(profileId) {
+    setExpandedModelProfiles((prev) => ({
+      ...prev,
+      [profileId]: !prev[profileId]
+    }));
   }
 
   async function handleConfigSubmit(event) {
@@ -201,8 +251,15 @@ export function ConfigPanel({
       setLocalError("每个模型配置的名称 / Model / Base URL / API Key 均为必填项");
       return;
     }
-    if (!form.defaultMainModelProfileId || !form.defaultSubagentModelProfileId || !form.defaultCompressionModelProfileId) {
-      setLocalError("主模型、子智能体模型、压缩模型默认项都必须选择");
+    if (!form.defaultMainModelProfileId || !form.defaultSubagentModelProfileId || !form.defaultCompressionModelProfileId || !form.defaultVisionModelProfileId) {
+      setLocalError("主模型、子智能体模型、压缩模型、视觉工具模型默认项都必须选择");
+      return;
+    }
+    const selectedVisionProfile = finalProfiles.find(
+      (profile) => profile.id === form.defaultVisionModelProfileId
+    );
+    if (!selectedVisionProfile?.supportsVision) {
+      setLocalError("视觉工具模型必须选择已启用图片识别的模型配置");
       return;
     }
     setLocalError("");
@@ -213,6 +270,7 @@ export function ConfigPanel({
         defaultMainModelProfileId: form.defaultMainModelProfileId,
         defaultSubagentModelProfileId: form.defaultSubagentModelProfileId,
         defaultCompressionModelProfileId: form.defaultCompressionModelProfileId,
+        defaultVisionModelProfileId: form.defaultVisionModelProfileId,
         tavilyApiKey: form.tavilyApiKey,
         compressionMaxOutputTokens: form.compressionMaxOutputTokens
           ? Number(form.compressionMaxOutputTokens)
@@ -357,26 +415,44 @@ export function ConfigPanel({
           <div className="config-section-body">
             {form.modelProfiles.length === 0 && (
               <div className="config-empty-state">
-                还没有模型配置。添加一个云端模型后，再设置主模型、子智能体模型和压缩模型默认项。
+                还没有模型配置。添加一个云端模型后，再设置主模型、子智能体模型、压缩模型和视觉工具模型默认项。
               </div>
             )}
-            {form.modelProfiles.map((profile, index) => (
-              <div key={profile.id} className="model-profile-card">
-                <div className="model-profile-head">
-                  <div>
-                    <strong>{profile.name || `模型 ${index + 1}`}</strong>
-                    <span>{profile.model || "未填写 model"}</span>
+            {form.modelProfiles.map((profile, index) => {
+              const isExpanded = Boolean(expandedModelProfiles[profile.id]);
+              return (
+                <div key={profile.id} className={`model-profile-card ${isExpanded ? "is-expanded" : "is-collapsed"}`}>
+                  <div className="model-profile-head">
+                    <div className="model-profile-summary">
+                      <strong>{profile.name || `模型 ${index + 1}`}</strong>
+                      <span>{profile.model || "未填写 model"}</span>
+                      <div className="model-profile-badges">
+                        <em>{getModelProviderOption(profile.provider).label}</em>
+                        {profile.supportsVision && <em>图片识别</em>}
+                        {profile.maxContextWindow && <em>{profile.maxContextWindow} ctx</em>}
+                      </div>
+                    </div>
+                    <div className="model-profile-actions">
+                      <button
+                        type="button"
+                        className="text-btn-brand"
+                        onClick={() => toggleModelProfile(profile.id)}
+                        disabled={loading || saving}
+                      >
+                        {isExpanded ? "收起" : "编辑"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-btn-danger"
+                        onClick={() => removeModelProfile(index)}
+                        disabled={loading || saving}
+                      >
+                        移除
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    className="text-btn-danger"
-                    onClick={() => removeModelProfile(index)}
-                    disabled={loading || saving}
-                  >
-                    移除
-                  </button>
-                </div>
-                <div className="model-profile-grid">
+                  {isExpanded && (
+                    <div className="model-profile-grid">
                   <input
                     value={profile.name}
                     onChange={(event) => updateModelProfile(index, "name", event.target.value)}
@@ -461,8 +537,10 @@ export function ConfigPanel({
                     </label>
                   </div>
                 </div>
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -501,6 +579,17 @@ export function ConfigPanel({
               setOpenMenu={setOpenProfileMenu}
               onChange={(value) => setForm({ ...form, defaultCompressionModelProfileId: value })}
               disabled={loading || saving}
+            />
+            <ProfileSelectRow
+              label="视觉工具模型"
+              desc="供图片识别工具调用；这里只能选择已启用图片识别的模型。"
+              value={form.defaultVisionModelProfileId}
+              options={visionProfileOptions}
+              menuKey="vision"
+              openMenu={openProfileMenu}
+              setOpenMenu={setOpenProfileMenu}
+              onChange={(value) => setForm({ ...form, defaultVisionModelProfileId: value })}
+              disabled={loading || saving || visionProfileOptions.length === 0}
             />
             <ConfigRow
               label="压缩输出上限"

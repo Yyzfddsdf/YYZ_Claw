@@ -560,10 +560,11 @@ export function normalizeUsageRecordPayload(usage) {
 
 export function resolveAgentRuntimeConfig(config = {}, options = {}) {
   const useSubagentConfig = Boolean(options?.isSubagent);
+  const role = String(options?.role ?? "").trim();
   const profile = resolveModelProfile(
     config,
     String(options?.modelProfileId ?? "").trim(),
-    useSubagentConfig ? "subagent" : "main"
+    role || (useSubagentConfig ? "subagent" : "main")
   );
   const profiledConfig = applyModelProfileToRuntimeConfig(config, profile);
   const providerCapabilities =

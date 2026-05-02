@@ -24,6 +24,7 @@ function createEmptyConfig() {
     defaultMainModelProfileId: "",
     defaultSubagentModelProfileId: "",
     defaultCompressionModelProfileId: "",
+    defaultVisionModelProfileId: "",
     webProvider: "",
     tavilyApiKey: "",
     compressionMaxOutputTokens: "",
@@ -56,7 +57,8 @@ function hasRuntimeConfig(config) {
     config.modelProfiles.length > 0 &&
     Boolean(config.defaultMainModelProfileId) &&
     Boolean(config.defaultSubagentModelProfileId) &&
-    Boolean(config.defaultCompressionModelProfileId)
+    Boolean(config.defaultCompressionModelProfileId) &&
+    Boolean(config.defaultVisionModelProfileId)
   );
 }
 
@@ -138,6 +140,7 @@ function MainApp() {
           defaultMainModelProfileId: response?.config?.defaultMainModelProfileId ?? "",
           defaultSubagentModelProfileId: response?.config?.defaultSubagentModelProfileId ?? "",
           defaultCompressionModelProfileId: response?.config?.defaultCompressionModelProfileId ?? "",
+          defaultVisionModelProfileId: response?.config?.defaultVisionModelProfileId ?? "",
           webProvider: response?.config?.webProvider ?? "",
           tavilyApiKey: response?.config?.tavilyApiKey ?? "",
           compressionMaxOutputTokens:

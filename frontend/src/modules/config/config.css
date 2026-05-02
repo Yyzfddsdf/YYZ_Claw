@@ -93,11 +93,18 @@
   background: color-mix(in srgb, var(--bg-elevated) 88%, var(--brand-light));
 }
 
+.model-profile-card.is-collapsed {
+  padding-block: 0.75rem;
+}
+
 .model-profile-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.model-profile-card.is-expanded .model-profile-head {
   margin-bottom: 0.75rem;
 }
 
@@ -110,6 +117,42 @@
   margin-top: 0.2rem;
   color: var(--text-muted);
   font-size: 0.78rem;
+}
+
+.model-profile-summary {
+  min-width: 0;
+}
+
+.model-profile-summary strong,
+.model-profile-summary span {
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-profile-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.model-profile-badges em {
+  padding: 0.16rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-light) 76%, var(--bg-main));
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  line-height: 1.2;
+}
+
+.model-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .model-profile-grid {

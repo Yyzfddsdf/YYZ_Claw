@@ -26,6 +26,38 @@ const RECORDER_MIME_TYPE_CANDIDATES = [
   "audio/ogg"
 ];
 const TTS_MAX_TEXT_LENGTH = 1000;
+const THINKING_MODE_OPTIONS = [
+  {
+    value: "off",
+    label: "关闭",
+    description: "不请求思考内容"
+  },
+  {
+    value: "default",
+    label: "默认",
+    description: "开启思考，但不传强度字段"
+  },
+  {
+    value: "low",
+    label: "低",
+    description: "传 reasoning_effort=low"
+  },
+  {
+    value: "medium",
+    label: "中",
+    description: "传 reasoning_effort=medium"
+  },
+  {
+    value: "high",
+    label: "高",
+    description: "传 reasoning_effort=high"
+  },
+  {
+    value: "xhigh",
+    label: "超高",
+    description: "传 reasoning_effort=xhigh"
+  }
+];
 const GENERAL_FILE_ACCEPT = [
   ".pdf",
   ".doc",
@@ -709,6 +741,7 @@ export function ChatPanel({
   const [contextPopupOpen, setContextPopupOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
+  const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
   const [automationTemplateMenuOpen, setAutomationTemplateMenuOpen] = useState(false);
   const [automationConfigOpen, setAutomationConfigOpen] = useState(false);
   const [automationTemplates, setAutomationTemplates] = useState([]);
@@ -753,6 +786,7 @@ export function ChatPanel({
   const contextPopupRef = useRef(null);
   const approvalMenuRef = useRef(null);
   const personaMenuRef = useRef(null);
+  const thinkingMenuRef = useRef(null);
   const automationTemplateMenuRef = useRef(null);
 
   useEffect(() => {
@@ -804,6 +838,9 @@ export function ChatPanel({
       }
       if (personaMenuRef.current && !personaMenuRef.current.contains(event.target)) {
         setPersonaMenuOpen(false);
+      }
+      if (thinkingMenuRef.current && !thinkingMenuRef.current.contains(event.target)) {
+        setThinkingMenuOpen(false);
       }
       if (
         automationTemplateMenuRef.current &&
@@ -989,6 +1026,10 @@ export function ChatPanel({
   ) ?? activeAutomationTemplate;
   const thinkingToggleDisabled =
     chat.isStreaming || !chat.historyLoaded || Boolean(chat.pendingApproval);
+  const activeThinkingMode = String(chat?.thinkingMode ?? "off").trim() || "off";
+  const activeThinkingOption =
+    THINKING_MODE_OPTIONS.find((option) => option.value === activeThinkingMode) ??
+    THINKING_MODE_OPTIONS[0];
   const messageDeleteDisabled =
     chat.isStreaming ||
     chat.isCompressing ||
@@ -3558,19 +3599,47 @@ export function ChatPanel({
               />
 
               <div className="container-upload-files">
-                {/* 思考标 - 替换了原来的相机标 */}
-                <button
-                  type="button"
-                  className={`upload-file ${chat.deepThinkingEnabled ? "is-active" : ""}`}
-                  onClick={() => chat.setDeepThinkingEnabled((prev) => !prev)}
-                  disabled={thinkingToggleDisabled}
-                  aria-label={chat.deepThinkingEnabled ? "关闭深度思考" : "开启深度思考"}
-                  title={chat.deepThinkingEnabled ? "关闭深度思考" : "开启深度思考"}
-                >
-                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 4.5a5.5 5.5 0 0 0-3.63 9.63c.4.36.63.88.63 1.42V17a1 1 0 0 0 1 1h2.25m0 0V16.5m0 1.5h4.5m-4.5 0v1.25a1.75 1.75 0 0 0 3.5 0V18m0 0H16.5a1 1 0 0 0 1-1v-1.45c0-.54.23-1.06.63-1.42A5.5 5.5 0 1 0 9.5 4.5Z" />
-                  </svg>
-                </button>
+                <div className="thinking-mode-picker" ref={thinkingMenuRef}>
+                  <button
+                    type="button"
+                    className={`upload-file thinking-mode-trigger ${chat.deepThinkingEnabled ? "is-active" : ""}`}
+                    onClick={() => setThinkingMenuOpen((prev) => !prev)}
+                    disabled={thinkingToggleDisabled}
+                    aria-label={`思考模式: ${activeThinkingOption.label}`}
+                    title={`思考模式: ${activeThinkingOption.label}`}
+                  >
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.5 4.5a5.5 5.5 0 0 0-3.63 9.63c.4.36.63.88.63 1.42V17a1 1 0 0 0 1 1h2.25m0 0V16.5m0 1.5h4.5m-4.5 0v1.25a1.75 1.75 0 0 0 3.5 0V18m0 0H16.5a1 1 0 0 0 1-1v-1.45c0-.54.23-1.06.63-1.42A5.5 5.5 0 1 0 9.5 4.5Z" />
+                    </svg>
+                    {activeThinkingMode !== "off" && (
+                      <span className="thinking-mode-badge">{activeThinkingOption.label}</span>
+                    )}
+                  </button>
+
+                  {thinkingMenuOpen && !thinkingToggleDisabled && (
+                    <div className="thinking-mode-menu" role="menu">
+                      {THINKING_MODE_OPTIONS.map((option) => {
+                        const isActive = option.value === activeThinkingMode;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`thinking-mode-option ${isActive ? "is-active" : ""}`}
+                            onClick={() => {
+                              chat.setThinkingMode(option.value);
+                              setThinkingMenuOpen(false);
+                            }}
+                            role="menuitemradio"
+                            aria-checked={isActive}
+                          >
+                            <span className="thinking-mode-option-label">{option.label}</span>
+                            <small>{option.description}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
 
                 {/* 图片上传 */}
                 <button

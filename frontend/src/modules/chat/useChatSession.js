@@ -985,7 +985,7 @@ export function useChatSession(maxContextWindow = 0) {
   const [retryNotice, setRetryNotice] = useState("");
   const [conversationRuntimeReplyErrors, setConversationRuntimeReplyErrors] = useState({});
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [deepThinkingEnabled, setDeepThinkingEnabled] = useState(false);
+  const [thinkingMode, setThinkingMode] = useState("off");
   const [skillsDrawerOpen, setSkillsDrawerOpen] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState([]);
   const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
@@ -995,6 +995,16 @@ export function useChatSession(maxContextWindow = 0) {
   const [compressionState, setCompressionState] = useState(EMPTY_COMPRESSION_STATE);
   const [foregroundStreamingConversationIds, setForegroundStreamingConversationIds] = useState([]);
   const compressionStateRef = useRef(EMPTY_COMPRESSION_STATE);
+  const deepThinkingEnabled = thinkingMode !== "off";
+  const reasoningEffort = ["low", "medium", "high", "xhigh"].includes(thinkingMode)
+    ? thinkingMode
+    : "";
+  const setDeepThinkingEnabled = (value) => {
+    setThinkingMode((current) => {
+      const nextValue = typeof value === "function" ? value(current !== "off") : value;
+      return nextValue ? "default" : "off";
+    });
+  };
 
   const abortControllersByConversationRef = useRef(new Map());
   const hydratedRef = useRef(false);
@@ -2188,7 +2198,8 @@ export function useChatSession(maxContextWindow = 0) {
         messages: normalizeForApi(normalizedMessages),
         approvalMode: String(activeConversationApprovalMode),
         personaId: activeConversationPersonaId,
-        enableDeepThinking: deepThinkingEnabled
+        enableDeepThinking: deepThinkingEnabled,
+        reasoningEffort
       });
     } catch (rerunError) {
       setStatus("idle");
@@ -2271,7 +2282,8 @@ export function useChatSession(maxContextWindow = 0) {
         messages: normalizeForApi(normalizedMessages),
         approvalMode: String(activeConversationApprovalMode),
         personaId: activeConversationPersonaId,
-        enableDeepThinking: deepThinkingEnabled
+        enableDeepThinking: deepThinkingEnabled,
+        reasoningEffort
       });
     } catch (editError) {
       setStatus("idle");
@@ -4014,7 +4026,8 @@ export function useChatSession(maxContextWindow = 0) {
       messages: normalizeForApi(activatedMessages),
       approvalMode: String(conversationRecord?.approvalMode ?? "confirm"),
       personaId: String(conversationRecord?.personaId ?? ""),
-      enableDeepThinking: deepThinkingEnabled
+      enableDeepThinking: deepThinkingEnabled,
+      reasoningEffort
     };
   }
 
@@ -4121,6 +4134,7 @@ export function useChatSession(maxContextWindow = 0) {
             approvalMode: currentPlan.approvalMode,
             personaId: currentPlan.personaId,
             enableDeepThinking: currentPlan.enableDeepThinking,
+            reasoningEffort: currentPlan.reasoningEffort,
             signal: controller.signal,
             onAgentEvent: (event) => {
               applyAgentEvent(event, streamState, currentPlan.conversationId, {
@@ -4267,7 +4281,8 @@ export function useChatSession(maxContextWindow = 0) {
           : activeConversationApprovalMode
       ),
       personaId: activeConversationPersonaId,
-      enableDeepThinking: deepThinkingEnabled
+      enableDeepThinking: deepThinkingEnabled,
+      reasoningEffort
     });
   }
 
@@ -4493,6 +4508,9 @@ export function useChatSession(maxContextWindow = 0) {
       historyLoaded,
       deepThinkingEnabled,
       setDeepThinkingEnabled,
+      thinkingMode,
+      setThinkingMode,
+      reasoningEffort,
       error,
       loadConversation,
       createConversation,
@@ -4560,6 +4578,8 @@ export function useChatSession(maxContextWindow = 0) {
       activeConversationCanStop,
       historyLoaded,
       deepThinkingEnabled,
+      thinkingMode,
+      reasoningEffort,
       error,
       loadConversation,
       createConversation,

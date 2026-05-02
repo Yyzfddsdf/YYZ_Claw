@@ -188,7 +188,8 @@ export class ConversationAgentRuntimeService {
     const resolved = await this.resolveConversationRuntime(conversationId);
     const runtimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
       isSubagent: Boolean(resolved?.isSubagent),
-      enableDeepThinking: Boolean(options.enableDeepThinking)
+      enableDeepThinking: Boolean(options.enableDeepThinking),
+      reasoningEffort: options.reasoningEffort
     });
     let existingConversation = resolved.history;
     let effectiveMessages = Array.isArray(existingConversation?.messages)

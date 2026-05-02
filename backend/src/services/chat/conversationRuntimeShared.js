@@ -532,6 +532,7 @@ export function resolveAgentRuntimeConfig(config = {}, options = {}) {
   const normalizedApiKey = String(config?.apiKey ?? "").trim();
   const useSubagentConfig = Boolean(options?.isSubagent);
   const enableDeepThinking = Boolean(options?.enableDeepThinking);
+  const reasoningEffort = String(options?.reasoningEffort ?? "").trim();
 
   if (!useSubagentConfig) {
     return {
@@ -539,7 +540,8 @@ export function resolveAgentRuntimeConfig(config = {}, options = {}) {
       model: normalizedModel,
       baseURL: normalizedBaseURL,
       apiKey: normalizedApiKey,
-      enableDeepThinking
+      enableDeepThinking,
+      reasoningEffort
     };
   }
 
@@ -552,7 +554,8 @@ export function resolveAgentRuntimeConfig(config = {}, options = {}) {
     model: subagentModel || normalizedModel,
     baseURL: subagentBaseURL || normalizedBaseURL,
     apiKey: subagentApiKey || normalizedApiKey,
-    enableDeepThinking
+    enableDeepThinking,
+    reasoningEffort
   };
 }
 

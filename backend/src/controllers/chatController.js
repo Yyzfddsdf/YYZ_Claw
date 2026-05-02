@@ -166,7 +166,8 @@ function normalizeStreamRequestBody(body) {
   return {
     ...raw,
     messages: Array.isArray(messages) ? messages : raw.messages,
-    enableDeepThinking: parseBooleanFlag(raw.enableDeepThinking)
+    enableDeepThinking: parseBooleanFlag(raw.enableDeepThinking),
+    reasoningEffort: String(raw.reasoningEffort ?? "").trim() || undefined
   };
 }
 
@@ -2329,7 +2330,8 @@ export function createChatController({
         const runtimeChatAgent = resolvedRuntime?.chatAgent ?? chatAgent;
         const runtimeExecutionConfig = resolveAgentRuntimeConfig(configValidation.data, {
           isSubagent: Boolean(resolvedRuntime?.isSubagent),
-          enableDeepThinking: Boolean(chatValidation.data.enableDeepThinking)
+          enableDeepThinking: Boolean(chatValidation.data.enableDeepThinking),
+          reasoningEffort: chatValidation.data.reasoningEffort
         });
 
         const nextForegroundRun = wakeDispatcher?.beginForegroundRun?.({

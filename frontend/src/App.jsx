@@ -293,6 +293,20 @@ function MainApp() {
         <header className="app-sidebar-header">
           <img className="app-brand-icon" src={appIconUrl} alt="" />
           <h1>YYZ_CLAW</h1>
+          <button
+            type="button"
+            className="app-refresh-button"
+            onClick={() => window.location.reload()}
+            aria-label="刷新 YYZ_CLAW"
+            title="刷新 YYZ_CLAW"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 11a8.1 8.1 0 0 0-15.5-2.8" />
+              <path d="M4 4v4h4" />
+              <path d="M4 13a8.1 8.1 0 0 0 15.5 2.8" />
+              <path d="M20 20v-4h-4" />
+            </svg>
+          </button>
         </header>
 
         <nav className="workspace-nav" role="tablist" aria-label="workspace folders">

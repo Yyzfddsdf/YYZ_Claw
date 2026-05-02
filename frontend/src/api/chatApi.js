@@ -256,18 +256,26 @@ export async function streamChat({
   approvalMode,
   personaId,
   enableDeepThinking,
+  reasoningEffort,
   signal,
   onAgentEvent
 }) {
+  const normalizedReasoningEffort = String(reasoningEffort ?? "").trim();
+  const body = {
+    conversationId,
+    messages,
+    approvalMode,
+    personaId,
+    enableDeepThinking: Boolean(enableDeepThinking)
+  };
+
+  if (normalizedReasoningEffort) {
+    body.reasoningEffort = normalizedReasoningEffort;
+  }
+
   await streamSseJson({
     url: "/api/chat/stream",
-    body: {
-      conversationId,
-      messages,
-      approvalMode,
-      personaId,
-      enableDeepThinking: Boolean(enableDeepThinking)
-    },
+    body,
     signal,
     onMessage: (packet) => {
       if (packet.event === "agent" && packet.data && typeof packet.data === "object") {

@@ -163,6 +163,39 @@ body {
   margin-bottom: 0;
 }
 
+.app-refresh-button {
+  width: 2rem;
+  height: 2rem;
+  margin-left: auto;
+  border: 1px solid rgb(148 163 184 / 0.28);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.72);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: 0 10px 20px rgb(15 23 42 / 0.08);
+}
+
+.app-refresh-button:hover {
+  border-color: rgb(37 99 235 / 0.28);
+  background: #ffffff;
+  color: var(--brand);
+  transform: rotate(20deg);
+}
+
+.app-refresh-button svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .workspace-nav {
   padding: 1rem 0.75rem;
   display: flex;

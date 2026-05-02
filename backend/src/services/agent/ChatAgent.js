@@ -215,12 +215,13 @@ export class ChatAgent {
     const baseURL = runtimeConfig?.baseURL?.trim();
     const apiKey = runtimeConfig?.apiKey?.trim();
     const enableDeepThinking = Boolean(runtimeConfig?.enableDeepThinking);
+    const reasoningEffort = String(runtimeConfig?.reasoningEffort ?? "").trim();
 
     if (!model || !baseURL || !apiKey) {
       throw createStatusError("Invalid runtime config. Please save model/baseURL/apiKey first.", 400);
     }
 
-    return { model, baseURL, apiKey, enableDeepThinking };
+    return { model, baseURL, apiKey, enableDeepThinking, reasoningEffort };
   }
 
   createChatCompletionRequest(validatedConfig, conversation, executionContext = {}) {
@@ -237,6 +238,14 @@ export class ChatAgent {
     request.extra_body = {
       enable_thinking: Boolean(validatedConfig.enableDeepThinking)
     };
+
+    if (
+      validatedConfig.enableDeepThinking &&
+      validatedConfig.reasoningEffort &&
+      validatedConfig.reasoningEffort !== "default"
+    ) {
+      request.reasoning_effort = validatedConfig.reasoningEffort;
+    }
 
     return request;
   }

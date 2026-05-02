@@ -84,7 +84,7 @@ function normalizeMessage(item, index) {
     id: String(item.id),
     role: String(item.role),
     content: String(item.content ?? ""),
-    reasoningContent: String(item.reasoningContent ?? ""),
+    reasoningContent: String(item.reasoningContent ?? item.reasoning_content ?? ""),
     timestamp: Number(item.timestamp ?? Date.now()),
     sortIndex: index,
     toolCallId: String(item.toolCallId ?? "").trim(),
@@ -97,6 +97,10 @@ function normalizeMessage(item, index) {
 
 function normalizeApprovalMode(value) {
   return String(value ?? "").trim() === "auto" ? "auto" : "confirm";
+}
+
+function normalizeGoalText(value) {
+  return String(value ?? "").trim();
 }
 
 function normalizeThinkingMode(value) {
@@ -447,6 +451,7 @@ export class SqliteChatHistoryStore {
         model_profile_id TEXT NOT NULL DEFAULT '',
         thinking_mode TEXT NOT NULL DEFAULT 'off',
         approval_mode TEXT NOT NULL DEFAULT 'confirm',
+        goal_text TEXT NOT NULL DEFAULT '',
         skills_json TEXT NOT NULL DEFAULT '[]',
         disabled_tools_json TEXT NOT NULL DEFAULT '[]',
         persona_id TEXT NOT NULL DEFAULT '',
@@ -468,6 +473,7 @@ export class SqliteChatHistoryStore {
     this.ensureConversationModelProfileColumn();
     this.ensureConversationThinkingModeColumn();
     this.ensureConversationApprovalModeColumn();
+    this.ensureConversationGoalColumn();
     this.ensureConversationSkillsColumn();
     this.ensureConversationDisabledToolsColumn();
     this.ensureConversationPersonaColumn();
@@ -581,6 +587,16 @@ export class SqliteChatHistoryStore {
 
     if (!columnNames.has("approval_mode")) {
       db.exec("ALTER TABLE conversations ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'confirm'");
+    }
+  }
+
+  ensureConversationGoalColumn() {
+    const db = this.ensureDb();
+    const columns = db.prepare("PRAGMA table_info(conversations)").all();
+    const columnNames = new Set(columns.map((item) => String(item.name)));
+
+    if (!columnNames.has("goal_text")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN goal_text TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -936,6 +952,7 @@ export class SqliteChatHistoryStore {
         c.model_profile_id,
         c.thinking_mode,
         c.approval_mode,
+        c.goal_text,
         c.skills_json,
         c.disabled_tools_json,
         c.persona_id,
@@ -988,6 +1005,7 @@ export class SqliteChatHistoryStore {
       modelProfileId: String(item.model_profile_id ?? "").trim(),
       thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
+      goal: normalizeGoalText(item.goal_text),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -1053,6 +1071,7 @@ export class SqliteChatHistoryStore {
             c.model_profile_id,
             c.thinking_mode,
             c.approval_mode,
+            c.goal_text,
             c.skills_json,
             c.disabled_tools_json,
             c.persona_id,
@@ -1108,6 +1127,7 @@ export class SqliteChatHistoryStore {
       modelProfileId: String(item.model_profile_id ?? "").trim(),
       thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
+      goal: normalizeGoalText(item.goal_text),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -1139,6 +1159,7 @@ export class SqliteChatHistoryStore {
             model_profile_id,
             thinking_mode,
             approval_mode,
+            goal_text,
             skills_json,
             disabled_tools_json,
             persona_id,
@@ -1204,6 +1225,7 @@ export class SqliteChatHistoryStore {
       modelProfileId: String(conversation.model_profile_id ?? "").trim(),
       thinkingMode: normalizeThinkingMode(conversation.thinking_mode),
       approvalMode: normalizeApprovalMode(conversation.approval_mode),
+      goal: normalizeGoalText(conversation.goal_text),
       skills: normalizeSkillNames(normalizeJsonText(conversation.skills_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(conversation.disabled_tools_json, [])),
       personaId: String(conversation.persona_id ?? "").trim(),
@@ -1556,6 +1578,7 @@ export class SqliteChatHistoryStore {
         model_profile_id,
         thinking_mode,
         approval_mode,
+        goal_text,
         skills_json,
         disabled_tools_json,
         workplace_locked,
@@ -1578,6 +1601,7 @@ export class SqliteChatHistoryStore {
     const approvalMode = normalizeApprovalMode(
       payload.approvalMode ?? existing?.approval_mode
     );
+    const goal = normalizeGoalText(payload.goal ?? existing?.goal_text);
     const skills = normalizeSkillNames(
       payload.skills ?? normalizeJsonText(existing?.skills_json, [])
     );
@@ -1647,6 +1671,7 @@ export class SqliteChatHistoryStore {
             model_profile_id = ?,
             thinking_mode = ?,
             approval_mode = ?,
+            goal_text = ?,
             skills_json = ?,
             disabled_tools_json = ?,
             persona_id = ?,
@@ -1664,6 +1689,7 @@ export class SqliteChatHistoryStore {
           modelProfileId,
           thinkingMode,
           approvalMode,
+          goal,
           JSON.stringify(skills),
           JSON.stringify(disabledTools),
           personaId,
@@ -1686,6 +1712,7 @@ export class SqliteChatHistoryStore {
               model_profile_id,
               thinking_mode,
               approval_mode,
+              goal_text,
               skills_json,
               disabled_tools_json,
               persona_id,
@@ -1695,7 +1722,7 @@ export class SqliteChatHistoryStore {
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
           `
         ).run(
           conversationId,
@@ -1707,6 +1734,7 @@ export class SqliteChatHistoryStore {
           modelProfileId,
           thinkingMode,
           approvalMode,
+          goal,
           JSON.stringify(skills),
           JSON.stringify(disabledTools),
           personaId,
@@ -1769,6 +1797,7 @@ export class SqliteChatHistoryStore {
       modelProfileId: payload.modelProfileId ?? existing.modelProfileId,
       thinkingMode: payload.thinkingMode ?? existing.thinkingMode,
       approvalMode: payload.approvalMode ?? existing.approvalMode,
+      goal: payload.goal ?? existing.goal,
       skills: payload.skills ?? existing.skills,
       disabledTools: payload.disabledTools ?? existing.disabledTools,
       personaId: payload.personaId ?? existing.personaId,
@@ -2067,6 +2096,7 @@ export class SqliteChatHistoryStore {
       modelProfileId: payload.modelProfileId ?? sourceConversation.modelProfileId,
       thinkingMode: payload.thinkingMode ?? sourceConversation.thinkingMode,
       approvalMode: payload.approvalMode ?? sourceConversation.approvalMode,
+      goal: payload.goal ?? sourceConversation.goal,
       skills: payload.skills ?? sourceConversation.skills,
       disabledTools: payload.disabledTools ?? sourceConversation.disabledTools,
       personaId: payload.personaId ?? sourceConversation.personaId,
@@ -2206,6 +2236,35 @@ export class SqliteChatHistoryStore {
         WHERE id = ?
       `
     ).run(normalizedApprovalMode, Date.now(), conversationId);
+
+    return this.getConversation(conversationId);
+  }
+
+  updateConversationGoal(conversationId, goal) {
+    const db = this.ensureDb();
+    const normalizedGoal = normalizeGoalText(goal);
+
+    const existing = db
+      .prepare(
+        `
+          SELECT id
+          FROM conversations
+          WHERE id = ?
+        `
+      )
+      .get(conversationId);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET goal_text = ?, updated_at = ?
+        WHERE id = ?
+      `
+    ).run(normalizedGoal, Date.now(), conversationId);
 
     return this.getConversation(conversationId);
   }

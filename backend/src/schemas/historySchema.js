@@ -43,6 +43,7 @@ export const conversationUpsertSchema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   workplacePath: z.string().trim().min(1, "workplacePath cannot be empty").optional(),
   approvalMode: approvalModeSchema.optional(),
+  goal: z.string().optional(),
   skills: z.array(z.string().trim().min(1)).optional(),
   disabledTools: z.array(z.string().trim().min(1)).optional(),
   personaId: z.string().trim().max(120).optional(),

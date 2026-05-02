@@ -55,6 +55,13 @@ export function updateHistoryApprovalModeById(conversationId, approvalMode) {
   });
 }
 
+export function updateHistoryGoalById(conversationId, goal) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/goal`, {
+    method: "PUT",
+    body: { goal }
+  });
+}
+
 export function updateHistorySkillsById(conversationId, skills) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/skills`, {
     method: "PUT",

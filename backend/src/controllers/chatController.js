@@ -7,6 +7,7 @@ import {
   approvalModeSchema,
   chatRequestSchema,
   conversationApprovalModeSchema,
+  conversationGoalSchema,
   conversationCompressionSchema
 } from "../schemas/chatSchema.js";
 import { configSchema } from "../schemas/configSchema.js";
@@ -27,8 +28,10 @@ import {
   buildCompressionTokenSnapshot,
   buildConversationPromptMessages,
   buildForkTitle,
+  createGoalContinuationMessage,
   createValidationError,
   extractFirstSentence,
+  isGoalEnabled,
   isAutoTitleCandidate,
   loadApprovalRules,
   normalizeUsageRecordPayload,
@@ -1297,6 +1300,7 @@ export function createChatController({
         title: buildForkTitle(history.title),
         workplacePath: history.workplacePath,
         approvalMode: history.approvalMode,
+        goal: history.goal,
         personaId: history.personaId,
         developerPrompt: history.developerPrompt,
         skills: history.skills,
@@ -1393,6 +1397,36 @@ export function createChatController({
       res.json({
         history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
         approvalMode: validation.data.approvalMode
+      });
+    },
+
+    updateGoalById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationGoalSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const updated = historyStore.updateConversationGoal(
+        conversationId,
+        validation.data.goal
+      );
+
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        goal: String(validation.data.goal ?? "").trim()
       });
     },
 
@@ -1679,6 +1713,7 @@ export function createChatController({
         modelProfileId: existing.modelProfileId,
         thinkingMode: existing.thinkingMode,
         approvalMode: existing.approvalMode,
+        goal: existing.goal,
         skills: existing.skills,
         disabledTools: existing.disabledTools,
         personaId: existing.personaId,
@@ -1829,6 +1864,7 @@ export function createChatController({
           validation.data.thinkingMode ?? existing?.thinkingMode
         ),
         approvalMode: validation.data.approvalMode,
+        goal: validation.data.goal ?? existing?.goal,
         skills: validation.data.skills,
         disabledTools: validation.data.disabledTools,
         personaId,
@@ -2110,6 +2146,7 @@ export function createChatController({
       let runResult = null;
       let executionContext = null;
       let completionDispatchRequest = null;
+      let continueGoalAfterFinish = false;
 
       try {
         if (toolRegistry && typeof toolRegistry.refresh === "function") {
@@ -2194,6 +2231,11 @@ export function createChatController({
             ? resumedHistory.messages
             : [],
           runtimeConfig: resolvedPendingApproval.runtimeConfig,
+          goal: String(resumedHistory?.goal ?? resolvedPendingApproval.executionContext?.goal ?? "").trim(),
+          goalState: resolvedPendingApproval.executionContext?.goalState &&
+            typeof resolvedPendingApproval.executionContext.goalState === "object"
+              ? { ...resolvedPendingApproval.executionContext.goalState }
+              : {},
           memoryStore,
           skillCatalog,
           skillValidator,
@@ -2255,7 +2297,7 @@ export function createChatController({
         });
 
         const nextMessages = recorder.getMessages();
-        const updatedResumedHistory = historyStore.mergeConversation({
+        let updatedResumedHistory = historyStore.mergeConversation({
           conversationId: resolvedPendingApproval.conversationId,
           title: resumedHistory?.title,
           workplacePath: resumedHistory?.workplacePath,
@@ -2263,6 +2305,7 @@ export function createChatController({
           source: resumedHistory?.source,
           model: runtimeModel || resumedHistory?.model,
           approvalMode: resumedHistory?.approvalMode,
+          goal: resumedHistory?.goal,
           skills: resumedHistory?.skills,
           disabledTools: resumedHistory?.disabledTools,
           personaId: resumedHistory?.personaId,
@@ -2270,9 +2313,44 @@ export function createChatController({
           messages: nextMessages
         });
 
+        if (executionContext?.goalState?.submitted) {
+          updatedResumedHistory = historyStore.updateConversationGoal(
+            resolvedPendingApproval.conversationId,
+            ""
+          ) ?? updatedResumedHistory;
+        }
+
         historyStore.updatePendingToolApprovalStatus(approvalId, "completed");
 
-        if (runResult?.status !== "pending_approval") {
+        if (
+          runResult?.status === "goal_incomplete" &&
+          isGoalEnabled(updatedResumedHistory?.goal)
+        ) {
+          const goalContinuationMessage = createGoalContinuationMessage(updatedResumedHistory.goal);
+          updatedResumedHistory = historyStore.appendMessages(
+            resolvedPendingApproval.conversationId,
+            [goalContinuationMessage],
+            {
+              updatedAt: goalContinuationMessage.timestamp
+            }
+          ) ?? updatedResumedHistory;
+          continueGoalAfterFinish = true;
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "conversation_messages_appended",
+              messages: [goalContinuationMessage],
+              checkpoint: "goal_incomplete_end"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+
+        if (
+          runResult?.status !== "pending_approval" &&
+          runResult?.status !== "goal_incomplete"
+        ) {
           memorySummaryService?.scheduleRefresh?.({
             conversationId: resolvedPendingApproval.conversationId
           });
@@ -2308,7 +2386,7 @@ export function createChatController({
         completionDispatchRequest = resolveSubagentCompletionDispatchRequest({
           executionContext,
           runResult,
-          status: foregroundStatus,
+          status: runResult?.status === "goal_incomplete" ? "goal_incomplete" : foregroundStatus,
           displayName:
             orchestratorStore?.findAgentByConversationId?.(resolvedPendingApproval.conversationId)
               ?.displayName ?? "",
@@ -2347,6 +2425,12 @@ export function createChatController({
             agentId: foregroundRun.agentId,
             status: foregroundStatus
           });
+        }
+        if (continueGoalAfterFinish && foregroundRun) {
+          void wakeDispatcher?.startBackgroundRun?.(
+            foregroundRun.sessionId,
+            foregroundRun.agentId
+          );
         }
         if (completionDispatchRequest) {
           await orchestratorSupervisorService?.dispatchCompletionToPrimary?.(completionDispatchRequest);
@@ -2431,6 +2515,7 @@ export function createChatController({
       let runResult = null;
       let executionContext = null;
       let completionDispatchRequest = null;
+      let continueGoalAfterFinish = false;
 
       try {
         if (toolRegistry && typeof toolRegistry.refresh === "function") {
@@ -2576,6 +2661,7 @@ export function createChatController({
             modelProfileId: historyRuntimeConfig.modelProfileId,
             thinkingMode: thinkingRuntimeOptions.thinkingMode,
             approvalMode,
+            goal: existingConversation?.goal,
             skills: persistedSkillNames,
             disabledTools: existingConversation?.disabledTools,
             personaId,
@@ -2641,6 +2727,7 @@ export function createChatController({
               modelProfileId: existingConversation?.modelProfileId,
               thinkingMode: existingConversation?.thinkingMode,
               approvalMode: existingConversation?.approvalMode,
+              goal: existingConversation?.goal,
               skills: existingConversation?.skills,
               disabledTools: existingConversation?.disabledTools,
               personaId: existingConversation?.personaId,
@@ -2746,6 +2833,8 @@ export function createChatController({
           disabledTools: Array.isArray(existingConversation?.disabledTools)
             ? existingConversation.disabledTools
             : [],
+          goal: String(existingConversation?.goal ?? "").trim(),
+          goalState: {},
           memoryStore,
           skillCatalog,
           skillValidator,
@@ -2809,6 +2898,7 @@ export function createChatController({
           modelProfileId: runtimeExecutionConfig.modelProfileId,
           thinkingMode: thinkingRuntimeOptions.thinkingMode,
           approvalMode: existingConversation?.approvalMode ?? approvalMode,
+          goal: existingConversation?.goal,
           skills: existingConversation?.skills,
           disabledTools: existingConversation?.disabledTools,
           personaId: existingConversation?.personaId,
@@ -2816,9 +2906,42 @@ export function createChatController({
           messages: nextMessages
         });
 
+        if (executionContext?.goalState?.submitted) {
+          existingConversation = historyStore.updateConversationGoal(
+            conversationId,
+            ""
+          ) ?? existingConversation;
+        }
+
+        if (
+          runResult?.status === "goal_incomplete" &&
+          isGoalEnabled(existingConversation?.goal)
+        ) {
+          const goalContinuationMessage = createGoalContinuationMessage(existingConversation.goal);
+          existingConversation = historyStore.appendMessages(
+            conversationId,
+            [goalContinuationMessage],
+            {
+              updatedAt: goalContinuationMessage.timestamp
+            }
+          ) ?? existingConversation;
+          continueGoalAfterFinish = true;
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "conversation_messages_appended",
+              messages: [goalContinuationMessage],
+              checkpoint: "goal_incomplete_end"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+
         if (
           !resolvedRuntime?.isSubagent &&
-          runResult?.status !== "pending_approval"
+          runResult?.status !== "pending_approval" &&
+          runResult?.status !== "goal_incomplete"
         ) {
           memorySummaryService?.scheduleRefresh?.({
             conversationId
@@ -2855,7 +2978,7 @@ export function createChatController({
         completionDispatchRequest = resolveSubagentCompletionDispatchRequest({
           executionContext,
           runResult,
-          status: foregroundStatus,
+          status: runResult?.status === "goal_incomplete" ? "goal_incomplete" : foregroundStatus,
           displayName:
             orchestratorStore?.findAgentByConversationId?.(conversationId)?.displayName ?? "",
           agentType: resolvedRuntime?.agentType
@@ -2892,6 +3015,12 @@ export function createChatController({
             agentId: foregroundRun.agentId,
             status: foregroundStatus
           });
+        }
+        if (continueGoalAfterFinish && foregroundRun) {
+          void wakeDispatcher?.startBackgroundRun?.(
+            foregroundRun.sessionId,
+            foregroundRun.agentId
+          );
         }
         if (completionDispatchRequest) {
           await orchestratorSupervisorService?.dispatchCompletionToPrimary?.(completionDispatchRequest);

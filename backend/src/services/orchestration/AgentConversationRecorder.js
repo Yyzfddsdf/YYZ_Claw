@@ -68,7 +68,7 @@ function normalizeMessage(message = {}) {
     id: String(message?.id ?? createId("message")),
     role: String(message?.role ?? "assistant"),
     content: String(message?.content ?? ""),
-    reasoningContent: String(message?.reasoningContent ?? ""),
+    reasoningContent: String(message?.reasoningContent ?? message?.reasoning_content ?? ""),
     timestamp: Number(message?.timestamp ?? Date.now()),
     toolCallId: String(message?.toolCallId ?? "").trim(),
     toolName: String(message?.toolName ?? "").trim(),

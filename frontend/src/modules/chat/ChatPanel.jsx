@@ -708,6 +708,7 @@ export function ChatPanel({
   const [historyPaneOpen, setHistoryPaneOpen] = useState(Boolean(showHistoryPane));
   const [contextPopupOpen, setContextPopupOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
   const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
   const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -799,6 +800,10 @@ export function ChatPanel({
       ttsAudioRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    setGoalDraft(String(chat.activeConversationGoal ?? ""));
+  }, [chat.activeConversationGoal, chat.activeConversationId]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -2647,6 +2652,9 @@ export function ChatPanel({
               <span className="chat-workplace-badge is-open">
                 {chat.activeConversationApprovalMode === "auto" ? "自动审批" : "确认审批"}
               </span>
+              {chat.activeConversationGoal ? (
+                <span className="chat-workplace-badge is-goal">目标追踪</span>
+              ) : null}
             </div>
 
             <button
@@ -2766,6 +2774,7 @@ export function ChatPanel({
               const isInternalToolImageMessage = messageMetaKind === "tool_image_input";
               const isRuntimeHookInjectedMessage = messageMetaKind === "runtime_hook_injected";
               const isOrchestratorMessage = messageMetaKind === "orchestrator_message";
+              const isGoalContinuationMessage = messageMetaKind === "goal_continuation";
               const imageAttachments = getImageAttachments(message);
               const parsedFileAttachments = getParsedFileAttachments(message);
               const messageText = String(message.content ?? "").trim();
@@ -2934,6 +2943,8 @@ export function ChatPanel({
                   } ${isInternalToolImageMessage ? "bubble-tool-image-input" : ""} ${
                     isRuntimeHookInjectedMessage ? "bubble-runtime-hook-injected" : ""
                   } ${
+                    isGoalContinuationMessage ? "bubble-goal-continuation" : ""
+                  } ${
                     isStreamingThisMessage ? "is-streaming" : ""
                   }`}
                 >
@@ -2961,6 +2972,13 @@ export function ChatPanel({
                   {isRuntimeHookInjectedMessage ? (
                     <div className="runtime-hook-strip">
                       <span className="runtime-hook-strip-label">{getRuntimeHookStripText(message)}</span>
+                    </div>
+                  ) : isGoalContinuationMessage ? (
+                    <div className="goal-continuation-card">
+                      <div className="goal-continuation-main">
+                        <span className="goal-continuation-badge">目标追踪</span>
+                        <p>系统已提醒继续推进目标。</p>
+                      </div>
                     </div>
                   ) : isCompressionSummary ? (
                     <div className="compression-card-content">
@@ -3975,7 +3993,11 @@ export function ChatPanel({
                         chat.activeConversationApprovalMode === "auto" ? "is-auto" : "is-confirm"
                       }`}
                     />
-                    {chat.activeConversationApprovalMode === "auto" ? "自动" : "审批"}
+                    {chat.activeConversationGoal
+                      ? "目标"
+                      : chat.activeConversationApprovalMode === "auto"
+                        ? "自动"
+                        : "审批"}
                     <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" className={`approval-caret ${approvalMenuOpen ? "is-open" : ""}`}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
                     </svg>
@@ -3999,6 +4021,50 @@ export function ChatPanel({
                         <span className="approval-dot is-auto" />
                         自动审批
                       </button>
+                      <div className={`goal-control ${chat.activeConversationGoal ? "is-active" : ""}`}>
+                        <div className="goal-control-head">
+                          <span className="approval-dot is-goal" />
+                          <strong>目标追踪</strong>
+                          <small>保存只是配置；发送后才启动追踪</small>
+                        </div>
+                        <textarea
+                          value={goalDraft}
+                          onChange={(event) => setGoalDraft(event.target.value)}
+                          placeholder="写下本会话必须完成的目标，长度不限。"
+                          rows={5}
+                        />
+                        <div className="goal-control-actions">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              chat.setConversationGoal(goalDraft);
+                              setApprovalMenuOpen(false);
+                            }}
+                          >
+                            保存目标
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await chat.sendConversationGoal(goalDraft);
+                              setApprovalMenuOpen(false);
+                            }}
+                            disabled={!goalDraft.trim()}
+                          >
+                            保存并发送
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGoalDraft("");
+                              chat.setConversationGoal("");
+                              setApprovalMenuOpen(false);
+                            }}
+                          >
+                            清除
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

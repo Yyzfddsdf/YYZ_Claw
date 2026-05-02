@@ -34,6 +34,10 @@ function getAssistantContentText(assistantRound) {
   return String(assistantRound?.assistantMessage?.content ?? "").trim();
 }
 
+function isGoalSubmitted(executionContext = {}) {
+  return Boolean(executionContext?.goalState?.submitted);
+}
+
 function createToolCallSkeleton() {
   return {
     id: "",
@@ -144,16 +148,17 @@ function sanitizeToolCallsForModel(toolCalls) {
     .filter((toolCall) => toolCall && toolCall.function.name);
 }
 
-function sanitizeConversationForModel(conversation = []) {
+function sanitizeConversationForModel(conversation = [], options = {}) {
+  const includeReasoningContent = Boolean(options.includeReasoningContent);
   return Array.isArray(conversation)
     ? conversation.map((message) => {
         if (!message || typeof message !== "object" || Array.isArray(message)) {
           return message;
         }
 
-        const reasoningContent = String(
-          message.reasoning_content ?? message.reasoningContent ?? ""
-        );
+        const reasoningContent = includeReasoningContent
+          ? String(message.reasoning_content ?? message.reasoningContent ?? "")
+          : "";
         if (!Array.isArray(message.tool_calls) || message.tool_calls.length === 0) {
           return reasoningContent
             ? {
@@ -263,9 +268,11 @@ export class ChatAgent {
     };
   }
 
-  createModelProviderRequestParams(conversation, executionContext = {}) {
+  createModelProviderRequestParams(conversation, executionContext = {}, runtimeConfig = {}) {
     return {
-      messages: sanitizeConversationForModel(conversation),
+      messages: sanitizeConversationForModel(conversation, {
+        includeReasoningContent: Boolean(runtimeConfig.enableDeepThinking)
+      }),
       tools: this.toolRegistry.getOpenAITools(executionContext),
       stream_options: {
         include_usage: true
@@ -473,6 +480,20 @@ export class ChatAgent {
 
     try {
       const result = await this.toolRegistry.executeToolCall(toolCall, nestedExecutionContext);
+      if (
+        nestedExecutionContext.goalState &&
+        typeof nestedExecutionContext.goalState === "object" &&
+        !Array.isArray(nestedExecutionContext.goalState)
+      ) {
+        const currentGoalState =
+          executionContext.goalState &&
+          typeof executionContext.goalState === "object" &&
+          !Array.isArray(executionContext.goalState)
+            ? executionContext.goalState
+            : {};
+        Object.assign(currentGoalState, nestedExecutionContext.goalState);
+        executionContext.goalState = currentGoalState;
+      }
       throwIfAborted(nestedExecutionContext?.abortSignal);
       return result;
     } catch (error) {
@@ -793,6 +814,13 @@ export class ChatAgent {
       currentAtomicStepId: String(executionContext?.currentAtomicStepId ?? "").trim(),
       workplacePath: String(executionContext?.workplacePath ?? "").trim(),
       workingDirectory: String(executionContext?.workingDirectory ?? "").trim(),
+      goal: String(executionContext?.goal ?? "").trim(),
+      goalState:
+        executionContext?.goalState &&
+        typeof executionContext.goalState === "object" &&
+        !Array.isArray(executionContext.goalState)
+          ? { ...executionContext.goalState }
+          : {},
       activeSkillNames: Array.isArray(executionContext?.activeSkillNames)
         ? executionContext.activeSkillNames
             .map((item) => String(item ?? "").trim())
@@ -916,7 +944,7 @@ export class ChatAgent {
         () =>
           runModelProviderStream(
             validatedConfig,
-            this.createModelProviderRequestParams(apiConversation, executionContext),
+            this.createModelProviderRequestParams(apiConversation, executionContext, validatedConfig),
             { signal: abortSignal }
           ),
         onEvent,
@@ -976,6 +1004,17 @@ export class ChatAgent {
 
         const finalState = assembler.snapshot();
         onEvent?.({ type: "final", ...finalState });
+        if (String(executionContext?.goal ?? "").trim() && !isGoalSubmitted(executionContext)) {
+          onEvent?.({
+            type: "goal_incomplete",
+            goal: String(executionContext?.goal ?? "").trim(),
+            mergedText: assembler.getMergedText()
+          });
+          return {
+            status: "goal_incomplete",
+            ...finalState
+          };
+        }
         return {
           status: "completed",
           ...finalState

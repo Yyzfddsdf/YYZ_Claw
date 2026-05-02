@@ -1,6 +1,7 @@
 export const MODEL_PROVIDERS = Object.freeze({
   OPENAI_COMPLETION: "openai-completion",
   OPENAI_RESPONSES: "openai-responses",
+  DEEPSEEK_COMPLETION: "deepseek-completion",
   DASHSCOPE_COMPLETION: "dashscope-completion",
   ANTHROPIC_MESSAGES: "anthropic-messages"
 });
@@ -31,6 +32,15 @@ const PROVIDER_DEFINITIONS = Object.freeze({
     supportsThinkingSwitch: false,
     supportsReasoningContent: true,
     supportsVision: true
+  }),
+  [MODEL_PROVIDERS.DEEPSEEK_COMPLETION]: Object.freeze({
+    id: MODEL_PROVIDERS.DEEPSEEK_COMPLETION,
+    label: "DeepSeek Chat Completions",
+    protocol: MODEL_PROVIDER_PROTOCOLS.OPENAI_CHAT_COMPLETIONS,
+    supportsReasoningEffort: true,
+    supportsThinkingSwitch: true,
+    supportsReasoningContent: true,
+    supportsVision: false
   }),
   [MODEL_PROVIDERS.DASHSCOPE_COMPLETION]: Object.freeze({
     id: MODEL_PROVIDERS.DASHSCOPE_COMPLETION,

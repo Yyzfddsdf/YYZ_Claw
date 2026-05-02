@@ -3,7 +3,9 @@ import {
   buildConversationPromptMessages,
   buildCompressionSnapshotMetadata,
   buildCompressionTokenSnapshot,
+  createGoalContinuationMessage,
   extractFirstSentence,
+  isGoalEnabled,
   isAutoTitleCandidate,
   loadApprovalRules,
   normalizeUsageRecordPayload,
@@ -57,7 +59,7 @@ function normalizeRecorderMessageForStorage(message = {}) {
     id: String(message.id ?? "").trim(),
     role: String(message.role ?? "assistant").trim() || "assistant",
     content: String(message.content ?? ""),
-    reasoningContent: String(message.reasoningContent ?? ""),
+    reasoningContent: String(message.reasoningContent ?? message.reasoning_content ?? ""),
     timestamp: Number(message.timestamp ?? Date.now()),
     toolCallId: String(message.toolCallId ?? "").trim(),
     toolName: String(message.toolName ?? "").trim(),
@@ -72,7 +74,7 @@ function buildStorageMessageSignature(message = {}) {
   return JSON.stringify({
     role: String(message.role ?? "assistant").trim() || "assistant",
     content: String(message.content ?? ""),
-    reasoningContent: String(message.reasoningContent ?? ""),
+    reasoningContent: String(message.reasoningContent ?? message.reasoning_content ?? ""),
     toolCallId: String(message.toolCallId ?? "").trim(),
     toolName: String(message.toolName ?? "").trim(),
     toolCalls: normalizeToolCalls(message.toolCalls),
@@ -240,7 +242,9 @@ export class ConversationAgentRuntimeService {
           modelProfileId: existingConversation?.modelProfileId,
           thinkingMode: existingConversation?.thinkingMode,
           approvalMode: existingConversation?.approvalMode,
+          goal: existingConversation?.goal,
           skills: existingConversation?.skills,
+          disabledTools: existingConversation?.disabledTools,
           developerPrompt: existingConversation?.developerPrompt,
           messages: compressionResult.messages
         });
@@ -365,6 +369,8 @@ export class ConversationAgentRuntimeService {
       historyStore: this.historyStore,
       rawConversationMessages: effectiveMessages,
       runtimeConfig,
+      goal: normalizeText(existingConversation?.goal),
+      goalState: {},
       memoryStore: this.memoryStore,
       skillCatalog: this.skillCatalog,
       skillValidator: this.skillValidator,
@@ -452,7 +458,31 @@ export class ConversationAgentRuntimeService {
     });
 
     syncRecorderToHistory();
-    const updatedHistory = this.historyStore.getConversation(conversationId);
+    let updatedHistory = this.historyStore.getConversation(conversationId);
+    let goalContinuationMessage = null;
+
+    if (executionContext?.goalState?.submitted) {
+      updatedHistory = this.historyStore.updateConversationGoal(conversationId, "") ?? updatedHistory;
+    }
+
+    if (
+      normalizeText(runResult?.status) === "goal_incomplete" &&
+      isGoalEnabled(updatedHistory?.goal)
+    ) {
+      goalContinuationMessage = createGoalContinuationMessage(updatedHistory.goal);
+      updatedHistory = this.historyStore.appendMessages(
+        conversationId,
+        [goalContinuationMessage],
+        {
+          updatedAt: goalContinuationMessage.timestamp
+        }
+      ) ?? updatedHistory;
+      options.onEvent?.({
+        type: "conversation_messages_appended",
+        messages: [goalContinuationMessage],
+        checkpoint: "goal_incomplete_end"
+      });
+    }
 
     if (firstSentence && isAutoTitleCandidate(updatedHistory?.title)) {
       scheduleAsyncTitleGeneration({
@@ -463,7 +493,11 @@ export class ConversationAgentRuntimeService {
       });
     }
 
-    if (!resolved.isSubagent && normalizeText(runResult?.status) !== "pending_approval") {
+    if (
+      !resolved.isSubagent &&
+      normalizeText(runResult?.status) !== "pending_approval" &&
+      normalizeText(runResult?.status) !== "goal_incomplete"
+    ) {
       this.memorySummaryService?.scheduleRefresh?.({
         conversationId
       });
@@ -480,6 +514,7 @@ export class ConversationAgentRuntimeService {
     return {
       ...runResult,
       history: updatedHistory,
+      goalContinuationMessage,
       sessionId: resolved.sessionId,
       agentId: resolved.agentId,
       agentType: resolved.agentType,

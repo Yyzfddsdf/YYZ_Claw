@@ -405,6 +405,10 @@ export class AgentWakeDispatcher {
           runResult.subagentCompletionRequest
         );
       }
+      if (normalizeText(runResult?.status) === "goal_incomplete") {
+        void this.startBackgroundRun(sessionId, agentId);
+        return runRecord;
+      }
       await this.continueAgentAfterInsertions(sessionId, agentId, finishResult);
       return runRecord;
     } catch (error) {

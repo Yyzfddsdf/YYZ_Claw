@@ -44,6 +44,10 @@ export function createChatRoutes(services) {
     "/chat/histories/:conversationId/approval-mode",
     asyncHandler(controller.updateApprovalModeById)
   );
+  router.put(
+    "/chat/histories/:conversationId/goal",
+    asyncHandler(controller.updateGoalById)
+  );
   router.put("/chat/histories/:conversationId/skills", asyncHandler(controller.updateSkillsById));
   router.put("/chat/histories/:conversationId/tools", asyncHandler(controller.updateToolsById));
   router.put("/chat/histories/:conversationId/persona", asyncHandler(controller.updatePersonaById));

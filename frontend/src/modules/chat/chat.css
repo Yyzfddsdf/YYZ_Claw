@@ -1683,6 +1683,12 @@
   border: 1px solid #bfdbfe;
 }
 
+.chat-workplace-badge.is-goal {
+  color: #92400e;
+  background: rgba(251, 191, 36, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
 .workplace-open {
   background: var(--bg-elevated);
   border: 1px solid var(--border-light);
@@ -2085,6 +2091,55 @@
   background: #e0e7ff;
   color: #3730a3;
   border: 1px solid #c7d2fe;
+}
+
+.bubble-goal-continuation .bubble-content {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.goal-continuation-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.42rem 0.62rem;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(255, 247, 237, 0.78)),
+    rgba(255, 255, 255, 0.62);
+  color: #78350f;
+}
+
+.goal-continuation-main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.goal-continuation-main p {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.goal-continuation-main code {
+  font-size: 0.76rem;
+  color: #92400e;
+}
+
+.goal-continuation-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.12rem 0.46rem;
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  color: #92400e;
+  font-size: 0.66rem;
+  font-weight: 800;
 }
 
 .bubble-delete-button {
@@ -4316,6 +4371,10 @@
   background: var(--success);
 }
 
+.approval-dot.is-goal {
+  background: #f59e0b;
+}
+
 .approval-caret {
   margin-left: 0.1rem;
   opacity: 0.6;
@@ -4335,7 +4394,7 @@
   border-radius: var(--radius-md);
   padding: 4px;
   box-shadow: var(--shadow-lg);
-  min-width: 120px;
+  min-width: 220px;
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -4362,6 +4421,70 @@
 
 .approval-menu button:hover {
   background: var(--bg-hover);
+}
+
+.goal-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.18);
+}
+
+.goal-control.is-active {
+  background: rgba(245, 158, 11, 0.13);
+}
+
+.goal-control-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 6px;
+  align-items: center;
+}
+
+.goal-control-head strong {
+  font-size: 0.8rem;
+}
+
+.goal-control-head small {
+  grid-column: 2;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.goal-control textarea {
+  width: 100%;
+  min-width: 260px;
+  max-width: 360px;
+  max-height: 220px;
+  resize: vertical;
+  padding: 8px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.78rem;
+  outline: none;
+}
+
+.goal-control textarea:focus {
+  border-color: rgba(245, 158, 11, 0.58);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.14);
+}
+
+.goal-control-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.approval-menu .goal-control-actions button {
+  padding: 5px 8px;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .chat-context-meter-text {

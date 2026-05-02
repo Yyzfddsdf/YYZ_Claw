@@ -55,6 +55,10 @@ export const conversationApprovalModeSchema = z.object({
   approvalMode: approvalModeSchema
 });
 
+export const conversationGoalSchema = z.object({
+  goal: z.string().optional().default("")
+});
+
 export const conversationCompressionSchema = z.object({
   messages: z.array(chatMessageSchema).min(1, "at least one message is required"),
   trigger: compressionTriggerSchema.default("manual")

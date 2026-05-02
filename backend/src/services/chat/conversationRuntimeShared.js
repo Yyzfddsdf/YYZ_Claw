@@ -344,6 +344,34 @@ export function createPersonaPromptMessage(personaPrompt) {
   };
 }
 
+export function normalizeGoalText(value) {
+  return String(value ?? "").trim();
+}
+
+export function isGoalEnabled(goal) {
+  return normalizeGoalText(goal).length > 0;
+}
+
+export function createGoalContinuationMessage(goal) {
+  const normalizedGoal = normalizeGoalText(goal);
+  return {
+    id: `msg_goal_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+    role: "user",
+    content: [
+      "[目标追踪] 本轮回复结束，但你还没有调用 goal_submit 提交完成。",
+      "请先严格查看并核对完整目标，确认没有遗漏任何要求。",
+      "只有在目标 100% 完成、且你已经核对确认后，才允许调用 goal_submit。",
+      "如果仍有任何未完成、未验证或不确定的部分，禁止提交；请继续推进目标。",
+      normalizedGoal ? `当前目标：${normalizedGoal}` : ""
+    ].filter(Boolean).join("\n"),
+    meta: {
+      kind: "goal_continuation",
+      goal: normalizedGoal
+    },
+    timestamp: Date.now()
+  };
+}
+
 export function buildSubagentGuardPrompt() {
   return [
     "你当前运行在子智能体模式。",

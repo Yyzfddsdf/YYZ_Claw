@@ -1,6 +1,7 @@
 export const MODEL_PROVIDER_IDS = {
   OPENAI_COMPLETION: "openai-completion",
   OPENAI_RESPONSES: "openai-responses",
+  DEEPSEEK_COMPLETION: "deepseek-completion",
   DASHSCOPE_COMPLETION: "dashscope-completion",
   ANTHROPIC_MESSAGES: "anthropic-messages"
 };
@@ -28,6 +29,17 @@ export const MODEL_PROVIDER_OPTIONS = [
       supportsThinkingSwitch: false,
       supportsReasoningContent: true,
       supportsVision: true
+    }
+  },
+  {
+    value: MODEL_PROVIDER_IDS.DEEPSEEK_COMPLETION,
+    label: "DeepSeek Completion",
+    description: "DeepSeek Chat Completions，使用 thinking.type 开关，并支持 reasoning_effort=high/max。",
+    capabilities: {
+      supportsReasoningEffort: true,
+      supportsThinkingSwitch: true,
+      supportsReasoningContent: true,
+      supportsVision: false
     }
   },
   {
@@ -132,6 +144,22 @@ export function getThinkingModeOptionsForProvider(value) {
         value: "high",
         label: "高",
         description: "传 reasoning.effort=high"
+      }
+    ];
+  }
+
+  if (provider === MODEL_PROVIDER_IDS.DEEPSEEK_COMPLETION) {
+    return [
+      BASE_THINKING_OFF_OPTION,
+      {
+        value: "high",
+        label: "高",
+        description: "传 thinking.type=enabled 与 reasoning_effort=high"
+      },
+      {
+        value: "max",
+        label: "最高",
+        description: "传 thinking.type=enabled 与 reasoning_effort=max"
       }
     ];
   }

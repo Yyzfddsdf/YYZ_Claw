@@ -25,6 +25,7 @@ import {
   stopConversationRunById,
   subscribeChatEvents,
   updateHistoryApprovalModeById,
+  updateHistoryGoalById,
   updateHistoryModelProfileById,
   updateHistoryPersonaById,
   updateHistoryThinkingModeById,
@@ -341,7 +342,7 @@ function normalizeChatMessage(message) {
     id: normalizedMessageId,
     role: String(message?.role ?? "user"),
     content: String(message?.content ?? ""),
-    reasoningContent: String(message?.reasoningContent ?? ""),
+    reasoningContent: String(message?.reasoningContent ?? message?.reasoning_content ?? ""),
     reasoningStartedAt: Number(message?.reasoningStartedAt ?? 0),
     reasoningFinishedAt: Number(message?.reasoningFinishedAt ?? 0),
     timestamp: normalizeMessageTimestamp(message?.timestamp, normalizedMessageId),
@@ -427,6 +428,7 @@ function toSummary(history) {
     thinkingMode: normalizeThinkingMode(history?.thinkingMode),
     workplaceLocked: Boolean(history?.workplaceLocked),
     approvalMode: String(history?.approvalMode ?? "confirm"),
+    goal: normalizeGoal(history?.goal),
     personaId: String(history?.personaId ?? "").trim(),
     developerPrompt: String(history?.developerPrompt ?? ""),
     skills: Array.isArray(history?.skills)
@@ -460,6 +462,7 @@ function normalizeSummaryList(histories) {
     thinkingMode: normalizeThinkingMode(item?.thinkingMode),
     workplaceLocked: Boolean(item.workplaceLocked),
     approvalMode: String(item.approvalMode ?? "confirm"),
+    goal: normalizeGoal(item.goal),
     personaId: String(item.personaId ?? "").trim(),
     developerPrompt: String(item.developerPrompt ?? ""),
     skills: Array.isArray(item.skills)
@@ -634,6 +637,25 @@ function normalizeDeveloperPrompt(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeGoal(value) {
+  return String(value ?? "").trim();
+}
+
+function buildGoalStartMessage(goal) {
+  const normalizedGoal = normalizeGoal(goal);
+  if (!normalizedGoal) {
+    return "";
+  }
+
+  return [
+    "目标追踪启动。",
+    "请开始执行以下完整目标；执行过程中可调用 goal_view 确认目标原文。",
+    "只有在目标 100% 完成、且你已经核对确认没有遗漏后，才允许调用 goal_submit。",
+    "如果仍有任何未完成、未验证或不确定的部分，禁止提交；请继续推进目标。",
+    `当前目标：${normalizedGoal}`
+  ].join("\n");
+}
+
 function normalizeTokenUsage(value) {
   return {
     promptTokens: Number(value?.promptTokens ?? 0),
@@ -759,6 +781,7 @@ function buildConversationUpsertPayload({
   modelProfileId = "",
   thinkingMode = "off",
   developerPrompt = "",
+  goal = "",
   skills = [],
   disabledTools = [],
   messages = []
@@ -770,6 +793,7 @@ function buildConversationUpsertPayload({
     modelProfileId: String(modelProfileId ?? "").trim(),
     thinkingMode: normalizeThinkingMode(thinkingMode),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt),
+    goal: normalizeGoal(goal),
     skills: Array.isArray(skills)
       ? Array.from(
           new Set(
@@ -798,6 +822,7 @@ function buildPersistenceSignature({
   personaId = "",
   thinkingMode = "off",
   developerPrompt = "",
+  goal = "",
   disabledTools = []
 } = {}) {
   return JSON.stringify({
@@ -809,6 +834,7 @@ function buildPersistenceSignature({
     personaId: String(personaId ?? "").trim(),
     thinkingMode: normalizeThinkingMode(thinkingMode),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt),
+    goal: normalizeGoal(goal),
     disabledTools: normalizeToolNames(disabledTools)
   });
 }
@@ -828,6 +854,7 @@ function isSameSummary(left, right) {
     left?.thinkingMode === right?.thinkingMode &&
     left?.workplaceLocked === right?.workplaceLocked &&
     left?.approvalMode === right?.approvalMode &&
+    left?.goal === right?.goal &&
     left?.developerPrompt === right?.developerPrompt &&
     JSON.stringify(left?.skills ?? []) === JSON.stringify(right?.skills ?? []) &&
     JSON.stringify(left?.disabledTools ?? []) === JSON.stringify(right?.disabledTools ?? []) &&
@@ -1147,6 +1174,15 @@ export function useChatSession(runtimeConfig = {}) {
     return String(current?.approvalMode ?? "confirm");
   }, [conversationList, activeConversationId, draftConversation]);
 
+  const activeConversationGoal = useMemo(() => {
+    if (draftConversation?.id === activeConversationId) {
+      return normalizeGoal(draftConversation.goal ?? "");
+    }
+
+    const current = conversationList.find((item) => item.id === activeConversationId);
+    return normalizeGoal(current?.goal ?? "");
+  }, [conversationList, activeConversationId, draftConversation]);
+
   const activeConversationPersonaId = useMemo(() => {
     if (draftConversation?.id === activeConversationId) {
       return String(draftConversation.personaId ?? "").trim();
@@ -1430,6 +1466,7 @@ export function useChatSession(runtimeConfig = {}) {
             modelProfileId: defaultMainModelProfileId,
             thinkingMode: "off",
             developerPrompt: "",
+            goal: "",
             skills: []
           });
           setMessages([]);
@@ -2019,6 +2056,7 @@ export function useChatSession(runtimeConfig = {}) {
         skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
         workplacePath: String(history.workplacePath ?? ""),
         approvalMode: String(history.approvalMode ?? "confirm"),
+        goal: normalizeGoal(history.goal),
         thinkingMode: normalizeThinkingMode(history.thinkingMode),
         developerPrompt: normalizeDeveloperPrompt(history.developerPrompt ?? "")
       });
@@ -2049,6 +2087,7 @@ export function useChatSession(runtimeConfig = {}) {
       return {
         workplacePath: String(draftConversationValue.workplacePath ?? "").trim(),
         approvalMode: String(draftConversationValue.approvalMode ?? "confirm"),
+        goal: normalizeGoal(draftConversationValue.goal),
         personaId: String(draftConversationValue.personaId ?? "").trim(),
         developerPrompt: normalizeDeveloperPrompt(draftConversationValue.developerPrompt ?? ""),
         skills: Array.isArray(draftConversationValue.skills) ? draftConversationValue.skills : [],
@@ -2070,6 +2109,7 @@ export function useChatSession(runtimeConfig = {}) {
     return {
       workplacePath: String(summary.workplacePath ?? "").trim(),
       approvalMode: String(summary.approvalMode ?? "confirm"),
+      goal: normalizeGoal(summary.goal),
       personaId: String(summary.personaId ?? "").trim(),
       developerPrompt: normalizeDeveloperPrompt(summary.developerPrompt ?? ""),
       skills: Array.isArray(effectiveSkills) ? effectiveSkills : [],
@@ -2114,6 +2154,7 @@ export function useChatSession(runtimeConfig = {}) {
       disabledTools: activeConversationDisabledTools,
       personaId: activeConversationPersonaId,
       thinkingMode,
+      goal: activeConversationGoal,
       developerPrompt: activeConversationDeveloperPrompt
     };
 
@@ -2147,6 +2188,7 @@ export function useChatSession(runtimeConfig = {}) {
             approvalMode: String(
               history.approvalMode ?? activeConversationApprovalMode ?? "confirm"
             ),
+            goal: normalizeGoal(history.goal ?? activeConversationGoal),
             personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
             thinkingMode: normalizeThinkingMode(history.thinkingMode ?? thinkingMode),
             developerPrompt: normalizeDeveloperPrompt(
@@ -2178,6 +2220,7 @@ export function useChatSession(runtimeConfig = {}) {
     draftConversation,
     activeConversationPersonaId,
     activeConversationDisabledTools,
+    activeConversationGoal,
     thinkingMode,
     activeConversationDeveloperPrompt,
     activeConversationApprovalMode
@@ -2265,6 +2308,7 @@ export function useChatSession(runtimeConfig = {}) {
       modelProfileId: defaultMainModelProfileId,
       thinkingMode: "off",
       developerPrompt: "",
+      goal: "",
       skills: [...selectedSkillsRef.current],
       disabledTools: []
     });
@@ -2276,6 +2320,7 @@ export function useChatSession(runtimeConfig = {}) {
       modelProfileId: defaultMainModelProfileId,
       thinkingMode: "off",
       developerPrompt: "",
+      goal: "",
       skills: [...selectedSkillsRef.current],
       disabledTools: []
     };
@@ -2405,6 +2450,7 @@ export function useChatSession(runtimeConfig = {}) {
       personaId: activeConversationPersonaId,
       modelProfileId: activeConversationModelProfileId,
       thinkingMode,
+      goal: activeConversationGoal,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
       messages: toPersistableMessages(truncatedMessages)
@@ -2492,6 +2538,7 @@ export function useChatSession(runtimeConfig = {}) {
       personaId: activeConversationPersonaId,
       modelProfileId: activeConversationModelProfileId,
       thinkingMode,
+      goal: activeConversationGoal,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
       messages: toPersistableMessages(truncatedMessages)
@@ -2722,6 +2769,7 @@ export function useChatSession(runtimeConfig = {}) {
         skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
         workplacePath: String(history.workplacePath ?? activeConversationWorkplace ?? ""),
         approvalMode: String(history.approvalMode ?? activeConversationApprovalMode ?? "confirm"),
+        goal: normalizeGoal(history.goal ?? activeConversationGoal),
         personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
         thinkingMode: normalizeThinkingMode(history.thinkingMode ?? thinkingMode),
         developerPrompt: normalizeDeveloperPrompt(
@@ -2868,6 +2916,56 @@ export function useChatSession(runtimeConfig = {}) {
       setError("");
     } catch (approvalModeError) {
       setError(approvalModeError?.message || "设置审批模式失败");
+    }
+  }
+
+  async function persistConversationGoalValue(nextGoal) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
+      throw new Error("当前会话暂时不能设置目标");
+    }
+
+    const normalizedGoal = normalizeGoal(nextGoal);
+
+    if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
+      setDraftConversation((prev) => {
+        if (!prev || prev.id !== activeConversationId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          goal: normalizedGoal
+        };
+      });
+      setError("");
+      return {
+        history: {
+          id: activeConversationId,
+          goal: normalizedGoal
+        },
+        goal: normalizedGoal
+      };
+    }
+
+    const response = await updateHistoryGoalById(activeConversationId, normalizedGoal);
+    const updatedSummary = toSummary(response?.history ?? {});
+
+    setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
+    setError("");
+    return response;
+  }
+
+  async function setConversationGoal(nextGoal) {
+    try {
+      await persistConversationGoalValue(nextGoal);
+    } catch (goalError) {
+      setError(goalError?.message || "设置目标失败");
     }
   }
 
@@ -3285,6 +3383,7 @@ export function useChatSession(runtimeConfig = {}) {
           skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
           workplacePath: String(history.workplacePath ?? ""),
           approvalMode: String(history.approvalMode ?? "confirm"),
+          goal: normalizeGoal(history.goal),
           personaId: String(history.personaId ?? ""),
           developerPrompt: normalizeDeveloperPrompt(history.developerPrompt ?? "")
         });
@@ -4679,6 +4778,11 @@ export function useChatSession(runtimeConfig = {}) {
     );
     const parsedFileAttachments = normalizeParsedFileAttachments(payload.parsedFileAttachments);
     const text = String(payload.text ?? "").trim();
+    const goalOverride =
+      Object.prototype.hasOwnProperty.call(payload, "goalOverride")
+        ? normalizeGoal(payload.goalOverride)
+        : null;
+    const effectiveGoal = goalOverride === null ? activeConversationGoal : goalOverride;
 
     if (
       (!text && imageAttachments.length === 0 && parsedFileAttachments.length === 0) ||
@@ -4737,6 +4841,7 @@ export function useChatSession(runtimeConfig = {}) {
         personaId: activeConversationPersonaId,
         modelProfileId: activeConversationModelProfileId,
         thinkingMode,
+        goal: effectiveGoal,
         developerPrompt: "",
         skills: selectedSkillsRef.current,
         disabledTools: activeConversationDisabledTools,
@@ -4770,6 +4875,25 @@ export function useChatSession(runtimeConfig = {}) {
       enableDeepThinking: deepThinkingEnabled,
       reasoningEffort,
       thinkingMode
+    });
+  }
+
+  async function sendConversationGoal(nextGoal) {
+    const normalizedGoal = normalizeGoal(nextGoal);
+    if (!normalizedGoal) {
+      return;
+    }
+
+    try {
+      await persistConversationGoalValue(normalizedGoal);
+    } catch (goalError) {
+      setError(goalError?.message || "设置目标失败");
+      return;
+    }
+
+    await sendMessage({
+      text: buildGoalStartMessage(normalizedGoal),
+      goalOverride: normalizedGoal
     });
   }
 
@@ -4958,6 +5082,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationWorkplace,
       activeConversationWorkplaceLocked,
       activeConversationApprovalMode,
+      activeConversationGoal,
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
@@ -5019,6 +5144,8 @@ export function useChatSession(runtimeConfig = {}) {
       openWorkplaceBrowser,
       setConversationWorkplace,
       setConversationApprovalMode,
+      setConversationGoal,
+      sendConversationGoal,
       setConversationPersona,
       setConversationModelProfile,
       setConversationThinkingMode,
@@ -5043,6 +5170,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationWorkplace,
       activeConversationWorkplaceLocked,
       activeConversationApprovalMode,
+      activeConversationGoal,
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
@@ -5101,6 +5229,8 @@ export function useChatSession(runtimeConfig = {}) {
       openWorkplaceBrowser,
       setConversationWorkplace,
       setConversationApprovalMode,
+      setConversationGoal,
+      sendConversationGoal,
       setConversationPersona,
       setConversationModelProfile,
       setConversationThinkingMode,

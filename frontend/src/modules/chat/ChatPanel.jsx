@@ -3097,6 +3097,7 @@ export function ChatPanel({
                               <MarkdownMessage
                                 content={message.reasoningContent || ""}
                                 className="bubble-content"
+                                streaming={isStreamingThisMessage}
                               />
                             </div>
                           )}
@@ -3132,7 +3133,11 @@ export function ChatPanel({
                           </div>
                         </form>
                       ) : messageText.length > 0 && (
-                        <MarkdownMessage content={message.content || ""} className="bubble-content" />
+                        <MarkdownMessage
+                          content={message.content || ""}
+                          className="bubble-content"
+                          streaming={isStreamingThisMessage}
+                        />
                       )}
                       {imageAttachments.length > 0 && (
                         <div

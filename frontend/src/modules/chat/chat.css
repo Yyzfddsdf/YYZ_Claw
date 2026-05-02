@@ -2583,6 +2583,10 @@
   font-size: 1.02em;
 }
 
+.markdown .katex-error {
+  color: inherit !important;
+}
+
 .markdown-math-fallback {
   color: var(--text-main);
   font-family: var(--font-mono);

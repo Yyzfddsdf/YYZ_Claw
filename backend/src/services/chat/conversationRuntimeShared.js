@@ -584,6 +584,53 @@ export function resolveAgentRuntimeConfig(config = {}, options = {}) {
   };
 }
 
+const THINKING_MODE_VALUES = new Set(["off", "default", "low", "medium", "high", "xhigh", "max"]);
+const THINKING_EFFORT_VALUES = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+export function normalizeThinkingMode(value, fallback = "off") {
+  const normalized = String(value ?? "").trim();
+  if (THINKING_MODE_VALUES.has(normalized)) {
+    return normalized;
+  }
+
+  const normalizedFallback = String(fallback ?? "").trim();
+  if (!normalized && !normalizedFallback) {
+    return "";
+  }
+  return THINKING_MODE_VALUES.has(normalizedFallback) ? normalizedFallback : "off";
+}
+
+export function inferThinkingModeFromRuntimeOptions(options = {}, fallback = "off") {
+  const requestedMode = normalizeThinkingMode(options?.thinkingMode, "");
+  if (requestedMode) {
+    return requestedMode;
+  }
+
+  if (options?.enableDeepThinking === false) {
+    return "off";
+  }
+
+  const reasoningEffort = String(options?.reasoningEffort ?? "").trim();
+  if (THINKING_EFFORT_VALUES.has(reasoningEffort)) {
+    return reasoningEffort;
+  }
+
+  if (options?.enableDeepThinking === true) {
+    return "default";
+  }
+
+  return normalizeThinkingMode(fallback);
+}
+
+export function buildThinkingRuntimeOptions(thinkingMode) {
+  const normalized = normalizeThinkingMode(thinkingMode);
+  return {
+    thinkingMode: normalized,
+    enableDeepThinking: normalized !== "off",
+    reasoningEffort: THINKING_EFFORT_VALUES.has(normalized) ? normalized : ""
+  };
+}
+
 export function buildCompressionTokenSnapshot(compressionResult) {
   const estimatedTokensAfter = Number(compressionResult?.estimatedTokensAfter ?? 0);
   if (!Number.isFinite(estimatedTokensAfter) || estimatedTokensAfter <= 0) {

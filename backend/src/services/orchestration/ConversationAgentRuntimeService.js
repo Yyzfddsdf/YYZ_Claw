@@ -7,6 +7,8 @@ import {
   isAutoTitleCandidate,
   loadApprovalRules,
   normalizeUsageRecordPayload,
+  buildThinkingRuntimeOptions,
+  inferThinkingModeFromRuntimeOptions,
   resolvePinnedMemorySummaryPrompt,
   resolveAgentRuntimeConfig,
   scheduleAsyncTitleGeneration
@@ -186,11 +188,14 @@ export class ConversationAgentRuntimeService {
     }
 
     const resolved = await this.resolveConversationRuntime(conversationId);
+    const thinkingRuntimeOptions = buildThinkingRuntimeOptions(
+      inferThinkingModeFromRuntimeOptions(options, resolved?.history?.thinkingMode)
+    );
     const runtimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
       isSubagent: Boolean(resolved?.isSubagent),
       modelProfileId: resolved?.history?.modelProfileId,
-      enableDeepThinking: Boolean(options.enableDeepThinking),
-      reasoningEffort: options.reasoningEffort
+      enableDeepThinking: thinkingRuntimeOptions.enableDeepThinking,
+      reasoningEffort: thinkingRuntimeOptions.reasoningEffort
     });
     let existingConversation = resolved.history;
     if (!normalizeText(existingConversation?.modelProfileId) && normalizeText(runtimeConfig?.modelProfileId)) {
@@ -233,6 +238,7 @@ export class ConversationAgentRuntimeService {
           source: existingConversation?.source,
           model: existingConversation?.model,
           modelProfileId: existingConversation?.modelProfileId,
+          thinkingMode: existingConversation?.thinkingMode,
           approvalMode: existingConversation?.approvalMode,
           skills: existingConversation?.skills,
           developerPrompt: existingConversation?.developerPrompt,

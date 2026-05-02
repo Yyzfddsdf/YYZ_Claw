@@ -14,6 +14,7 @@ import {
   conversationModelProfileSchema,
   conversationPersonaSchema,
   conversationSkillsSchema,
+  conversationThinkingModeSchema,
   conversationUpsertSchema,
   conversationWorkplaceSchema
 } from "../schemas/historySchema.js";
@@ -30,6 +31,9 @@ import {
   isAutoTitleCandidate,
   loadApprovalRules,
   normalizeUsageRecordPayload,
+  buildThinkingRuntimeOptions,
+  inferThinkingModeFromRuntimeOptions,
+  normalizeThinkingMode,
   resolvePinnedMemorySummaryPrompt,
   resolveAgentRuntimeConfig,
   scheduleAsyncTitleGeneration
@@ -169,7 +173,8 @@ function normalizeStreamRequestBody(body) {
     ...raw,
     messages: Array.isArray(messages) ? messages : raw.messages,
     enableDeepThinking: parseBooleanFlag(raw.enableDeepThinking),
-    reasoningEffort: String(raw.reasoningEffort ?? "").trim() || undefined
+    reasoningEffort: String(raw.reasoningEffort ?? "").trim() || undefined,
+    thinkingMode: String(raw.thinkingMode ?? "").trim() || undefined
   };
 }
 
@@ -1296,6 +1301,7 @@ export function createChatController({
         skills: history.skills,
         model: history.model,
         modelProfileId: history.modelProfileId,
+        thinkingMode: history.thinkingMode,
         messages: forkMessages
       });
 
@@ -1503,6 +1509,36 @@ export function createChatController({
       });
     },
 
+    updateThinkingModeById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationThinkingModeSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const updated = historyStore.updateConversationThinkingMode(
+        conversationId,
+        validation.data.thinkingMode
+      );
+
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        thinkingMode: normalizeThinkingMode(validation.data.thinkingMode)
+      });
+    },
+
     compressHistoryById: async (req, res) => {
       const conversationId = String(req.params.conversationId || "").trim();
 
@@ -1530,6 +1566,11 @@ export function createChatController({
       }
 
       const latestTokenUsage = existing?.tokenUsage ?? null;
+      const selectedProfile = resolveConversationModelProfile(configValidation.data, existing);
+      const compressionRuntimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
+        isSubagent: String(existing?.source ?? "").trim().toLowerCase() === "subagent",
+        modelProfileId: selectedProfile.id
+      });
       const manualReplayRunContext = beginManualCompressionReplayRun({
         conversationId,
         conversationRunCoordinator
@@ -1546,7 +1587,7 @@ export function createChatController({
       try {
         compressionResult = await compressionService.compressConversation({
           messages: validation.data.messages,
-          runtimeConfig: configValidation.data,
+          runtimeConfig: compressionRuntimeConfig,
           latestTokenUsage,
           trigger: validation.data.trigger
         });
@@ -1585,6 +1626,7 @@ export function createChatController({
         source: existing.source,
         model: existing.model,
         modelProfileId: existing.modelProfileId,
+        thinkingMode: existing.thinkingMode,
         approvalMode: existing.approvalMode,
         skills: existing.skills,
         personaId: existing.personaId,
@@ -1731,6 +1773,9 @@ export function createChatController({
         source: existing?.source,
         model: selectedProfile.model,
         modelProfileId: selectedProfile.id,
+        thinkingMode: normalizeThinkingMode(
+          validation.data.thinkingMode ?? existing?.thinkingMode
+        ),
         approvalMode: validation.data.approvalMode,
         skills: validation.data.skills,
         personaId,
@@ -2372,6 +2417,15 @@ export function createChatController({
           configValidation.data,
           existingConversation
         );
+        const effectiveThinkingMode = inferThinkingModeFromRuntimeOptions(
+          {
+            thinkingMode: chatValidation.data.thinkingMode,
+            enableDeepThinking: chatValidation.data.enableDeepThinking,
+            reasoningEffort: chatValidation.data.reasoningEffort
+          },
+          existingConversation?.thinkingMode
+        );
+        const thinkingRuntimeOptions = buildThinkingRuntimeOptions(effectiveThinkingMode);
         const historyRuntimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
           isSubagent: conversationSource === "subagent",
           modelProfileId: selectedProfile.id
@@ -2427,8 +2481,8 @@ export function createChatController({
         const runtimeExecutionConfig = resolveAgentRuntimeConfig(configValidation.data, {
           isSubagent: Boolean(resolvedRuntime?.isSubagent),
           modelProfileId: selectedProfile.id,
-          enableDeepThinking: Boolean(chatValidation.data.enableDeepThinking),
-          reasoningEffort: chatValidation.data.reasoningEffort
+          enableDeepThinking: thinkingRuntimeOptions.enableDeepThinking,
+          reasoningEffort: thinkingRuntimeOptions.reasoningEffort
         });
 
         const nextForegroundRun = wakeDispatcher?.beginForegroundRun?.({
@@ -2462,6 +2516,7 @@ export function createChatController({
             source: existingConversation?.source,
             model: historyRuntimeConfig.model,
             modelProfileId: historyRuntimeConfig.modelProfileId,
+            thinkingMode: thinkingRuntimeOptions.thinkingMode,
             approvalMode,
             skills: persistedSkillNames,
             personaId,
@@ -2525,6 +2580,7 @@ export function createChatController({
               source: existingConversation?.source,
               model: existingConversation?.model,
               modelProfileId: existingConversation?.modelProfileId,
+              thinkingMode: existingConversation?.thinkingMode,
               approvalMode: existingConversation?.approvalMode,
               skills: existingConversation?.skills,
               personaId: existingConversation?.personaId,
@@ -2687,6 +2743,7 @@ export function createChatController({
           source: existingConversation?.source,
           model: runtimeExecutionConfig.model,
           modelProfileId: runtimeExecutionConfig.modelProfileId,
+          thinkingMode: thinkingRuntimeOptions.thinkingMode,
           approvalMode: existingConversation?.approvalMode ?? approvalMode,
           skills: existingConversation?.skills,
           personaId: existingConversation?.personaId,

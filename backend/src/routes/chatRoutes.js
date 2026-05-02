@@ -49,6 +49,10 @@ export function createChatRoutes(services) {
     "/chat/histories/:conversationId/model-profile",
     asyncHandler(controller.updateModelProfileById)
   );
+  router.put(
+    "/chat/histories/:conversationId/thinking-mode",
+    asyncHandler(controller.updateThinkingModeById)
+  );
   router.post(
     "/chat/histories/:conversationId/compress",
     asyncHandler(controller.compressHistoryById)

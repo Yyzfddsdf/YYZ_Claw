@@ -6,7 +6,8 @@ const modelProfileSchema = z.object({
   id: z.string().trim().min(1).max(120),
   provider: z.enum([
     MODEL_PROVIDERS.OPENAI_COMPLETION,
-    MODEL_PROVIDERS.DASHSCOPE_COMPLETION
+    MODEL_PROVIDERS.DASHSCOPE_COMPLETION,
+    MODEL_PROVIDERS.ANTHROPIC_MESSAGES
   ]),
   name: z.string().trim().min(1).max(120),
   model: z.string().trim().min(1),

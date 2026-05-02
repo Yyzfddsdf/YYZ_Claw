@@ -37,7 +37,8 @@ const chatMessageSchema = z.object({
 export const approvalModeSchema = z.enum(["confirm", "auto"]);
 
 export const compressionTriggerSchema = z.enum(["manual", "auto"]);
-export const reasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh"]);
+export const reasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
+export const thinkingModeSchema = z.enum(["off", "default", "low", "medium", "high", "xhigh", "max"]);
 
 export const chatRequestSchema = z.object({
   conversationId: z.string().trim().min(1, "conversationId is required").optional(),
@@ -46,7 +47,8 @@ export const chatRequestSchema = z.object({
   developerPrompt: z.string().max(20000).optional(),
   personaId: z.string().trim().max(120).optional(),
   enableDeepThinking: z.boolean().optional(),
-  reasoningEffort: reasoningEffortSchema.optional()
+  reasoningEffort: reasoningEffortSchema.optional(),
+  thinkingMode: thinkingModeSchema.optional()
 });
 
 export const conversationApprovalModeSchema = z.object({

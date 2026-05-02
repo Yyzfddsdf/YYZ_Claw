@@ -1,10 +1,12 @@
 export const MODEL_PROVIDERS = Object.freeze({
   OPENAI_COMPLETION: "openai-completion",
-  DASHSCOPE_COMPLETION: "dashscope-completion"
+  DASHSCOPE_COMPLETION: "dashscope-completion",
+  ANTHROPIC_MESSAGES: "anthropic-messages"
 });
 
 export const MODEL_PROVIDER_PROTOCOLS = Object.freeze({
-  OPENAI_CHAT_COMPLETIONS: "openai-chat-completions"
+  OPENAI_CHAT_COMPLETIONS: "openai-chat-completions",
+  ANTHROPIC_MESSAGES: "anthropic-messages"
 });
 
 export const DEFAULT_MODEL_PROVIDER = MODEL_PROVIDERS.OPENAI_COMPLETION;
@@ -25,6 +27,15 @@ const PROVIDER_DEFINITIONS = Object.freeze({
     protocol: MODEL_PROVIDER_PROTOCOLS.OPENAI_CHAT_COMPLETIONS,
     supportsReasoningEffort: false,
     supportsThinkingSwitch: true,
+    supportsReasoningContent: true,
+    supportsVision: true
+  }),
+  [MODEL_PROVIDERS.ANTHROPIC_MESSAGES]: Object.freeze({
+    id: MODEL_PROVIDERS.ANTHROPIC_MESSAGES,
+    label: "Anthropic Messages",
+    protocol: MODEL_PROVIDER_PROTOCOLS.ANTHROPIC_MESSAGES,
+    supportsReasoningEffort: true,
+    supportsThinkingSwitch: false,
     supportsReasoningContent: true,
     supportsVision: true
   })

@@ -1,6 +1,7 @@
 export const MODEL_PROVIDER_IDS = {
   OPENAI_COMPLETION: "openai-completion",
-  DASHSCOPE_COMPLETION: "dashscope-completion"
+  DASHSCOPE_COMPLETION: "dashscope-completion",
+  ANTHROPIC_MESSAGES: "anthropic-messages"
 };
 
 export const DEFAULT_MODEL_PROVIDER = MODEL_PROVIDER_IDS.OPENAI_COMPLETION;
@@ -24,6 +25,17 @@ export const MODEL_PROVIDER_OPTIONS = [
     capabilities: {
       supportsReasoningEffort: false,
       supportsThinkingSwitch: true,
+      supportsReasoningContent: true,
+      supportsVision: true
+    }
+  },
+  {
+    value: MODEL_PROVIDER_IDS.ANTHROPIC_MESSAGES,
+    label: "Anthropic Messages",
+    description: "Anthropic 官方 Messages API，使用官方 SDK 和独立消息/工具转换。",
+    capabilities: {
+      supportsReasoningEffort: true,
+      supportsThinkingSwitch: false,
       supportsReasoningContent: true,
       supportsVision: true
     }
@@ -53,7 +65,38 @@ export function getProviderCapabilities(value) {
 }
 
 export function getThinkingModeOptionsForProvider(value) {
+  const provider = normalizeModelProvider(value);
   const capabilities = getProviderCapabilities(value);
+
+  if (provider === MODEL_PROVIDER_IDS.ANTHROPIC_MESSAGES) {
+    return [
+      {
+        value: "low",
+        label: "低",
+        description: "传 output_config.effort=low"
+      },
+      {
+        value: "medium",
+        label: "中",
+        description: "传 output_config.effort=medium"
+      },
+      {
+        value: "high",
+        label: "高",
+        description: "传 output_config.effort=high"
+      },
+      {
+        value: "xhigh",
+        label: "超高",
+        description: "传 output_config.effort=xhigh"
+      },
+      {
+        value: "max",
+        label: "最高",
+        description: "传 output_config.effort=max"
+      }
+    ];
+  }
 
   if (capabilities.supportsReasoningEffort) {
     return [

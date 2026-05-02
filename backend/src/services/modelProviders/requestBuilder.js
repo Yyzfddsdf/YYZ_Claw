@@ -1,4 +1,5 @@
 import { MODEL_PROVIDERS, normalizeModelProvider } from "./modelProviderDefinitions.js";
+import { buildAnthropicMessagesRequest } from "./requestTemplates/anthropicMessages.js";
 import { buildDashScopeCompletionRequest } from "./requestTemplates/dashscopeCompletion.js";
 import { buildOpenAICompletionRequest } from "./requestTemplates/openaiCompletion.js";
 
@@ -7,6 +8,10 @@ export function buildModelProviderRequest(runtimeConfig = {}, params = {}) {
 
   if (provider === MODEL_PROVIDERS.DASHSCOPE_COMPLETION) {
     return buildDashScopeCompletionRequest(runtimeConfig, params);
+  }
+
+  if (provider === MODEL_PROVIDERS.ANTHROPIC_MESSAGES) {
+    return buildAnthropicMessagesRequest(runtimeConfig, params);
   }
 
   return buildOpenAICompletionRequest(runtimeConfig, params);

@@ -72,6 +72,13 @@ export function updateHistoryModelProfileById(conversationId, modelProfileId) {
   });
 }
 
+export function updateHistoryThinkingModeById(conversationId, thinkingMode) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/thinking-mode`, {
+    method: "PUT",
+    body: { thinkingMode }
+  });
+}
+
 export function upsertHistoryById(conversationId, payload) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}`, {
     method: "PUT",
@@ -264,10 +271,12 @@ export async function streamChat({
   personaId,
   enableDeepThinking,
   reasoningEffort,
+  thinkingMode,
   signal,
   onAgentEvent
 }) {
   const normalizedReasoningEffort = String(reasoningEffort ?? "").trim();
+  const normalizedThinkingMode = String(thinkingMode ?? "").trim();
   const body = {
     conversationId,
     messages,
@@ -278,6 +287,9 @@ export async function streamChat({
 
   if (normalizedReasoningEffort) {
     body.reasoningEffort = normalizedReasoningEffort;
+  }
+  if (normalizedThinkingMode) {
+    body.thinkingMode = normalizedThinkingMode;
   }
 
   await streamSseJson({

@@ -74,13 +74,26 @@ function normalizeTimeoutMs(value) {
 }
 
 function buildPowerShellCommand(command) {
+  const normalizedCommand = encodeNestedPowerShellCommandArguments(command);
   const prelude = [
     "$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
     "[Console]::InputEncoding = [System.Text.Encoding]::UTF8",
     "chcp 65001 | Out-Null"
   ].join("; ");
 
-  return `${prelude}; ${command}`;
+  return `${prelude}; ${normalizedCommand}`;
+}
+
+function encodePowerShellCommand(command) {
+  return Buffer.from(buildPowerShellCommand(command), "utf16le").toString("base64");
+}
+
+function encodeNestedPowerShellCommandArguments(command) {
+  return String(command ?? "").replace(
+    /(\b(?:powershell(?:\.exe)?|pwsh(?:\.exe)?)\b(?:(?!\s-(?:Command|c)\b)[\s\S])*?\s-)(?:Command|c)(\s+)"([\s\S]*?)"/gi,
+    (_match, prefix, spacing, script) =>
+      `${prefix}EncodedCommand${spacing}${Buffer.from(script, "utf16le").toString("base64")}`
+  );
 }
 
 function buildShellCommand(command) {
@@ -92,8 +105,8 @@ function buildShellCommand(command) {
         "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
-        "-Command",
-        buildPowerShellCommand(command)
+        "-EncodedCommand",
+        encodePowerShellCommand(command)
       ]
     };
   }

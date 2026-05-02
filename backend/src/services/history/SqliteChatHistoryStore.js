@@ -99,6 +99,13 @@ function normalizeApprovalMode(value) {
   return String(value ?? "").trim() === "auto" ? "auto" : "confirm";
 }
 
+function normalizeThinkingMode(value) {
+  const normalized = String(value ?? "").trim();
+  return ["off", "default", "low", "medium", "high", "xhigh", "max"].includes(normalized)
+    ? normalized
+    : "off";
+}
+
 function normalizeSkillNames(value) {
   const list = Array.isArray(value) ? value : [];
   const normalized = [];
@@ -416,6 +423,7 @@ export class SqliteChatHistoryStore {
         source TEXT NOT NULL DEFAULT 'chat',
         model TEXT NOT NULL DEFAULT '',
         model_profile_id TEXT NOT NULL DEFAULT '',
+        thinking_mode TEXT NOT NULL DEFAULT 'off',
         approval_mode TEXT NOT NULL DEFAULT 'confirm',
         skills_json TEXT NOT NULL DEFAULT '[]',
         persona_id TEXT NOT NULL DEFAULT '',
@@ -435,6 +443,7 @@ export class SqliteChatHistoryStore {
     this.ensureConversationWorkplaceColumns();
     this.ensureConversationLineageColumns();
     this.ensureConversationModelProfileColumn();
+    this.ensureConversationThinkingModeColumn();
     this.ensureConversationApprovalModeColumn();
     this.ensureConversationSkillsColumn();
     this.ensureConversationPersonaColumn();
@@ -558,6 +567,16 @@ export class SqliteChatHistoryStore {
 
     if (!columnNames.has("model_profile_id")) {
       db.exec("ALTER TABLE conversations ADD COLUMN model_profile_id TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  ensureConversationThinkingModeColumn() {
+    const db = this.ensureDb();
+    const columns = db.prepare("PRAGMA table_info(conversations)").all();
+    const columnNames = new Set(columns.map((item) => String(item.name)));
+
+    if (!columnNames.has("thinking_mode")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'off'");
     }
   }
 
@@ -891,6 +910,7 @@ export class SqliteChatHistoryStore {
         c.source,
         c.model,
         c.model_profile_id,
+        c.thinking_mode,
         c.approval_mode,
         c.skills_json,
         c.persona_id,
@@ -941,6 +961,7 @@ export class SqliteChatHistoryStore {
       source: normalizeConversationSource(item.source),
       model: String(item.model ?? "").trim(),
       modelProfileId: String(item.model_profile_id ?? "").trim(),
+      thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -1004,6 +1025,7 @@ export class SqliteChatHistoryStore {
             c.source,
             c.model,
             c.model_profile_id,
+            c.thinking_mode,
             c.approval_mode,
             c.skills_json,
             c.persona_id,
@@ -1057,6 +1079,7 @@ export class SqliteChatHistoryStore {
       source: normalizeConversationSource(item.source),
       model: String(item.model ?? "").trim(),
       modelProfileId: String(item.model_profile_id ?? "").trim(),
+      thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -1086,6 +1109,7 @@ export class SqliteChatHistoryStore {
             source,
             model,
             model_profile_id,
+            thinking_mode,
             approval_mode,
             skills_json,
             persona_id,
@@ -1149,6 +1173,7 @@ export class SqliteChatHistoryStore {
       source: normalizeConversationSource(conversation.source),
       model: String(conversation.model ?? "").trim(),
       modelProfileId: String(conversation.model_profile_id ?? "").trim(),
+      thinkingMode: normalizeThinkingMode(conversation.thinking_mode),
       approvalMode: normalizeApprovalMode(conversation.approval_mode),
       skills: normalizeSkillNames(normalizeJsonText(conversation.skills_json, [])),
       personaId: String(conversation.persona_id ?? "").trim(),
@@ -1499,6 +1524,7 @@ export class SqliteChatHistoryStore {
         source,
         model,
         model_profile_id,
+        thinking_mode,
         approval_mode,
         skills_json,
         workplace_locked,
@@ -1532,6 +1558,7 @@ export class SqliteChatHistoryStore {
       String(payload.model ?? existing?.model ?? "").trim();
     const modelProfileId =
       String(payload.modelProfileId ?? existing?.model_profile_id ?? "").trim();
+    const thinkingMode = normalizeThinkingMode(payload.thinkingMode ?? existing?.thinking_mode);
     const developerPrompt =
       String(payload.developerPrompt ?? existing?.developer_prompt ?? "").trim();
     const personaId = String(payload.personaId ?? existing?.persona_id ?? "").trim();
@@ -1584,6 +1611,7 @@ export class SqliteChatHistoryStore {
             source = ?,
             model = ?,
             model_profile_id = ?,
+            thinking_mode = ?,
             approval_mode = ?,
             skills_json = ?,
             persona_id = ?,
@@ -1599,6 +1627,7 @@ export class SqliteChatHistoryStore {
           source,
           model,
           modelProfileId,
+          thinkingMode,
           approvalMode,
           JSON.stringify(skills),
           personaId,
@@ -1619,6 +1648,7 @@ export class SqliteChatHistoryStore {
               source,
               model,
               model_profile_id,
+              thinking_mode,
               approval_mode,
               skills_json,
               persona_id,
@@ -1628,7 +1658,7 @@ export class SqliteChatHistoryStore {
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
           `
         ).run(
           conversationId,
@@ -1638,6 +1668,7 @@ export class SqliteChatHistoryStore {
           source,
           model,
           modelProfileId,
+          thinkingMode,
           approvalMode,
           JSON.stringify(skills),
           personaId,
@@ -1698,6 +1729,7 @@ export class SqliteChatHistoryStore {
       source: payload.source ?? existing.source,
       model: payload.model ?? existing.model,
       modelProfileId: payload.modelProfileId ?? existing.modelProfileId,
+      thinkingMode: payload.thinkingMode ?? existing.thinkingMode,
       approvalMode: payload.approvalMode ?? existing.approvalMode,
       skills: payload.skills ?? existing.skills,
       personaId: payload.personaId ?? existing.personaId,
@@ -1994,6 +2026,7 @@ export class SqliteChatHistoryStore {
       source: "fork",
       model: payload.model ?? sourceConversation.model,
       modelProfileId: payload.modelProfileId ?? sourceConversation.modelProfileId,
+      thinkingMode: payload.thinkingMode ?? sourceConversation.thinkingMode,
       approvalMode: payload.approvalMode ?? sourceConversation.approvalMode,
       skills: payload.skills ?? sourceConversation.skills,
       personaId: payload.personaId ?? sourceConversation.personaId,
@@ -2221,6 +2254,35 @@ export class SqliteChatHistoryStore {
         WHERE id = ?
       `
     ).run(normalizedModelProfileId, normalizedModel, Date.now(), conversationId);
+
+    return this.getConversation(conversationId);
+  }
+
+  updateConversationThinkingMode(conversationId, thinkingMode) {
+    const db = this.ensureDb();
+    const normalizedThinkingMode = normalizeThinkingMode(thinkingMode);
+
+    const existing = db
+      .prepare(
+        `
+          SELECT id
+          FROM conversations
+          WHERE id = ?
+        `
+      )
+      .get(conversationId);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET thinking_mode = ?, updated_at = ?
+        WHERE id = ?
+      `
+    ).run(normalizedThinkingMode, Date.now(), conversationId);
 
     return this.getConversation(conversationId);
   }

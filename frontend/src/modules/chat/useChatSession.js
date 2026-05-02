@@ -26,6 +26,7 @@ import {
   updateHistoryApprovalModeById,
   updateHistoryModelProfileById,
   updateHistoryPersonaById,
+  updateHistoryThinkingModeById,
   updateHistoryWorkplaceById,
   updateHistorySkillsById,
   upsertHistoryById,
@@ -134,6 +135,18 @@ function normalizeParsedFileAttachments(attachments) {
         })
         .filter(Boolean)
     : [];
+}
+
+function normalizeThinkingMode(value, fallback = "off") {
+  const normalized = String(value ?? "").trim();
+  if (["off", "default", "low", "medium", "high", "xhigh", "max"].includes(normalized)) {
+    return normalized;
+  }
+
+  const normalizedFallback = String(fallback ?? "").trim();
+  return ["off", "default", "low", "medium", "high", "xhigh", "max"].includes(normalizedFallback)
+    ? normalizedFallback
+    : "off";
 }
 
 function normalizeModelProfiles(config = {}) {
@@ -386,6 +399,7 @@ function toSummary(history) {
     source: String(history?.source ?? "chat").trim() || "chat",
     model: String(history?.model ?? "").trim(),
     modelProfileId: String(history?.modelProfileId ?? "").trim(),
+    thinkingMode: normalizeThinkingMode(history?.thinkingMode),
     workplaceLocked: Boolean(history?.workplaceLocked),
     approvalMode: String(history?.approvalMode ?? "confirm"),
     personaId: String(history?.personaId ?? "").trim(),
@@ -417,6 +431,7 @@ function normalizeSummaryList(histories) {
     source: String(item?.source ?? "chat").trim() || "chat",
     model: String(item?.model ?? "").trim(),
     modelProfileId: String(item?.modelProfileId ?? "").trim(),
+    thinkingMode: normalizeThinkingMode(item?.thinkingMode),
     workplaceLocked: Boolean(item.workplaceLocked),
     approvalMode: String(item.approvalMode ?? "confirm"),
     personaId: String(item.personaId ?? "").trim(),
@@ -715,6 +730,7 @@ function buildConversationUpsertPayload({
   approvalMode = "confirm",
   personaId = "",
   modelProfileId = "",
+  thinkingMode = "off",
   developerPrompt = "",
   skills = [],
   messages = []
@@ -724,6 +740,7 @@ function buildConversationUpsertPayload({
     approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
     personaId: String(personaId ?? "").trim(),
     modelProfileId: String(modelProfileId ?? "").trim(),
+    thinkingMode: normalizeThinkingMode(thinkingMode),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt),
     skills: Array.isArray(skills)
       ? Array.from(
@@ -750,6 +767,7 @@ function buildPersistenceSignature({
   workplacePath = "",
   approvalMode = "confirm",
   personaId = "",
+  thinkingMode = "off",
   developerPrompt = ""
 } = {}) {
   return JSON.stringify({
@@ -759,6 +777,7 @@ function buildPersistenceSignature({
     workplacePath: String(workplacePath ?? "").trim(),
     approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
     personaId: String(personaId ?? "").trim(),
+    thinkingMode: normalizeThinkingMode(thinkingMode),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt)
   });
 }
@@ -774,6 +793,8 @@ function isSameSummary(left, right) {
     left?.parentConversationId === right?.parentConversationId &&
     left?.source === right?.source &&
     left?.model === right?.model &&
+    left?.modelProfileId === right?.modelProfileId &&
+    left?.thinkingMode === right?.thinkingMode &&
     left?.workplaceLocked === right?.workplaceLocked &&
     left?.approvalMode === right?.approvalMode &&
     left?.developerPrompt === right?.developerPrompt &&
@@ -1025,13 +1046,6 @@ export function useChatSession(runtimeConfig = {}) {
   const compressionStateRef = useRef(EMPTY_COMPRESSION_STATE);
   const modelProfiles = useMemo(() => normalizeModelProfiles(runtimeConfig), [runtimeConfig]);
   const defaultMainModelProfileId = String(runtimeConfig?.defaultMainModelProfileId ?? "").trim();
-  const setDeepThinkingEnabled = (value) => {
-    setThinkingMode((current) => {
-      const nextValue = typeof value === "function" ? value(current !== "off") : value;
-      return nextValue ? "default" : "off";
-    });
-  };
-
   const abortControllersByConversationRef = useRef(new Map());
   const hydratedRef = useRef(false);
   const lastPersistedSignatureRef = useRef("");
@@ -1152,6 +1166,15 @@ export function useChatSession(runtimeConfig = {}) {
     );
   }, [modelProfiles, activeConversationModelProfileId, defaultMainModelProfileId]);
 
+  const activeConversationThinkingMode = useMemo(() => {
+    if (draftConversation?.id === activeConversationId) {
+      return normalizeThinkingMode(draftConversation.thinkingMode);
+    }
+
+    const current = conversationList.find((item) => item.id === activeConversationId);
+    return normalizeThinkingMode(current?.thinkingMode);
+  }, [conversationList, activeConversationId, draftConversation]);
+
   const activeProviderCapabilities = useMemo(
     () => getProviderCapabilities(activeConversationModelProfile?.provider),
     [activeConversationModelProfile?.provider]
@@ -1167,9 +1190,17 @@ export function useChatSession(runtimeConfig = {}) {
   const deepThinkingEnabled =
     thinkingMode !== "off" &&
     isThinkingModeSupportedByProvider(activeConversationModelProfile?.provider, thinkingMode);
-  const reasoningEffort = ["low", "medium", "high", "xhigh"].includes(thinkingMode)
+  const reasoningEffort = ["low", "medium", "high", "xhigh", "max"].includes(thinkingMode)
     ? thinkingMode
     : "";
+  const setDeepThinkingEnabled = (value) => {
+    const nextMode = (() => {
+      const current = thinkingMode;
+      const nextValue = typeof value === "function" ? value(current !== "off") : value;
+      return nextValue ? (thinkingModeOptions[0]?.value ?? "default") : "off";
+    })();
+    void setConversationThinkingMode(nextMode);
+  };
 
   const activeConversationAgentDisplayName = useMemo(() => {
     const current = conversationList.find((item) => item.id === activeConversationId);
@@ -1292,12 +1323,33 @@ export function useChatSession(runtimeConfig = {}) {
   }, [activeConversationContextUsageRatio, activeConversationModelProfile]);
 
   useEffect(() => {
+    const nextMode = isThinkingModeSupportedByProvider(
+      activeConversationModelProfile?.provider,
+      activeConversationThinkingMode
+    )
+      ? activeConversationThinkingMode
+      : thinkingModeOptions[0]?.value ?? "off";
+
+    if (thinkingMode !== nextMode) {
+      setThinkingMode(nextMode);
+    }
+  }, [
+    activeConversationId,
+    activeConversationModelProfile?.provider,
+    activeConversationThinkingMode,
+    thinkingMode,
+    thinkingModeOptions
+  ]);
+
+  useEffect(() => {
     if (
       !isThinkingModeSupportedByProvider(activeConversationModelProfile?.provider, thinkingMode)
     ) {
-      setThinkingMode("off");
+      const fallbackMode = thinkingModeOptions[0]?.value ?? "off";
+      setThinkingMode(fallbackMode);
+      void persistConversationThinkingMode(activeConversationId, fallbackMode);
     }
-  }, [activeConversationModelProfile?.provider, thinkingMode]);
+  }, [activeConversationId, activeConversationModelProfile?.provider, thinkingMode, thinkingModeOptions]);
 
   useEffect(() => {
     let mounted = true;
@@ -1332,6 +1384,7 @@ export function useChatSession(runtimeConfig = {}) {
             approvalMode: "confirm",
             personaId: "",
             modelProfileId: defaultMainModelProfileId,
+            thinkingMode: "off",
             developerPrompt: "",
             skills: []
           });
@@ -1882,6 +1935,7 @@ export function useChatSession(runtimeConfig = {}) {
         skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
         workplacePath: String(history.workplacePath ?? ""),
         approvalMode: String(history.approvalMode ?? "confirm"),
+        thinkingMode: normalizeThinkingMode(history.thinkingMode),
         developerPrompt: normalizeDeveloperPrompt(history.developerPrompt ?? "")
       });
     }
@@ -1973,10 +2027,11 @@ export function useChatSession(runtimeConfig = {}) {
       messages: payloadMessages,
       skills: [...selectedSkillsRef.current],
       personaId: activeConversationPersonaId,
+      thinkingMode,
       developerPrompt: activeConversationDeveloperPrompt
     };
 
-    const persistenceSignature = JSON.stringify(payload);
+    const persistenceSignature = buildPersistenceSignature(payload);
     if (lastPersistedSignatureRef.current === persistenceSignature) {
       return;
     }
@@ -2006,6 +2061,7 @@ export function useChatSession(runtimeConfig = {}) {
               history.approvalMode ?? activeConversationApprovalMode ?? "confirm"
             ),
             personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
+            thinkingMode: normalizeThinkingMode(history.thinkingMode ?? thinkingMode),
             developerPrompt: normalizeDeveloperPrompt(
               history.developerPrompt ?? activeConversationDeveloperPrompt
             )
@@ -2034,6 +2090,7 @@ export function useChatSession(runtimeConfig = {}) {
     activeConversationTitle,
     draftConversation,
     activeConversationPersonaId,
+    thinkingMode,
     activeConversationDeveloperPrompt,
     activeConversationApprovalMode
   ]);
@@ -2112,6 +2169,7 @@ export function useChatSession(runtimeConfig = {}) {
       approvalMode: String(activeConversationApprovalMode ?? "confirm"),
       personaId: "",
       modelProfileId: defaultMainModelProfileId,
+      thinkingMode: "off",
       developerPrompt: "",
       skills: [...selectedSkillsRef.current]
     });
@@ -2240,6 +2298,7 @@ export function useChatSession(runtimeConfig = {}) {
       approvalMode: activeConversationApprovalMode,
       personaId: activeConversationPersonaId,
       modelProfileId: activeConversationModelProfileId,
+      thinkingMode,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
       messages: toPersistableMessages(truncatedMessages)
@@ -2274,7 +2333,8 @@ export function useChatSession(runtimeConfig = {}) {
         approvalMode: String(activeConversationApprovalMode),
         personaId: activeConversationPersonaId,
         enableDeepThinking: deepThinkingEnabled,
-        reasoningEffort
+        reasoningEffort,
+        thinkingMode
       });
     } catch (rerunError) {
       setStatus("idle");
@@ -2325,6 +2385,7 @@ export function useChatSession(runtimeConfig = {}) {
       approvalMode: activeConversationApprovalMode,
       personaId: activeConversationPersonaId,
       modelProfileId: activeConversationModelProfileId,
+      thinkingMode,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
       messages: toPersistableMessages(truncatedMessages)
@@ -2359,7 +2420,8 @@ export function useChatSession(runtimeConfig = {}) {
         approvalMode: String(activeConversationApprovalMode),
         personaId: activeConversationPersonaId,
         enableDeepThinking: deepThinkingEnabled,
-        reasoningEffort
+        reasoningEffort,
+        thinkingMode
       });
     } catch (editError) {
       setStatus("idle");
@@ -2520,6 +2582,7 @@ export function useChatSession(runtimeConfig = {}) {
         workplacePath: String(history.workplacePath ?? activeConversationWorkplace ?? ""),
         approvalMode: String(history.approvalMode ?? activeConversationApprovalMode ?? "confirm"),
         personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
+        thinkingMode: normalizeThinkingMode(history.thinkingMode ?? thinkingMode),
         developerPrompt: normalizeDeveloperPrompt(
           history.developerPrompt ?? activeConversationDeveloperPrompt
         )
@@ -2836,6 +2899,91 @@ export function useChatSession(runtimeConfig = {}) {
       setError("");
     } catch (modelProfileError) {
       setError(modelProfileError?.message || "设置模型失败");
+    }
+  }
+
+  async function persistConversationThinkingMode(conversationId, nextThinkingMode) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    const normalizedThinkingMode = normalizeThinkingMode(nextThinkingMode);
+    if (!normalizedConversationId) {
+      return null;
+    }
+
+    if (draftConversationRef.current?.id === normalizedConversationId) {
+      setDraftConversation((prev) =>
+        prev?.id === normalizedConversationId
+          ? {
+              ...prev,
+              thinkingMode: normalizedThinkingMode
+            }
+          : prev
+      );
+      return null;
+    }
+
+    try {
+      const response = await updateHistoryThinkingModeById(
+        normalizedConversationId,
+        normalizedThinkingMode
+      );
+      const updatedSummary = toSummary(response?.history ?? {});
+      setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
+      return updatedSummary;
+    } catch (thinkingModeError) {
+      setError(thinkingModeError?.message || "设置思考强度失败");
+      return null;
+    }
+  }
+
+  async function setConversationThinkingMode(nextThinkingMode) {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
+      return;
+    }
+
+    const normalizedThinkingMode = normalizeThinkingMode(nextThinkingMode);
+    if (!isThinkingModeSupportedByProvider(activeConversationModelProfile?.provider, normalizedThinkingMode)) {
+      return;
+    }
+
+    setThinkingMode(normalizedThinkingMode);
+
+    if (isDraftConversationActive) {
+      setDraftConversation((prev) => {
+        if (!prev || prev.id !== activeConversationId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          thinkingMode: normalizedThinkingMode
+        };
+      });
+      setError("");
+      return;
+    }
+
+    setConversationList((prev) =>
+      prev.map((item) =>
+        item.id === activeConversationId
+          ? {
+              ...item,
+              thinkingMode: normalizedThinkingMode
+            }
+          : item
+      )
+    );
+    const persistedSummary = await persistConversationThinkingMode(
+      activeConversationId,
+      normalizedThinkingMode
+    );
+    if (persistedSummary) {
+      setError("");
     }
   }
 
@@ -4151,14 +4299,27 @@ export function useChatSession(runtimeConfig = {}) {
     );
 
     const conversationRecord = findConversationRecord(normalizedConversationId);
+    const queuedModelProfile =
+      modelProfiles.find((profile) => profile.id === String(conversationRecord?.modelProfileId ?? "").trim()) ??
+      activeConversationModelProfile;
+    const queuedThinkingOptions = getThinkingModeOptionsForProvider(queuedModelProfile?.provider);
+    const queuedThinkingMode = isThinkingModeSupportedByProvider(
+      queuedModelProfile?.provider,
+      conversationRecord?.thinkingMode
+    )
+      ? normalizeThinkingMode(conversationRecord?.thinkingMode)
+      : queuedThinkingOptions[0]?.value ?? "off";
 
     return {
       conversationId: normalizedConversationId,
       messages: normalizeForApi(activatedMessages),
       approvalMode: String(conversationRecord?.approvalMode ?? "confirm"),
       personaId: String(conversationRecord?.personaId ?? ""),
-      enableDeepThinking: deepThinkingEnabled,
-      reasoningEffort
+      enableDeepThinking: queuedThinkingMode !== "off",
+      reasoningEffort: ["low", "medium", "high", "xhigh", "max"].includes(queuedThinkingMode)
+        ? queuedThinkingMode
+        : "",
+      thinkingMode: queuedThinkingMode
     };
   }
 
@@ -4266,6 +4427,7 @@ export function useChatSession(runtimeConfig = {}) {
             personaId: currentPlan.personaId,
             enableDeepThinking: currentPlan.enableDeepThinking,
             reasoningEffort: currentPlan.reasoningEffort,
+            thinkingMode: currentPlan.thinkingMode,
             signal: controller.signal,
             onAgentEvent: (event) => {
               applyAgentEvent(event, streamState, currentPlan.conversationId, {
@@ -4384,6 +4546,7 @@ export function useChatSession(runtimeConfig = {}) {
           String(draftConversation?.approvalMode ?? activeConversationApprovalMode ?? "confirm"),
         personaId: activeConversationPersonaId,
         modelProfileId: activeConversationModelProfileId,
+        thinkingMode,
         developerPrompt: "",
         skills: selectedSkillsRef.current,
         messages: toPersistableMessages(nextMessages)
@@ -4414,7 +4577,8 @@ export function useChatSession(runtimeConfig = {}) {
       ),
       personaId: activeConversationPersonaId,
       enableDeepThinking: deepThinkingEnabled,
-      reasoningEffort
+      reasoningEffort,
+      thinkingMode
     });
   }
 
@@ -4647,7 +4811,7 @@ export function useChatSession(runtimeConfig = {}) {
       thinkingModeOptions,
       supportsThinking,
       supportsVision,
-      setThinkingMode,
+      setThinkingMode: setConversationThinkingMode,
       reasoningEffort,
       error,
       loadConversation,
@@ -4662,6 +4826,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationApprovalMode,
       setConversationPersona,
       setConversationModelProfile,
+      setConversationThinkingMode,
       setConversationSkills,
       setConversationDeveloperPrompt,
       compressConversation,
@@ -4738,6 +4903,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationApprovalMode,
       setConversationPersona,
       setConversationModelProfile,
+      setConversationThinkingMode,
       setConversationSkills,
       setConversationDeveloperPrompt,
       compressConversation,

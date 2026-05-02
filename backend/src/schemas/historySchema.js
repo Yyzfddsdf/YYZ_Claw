@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { approvalModeSchema } from "./chatSchema.js";
+import { approvalModeSchema, thinkingModeSchema } from "./chatSchema.js";
 
 const toolCallFunctionSchema = z.object({
   name: z.string().trim().min(1, "tool call function.name is required"),
@@ -46,6 +46,7 @@ export const conversationUpsertSchema = z.object({
   skills: z.array(z.string().trim().min(1)).optional(),
   personaId: z.string().trim().max(120).optional(),
   modelProfileId: z.string().trim().max(120).optional(),
+  thinkingMode: thinkingModeSchema.optional(),
   developerPrompt: z.string().max(20000).optional(),
   replaceMessages: z.boolean().optional().default(false),
   messages: z.array(historyMessageSchema)
@@ -65,6 +66,10 @@ export const conversationPersonaSchema = z.object({
 
 export const conversationModelProfileSchema = z.object({
   modelProfileId: z.string().trim().min(1).max(120)
+});
+
+export const conversationThinkingModeSchema = z.object({
+  thinkingMode: thinkingModeSchema
 });
 
 export const conversationDeveloperPromptSchema = z.object({

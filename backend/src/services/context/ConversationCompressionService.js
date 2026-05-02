@@ -671,6 +671,7 @@ function resolveCompressionRuntimeConfig(runtimeConfig = {}) {
   );
 
   return {
+    ...profiledConfig,
     model: String(profiledConfig?.model ?? "").trim(),
     baseURL: String(profiledConfig?.baseURL ?? "").trim(),
     apiKey: String(profiledConfig?.apiKey ?? "").trim(),

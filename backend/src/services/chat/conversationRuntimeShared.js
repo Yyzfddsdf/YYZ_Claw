@@ -3,12 +3,11 @@ import path from "node:path";
 
 import { PROJECT_ROOT, YYZ_DIR } from "../../config/paths.js";
 import { configSchema } from "../../schemas/configSchema.js";
-import { createOpenAIClient } from "../openai/createOpenAIClient.js";
-import { applyThinkingOptions } from "../openai/thinkingOptions.js";
 import {
   applyModelProfileToRuntimeConfig,
   resolveModelProfile
 } from "../config/modelProfileConfig.js";
+import { runModelProviderCompletion } from "../modelProviders/runtime.js";
 
 export const DEFAULT_HISTORY_TITLE = "新会话";
 export const DEFAULT_WORKPLACE_PATH = path.resolve(PROJECT_ROOT);
@@ -112,9 +111,7 @@ async function generateConversationTitle({ configStore, firstSentence }) {
       configValidation.data,
       resolveModelProfile(configValidation.data, "", "main")
     );
-    const client = createOpenAIClient(runtimeConfig);
-    const completion = await client.chat.completions.create(applyThinkingOptions({
-      model: runtimeConfig.model,
+    const completion = await runModelProviderCompletion(runtimeConfig, {
       temperature: 0.2,
       max_tokens: 48,
       messages: [
@@ -128,7 +125,7 @@ async function generateConversationTitle({ configStore, firstSentence }) {
           content: firstSentence
         }
       ]
-    }, runtimeConfig));
+    });
 
     const candidateTitle = sanitizeTitle(completion?.choices?.[0]?.message?.content ?? "");
 

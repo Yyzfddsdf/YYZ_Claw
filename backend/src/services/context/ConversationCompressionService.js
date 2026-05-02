@@ -1,9 +1,8 @@
-import { createOpenAIClient } from "../openai/createOpenAIClient.js";
-import { applyThinkingOptions } from "../openai/thinkingOptions.js";
 import {
   applyModelProfileToRuntimeConfig,
   resolveModelProfile
 } from "../config/modelProfileConfig.js";
+import { runModelProviderCompletion } from "../modelProviders/runtime.js";
 import {
   appendToolResultHooksToContent,
   normalizeToolResultHooks
@@ -891,9 +890,7 @@ export class ConversationCompressionService {
       )
     );
     const prompt = buildSummaryPrompt({ previousSummary, messages, targetTokens });
-    const client = createOpenAIClient(compressionRuntimeConfig);
-    const completion = await client.chat.completions.create(applyThinkingOptions({
-      model: compressionRuntimeConfig.model,
+    const completion = await runModelProviderCompletion(compressionRuntimeConfig, {
       temperature: 0.2,
       max_tokens: compressionRuntimeConfig.compressionMaxOutputTokens,
       messages: [
@@ -902,7 +899,7 @@ export class ConversationCompressionService {
           content: prompt
         }
       ]
-    }, compressionRuntimeConfig));
+    });
 
     const summary = String(completion?.choices?.[0]?.message?.content ?? "").trim();
     return summary || createFallbackSummary({ previousSummary, newMessages: messages });

@@ -5,8 +5,7 @@ import {
   applyModelProfileToRuntimeConfig,
   resolveModelProfile
 } from "../config/modelProfileConfig.js";
-import { createOpenAIClient } from "../openai/createOpenAIClient.js";
-import { applyThinkingOptions } from "../openai/thinkingOptions.js";
+import { runModelProviderCompletion } from "../modelProviders/runtime.js";
 
 const AGREE_TOOL_NAME = "agree";
 const DEFAULT_MAX_ROUNDS = 4;
@@ -238,13 +237,12 @@ export class DebateService {
     );
   }
 
-  async runConversationTurn({ client, runtimeConfig, messages, allowAgree }) {
-    const completion = await client.chat.completions.create(applyThinkingOptions({
-      model: runtimeConfig.model,
+  async runConversationTurn({ runtimeConfig, messages, allowAgree }) {
+    const completion = await runModelProviderCompletion(runtimeConfig, {
       temperature: 0.3,
       tools: allowAgree ? [createAgreeToolDefinition()] : undefined,
       messages
-    }, runtimeConfig));
+    });
 
     const content = normalizeText(completion?.choices?.[0]?.message?.content);
     const agree = allowAgree ? extractAgreeCall(completion) : { agreed: false, reason: "" };
@@ -255,12 +253,11 @@ export class DebateService {
     };
   }
 
-  async runFinalTurn({ client, runtimeConfig, messages }) {
-    const completion = await client.chat.completions.create(applyThinkingOptions({
-      model: runtimeConfig.model,
+  async runFinalTurn({ runtimeConfig, messages }) {
+    const completion = await runModelProviderCompletion(runtimeConfig, {
       temperature: 0.2,
       messages
-    }, runtimeConfig));
+    });
 
     return normalizeText(completion?.choices?.[0]?.message?.content);
   }
@@ -351,7 +348,6 @@ export class DebateService {
 
     try {
       const runtimeConfig = await this.resolveRuntimeConfig();
-      const client = createOpenAIClient(runtimeConfig);
       const maxRounds = Math.max(1, Math.min(Number(debate.maxRounds ?? DEFAULT_MAX_ROUNDS), MAX_ROUNDS));
 
       for (let turnIndex = 0; turnIndex < maxRounds * 2 && !agreedBy; turnIndex += 1) {
@@ -371,7 +367,6 @@ export class DebateService {
         }
 
         const result = await this.runConversationTurn({
-          client,
           runtimeConfig,
           messages,
           allowAgree: Boolean(lastContent) && round > MIN_ROUNDS_BEFORE_AGREE
@@ -463,7 +458,6 @@ export class DebateService {
       });
 
       const finalSummary = await this.runFinalTurn({
-        client,
         runtimeConfig,
         messages: finalMessages
       });

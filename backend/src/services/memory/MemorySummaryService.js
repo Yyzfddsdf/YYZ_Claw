@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { createOpenAIClient } from "../openai/createOpenAIClient.js";
-import { applyThinkingOptions } from "../openai/thinkingOptions.js";
 import {
   applyModelProfileToRuntimeConfig,
   resolveModelProfile
 } from "../config/modelProfileConfig.js";
+import { runModelProviderCompletion } from "../modelProviders/runtime.js";
 import { safeJsonParse } from "../../utils/safeJsonParse.js";
 
 const DEFAULT_MEMORY_SUMMARY_MAX_OUTPUT_TOKENS = 1200;
@@ -517,15 +516,13 @@ function normalizeCompactEvidence(input = {}) {
 }
 
 async function runToolCompletion({
-  client,
   runtimeConfig,
   toolDefinition,
   toolName,
   prompt,
   stage
 }) {
-  const completion = await client.chat.completions.create(applyThinkingOptions({
-    model: runtimeConfig.model,
+  const completion = await runModelProviderCompletion(runtimeConfig, {
     temperature: 0,
     max_tokens: resolveStageMaxTokens(runtimeConfig, stage),
     tools: [toolDefinition],
@@ -535,19 +532,17 @@ async function runToolCompletion({
         content: prompt
       }
     ]
-  }, runtimeConfig));
+  });
 
   return extractToolPayload(completion, toolName);
 }
 
 async function runMarkdownCompletion({
-  client,
   runtimeConfig,
   prompt,
   stage
 }) {
-  const completion = await client.chat.completions.create(applyThinkingOptions({
-    model: runtimeConfig.model,
+  const completion = await runModelProviderCompletion(runtimeConfig, {
     temperature: 0,
     max_tokens: resolveStageMaxTokens(runtimeConfig, stage),
     messages: [
@@ -556,7 +551,7 @@ async function runMarkdownCompletion({
         content: prompt
       }
     ]
-  }, runtimeConfig));
+  });
 
   return normalizeMemoryMarkdown(completion?.choices?.[0]?.message?.content ?? "");
 }
@@ -647,10 +642,8 @@ export class MemorySummaryService {
       conversationContextText
     });
 
-    const client = createOpenAIClient(runtimeConfig);
     const compactEvidence = normalizeCompactEvidence(
       (await runToolCompletion({
-        client,
         runtimeConfig,
         toolDefinition: createMemoryEvidenceToolDefinition(),
         toolName: MEMORY_EVIDENCE_TOOL_NAME,
@@ -670,14 +663,12 @@ export class MemorySummaryService {
     });
     const globalMarkdown =
       (await runMarkdownCompletion({
-        client,
         runtimeConfig,
         prompt: globalPrompt,
         stage: "global"
       })) || previousGlobalMarkdown;
     const workspaceMarkdown =
       (await runMarkdownCompletion({
-        client,
         runtimeConfig,
         prompt: workspacePrompt,
         stage: "workspace"

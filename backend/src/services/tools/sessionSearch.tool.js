@@ -1,9 +1,8 @@
-import { createOpenAIClient } from "../openai/createOpenAIClient.js";
-import { applyThinkingOptions } from "../openai/thinkingOptions.js";
 import {
   applyModelProfileToRuntimeConfig,
   resolveModelProfile
 } from "../config/modelProfileConfig.js";
+import { runModelProviderCompletion } from "../modelProviders/runtime.js";
 
 const MAX_SESSION_CHARS = 100_000;
 const MAX_SESSIONS_TO_SUMMARIZE = 5;
@@ -241,11 +240,9 @@ async function summarizeConversation({
   conversationMeta
 }) {
   const summaryRuntimeConfig = resolveSummaryRuntimeConfig(runtimeConfig);
-  const client = createOpenAIClient(summaryRuntimeConfig);
   for (let attempt = 0; attempt < MAX_SUMMARY_RETRIES; attempt += 1) {
     try {
-      const completion = await client.chat.completions.create(applyThinkingOptions({
-        model: summaryRuntimeConfig.model,
+      const completion = await runModelProviderCompletion(summaryRuntimeConfig, {
         temperature: 0.1,
         max_tokens: summaryRuntimeConfig.maxTokens,
         messages: [
@@ -268,7 +265,7 @@ async function summarizeConversation({
             ].join("\n")
           }
         ]
-      }, summaryRuntimeConfig));
+      });
 
       const content = String(completion?.choices?.[0]?.message?.content ?? "").trim();
       if (content) {

@@ -1,9 +1,8 @@
-import { createOpenAIClient } from "../openai/createOpenAIClient.js";
-import { applyThinkingOptions } from "../openai/thinkingOptions.js";
 import {
-  createProviderCapabilities,
-  normalizeCompletionProvider
-} from "../providers/completionProviders.js";
+  createModelProviderCapabilities,
+  normalizeModelProvider
+} from "../modelProviders/modelProviderDefinitions.js";
+import { runModelProviderStream } from "../modelProviders/runtime.js";
 import { StreamAssembler } from "../stream/StreamAssembler.js";
 import {
   getApprovalGroupForToolCall,
@@ -219,11 +218,11 @@ export class ChatAgent {
     const model = runtimeConfig?.model?.trim();
     const baseURL = runtimeConfig?.baseURL?.trim();
     const apiKey = runtimeConfig?.apiKey?.trim();
-    const provider = normalizeCompletionProvider(runtimeConfig?.provider);
+    const provider = normalizeModelProvider(runtimeConfig?.provider);
     const providerCapabilities =
       runtimeConfig?.providerCapabilities && typeof runtimeConfig.providerCapabilities === "object"
         ? runtimeConfig.providerCapabilities
-        : createProviderCapabilities(provider);
+        : createModelProviderCapabilities(provider);
     const enableDeepThinking = Boolean(runtimeConfig?.enableDeepThinking);
     const reasoningEffort = String(runtimeConfig?.reasoningEffort ?? "").trim();
     const supportsThinking =
@@ -250,18 +249,14 @@ export class ChatAgent {
     };
   }
 
-  createChatCompletionRequest(validatedConfig, conversation, executionContext = {}) {
-    const request = {
-      model: validatedConfig.model,
+  createModelProviderRequestParams(conversation, executionContext = {}) {
+    return {
       messages: sanitizeConversationForModel(conversation),
       tools: this.toolRegistry.getOpenAITools(executionContext),
       stream_options: {
         include_usage: true
-      },
-      stream: true
+      }
     };
-
-    return applyThinkingOptions(request, validatedConfig);
   }
 
   isRetryable(error) {
@@ -873,7 +868,6 @@ export class ChatAgent {
   }
 
   async runConversationLoop({
-    client,
     validatedConfig,
     conversation,
     assembler,
@@ -901,9 +895,10 @@ export class ChatAgent {
       });
       const stream = await this.executeWithRetry(
         () =>
-          client.chat.completions.create(
-            this.createChatCompletionRequest(validatedConfig, apiConversation, executionContext),
-            abortSignal ? { signal: abortSignal } : undefined
+          runModelProviderStream(
+            validatedConfig,
+            this.createModelProviderRequestParams(apiConversation, executionContext),
+            { signal: abortSignal }
           ),
         onEvent,
         abortSignal
@@ -1088,202 +1083,23 @@ export class ChatAgent {
       approvalRules
     } = params;
     const validatedConfig = this.validateRuntimeConfig(runtimeConfig);
-    const client = createOpenAIClient(validatedConfig);
     const assembler = new StreamAssembler();
     const conversation = [...messages];
     const normalizedApprovalMode = normalizeApprovalMode(approvalMode);
     const conversationId = String(executionContext?.conversationId ?? "").trim();
-    const abortSignal = executionContext?.abortSignal ?? null;
     const resolvedApprovalRules = await this.resolveApprovalRules(approvalRules);
-    this.resolveLongTermMemoryRecall(executionContext);
-    executionContext.approvalMode = normalizedApprovalMode;
-    let emptyFinalResponseCount = 0;
 
-    while (true) {
-      throwIfAborted(abortSignal);
-      const runtimeBlocks = this.resolveRuntimeBlocks(conversation, executionContext);
-      this.emitRuntimeHookInjectedEvents(runtimeBlocks, executionContext, onEvent, assembler);
-      const currentTurnUserIndex = findLastUserMessageIndex(conversation);
-      const apiConversation = this.buildApiConversation(conversation, {
-        currentTurnUserIndex,
-        runtimeBlocks: runtimeBlocks?.blocksByChannel ?? null
-      });
-      const stream = await this.executeWithRetry(
-        () =>
-          client.chat.completions.create(
-            this.createChatCompletionRequest(validatedConfig, apiConversation, executionContext),
-            abortSignal ? { signal: abortSignal } : undefined
-          ),
-        onEvent,
-        abortSignal
-      );
-
-      const assistantRound = this.preflightAssistantToolCalls(
-        await this.consumeAssistantStream(stream, assembler, onEvent, {
-        emitReasoning: validatedConfig.enableDeepThinking,
-        signal: abortSignal
-        }),
-        onEvent
-      );
-      conversation.push(assistantRound.assistantMessage);
-
-      if (assistantRound.usage) {
-        onEvent?.({
-          type: "usage",
-          model: validatedConfig.model,
-          usage: assistantRound.usage,
-          mergedText: assembler.getMergedText()
-        });
-      }
-
-      if (assistantRound.toolCalls.length === 0) {
-        const assistantContent = getAssistantContentText(assistantRound);
-
-        if (!assistantContent) {
-          const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
-            conversation,
-            executionContext,
-            checkpoint: "assistant_empty_end"
-          });
-          if (flushedInsertions.length > 0) {
-            emptyFinalResponseCount = 0;
-            continue;
-          }
-
-          emptyFinalResponseCount += 1;
-
-          if (emptyFinalResponseCount > this.maxEmptyFinalResponses) {
-            throw createStatusError("Model returned empty final response too many times.", 502);
-          }
-
-          continue;
-        }
-
-        const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
-          conversation,
-          executionContext,
-          checkpoint: "assistant_content_end"
-        });
-        if (flushedInsertions.length > 0) {
-          emptyFinalResponseCount = 0;
-          continue;
-        }
-
-        const finalState = assembler.snapshot();
-        onEvent?.({ type: "final", ...finalState });
-        return {
-          status: "completed",
-          ...finalState
-        };
-      }
-
-      if (
-        assistantRound.toolCalls.some((toolCall) =>
-          this.requiresApproval(toolCall, normalizedApprovalMode, resolvedApprovalRules)
-        )
-      ) {
-        const approvalRecord = this.createPendingApprovalPayload({
-          approvalStore,
-          conversationId,
-          conversation: [...conversation],
-          assistantRound,
-          runtimeConfig: validatedConfig,
-          executionContext,
-          approvalMode: normalizedApprovalMode,
-          approvalRules: resolvedApprovalRules
-        });
-
-        onEvent?.({
-          type: "tool_pending_approval",
-          approvalId: approvalRecord.id,
-          conversationId,
-          toolCallId: approvalRecord.toolCallId,
-          toolName: approvalRecord.toolName,
-          toolApprovalGroup: approvalRecord.toolApprovalGroup,
-          toolApprovalSection: approvalRecord.toolApprovalSection,
-          arguments: approvalRecord.toolArguments,
-          toolCount: assistantRound.toolCalls.length,
-          approvalMode: normalizedApprovalMode
-        });
-
-        return {
-          status: "pending_approval",
-          approvalId: approvalRecord.id,
-          toolCallId: approvalRecord.toolCallId,
-          toolName: approvalRecord.toolName
-        };
-      }
-
-      for (const toolCall of assistantRound.toolCalls) {
-        throwIfAborted(abortSignal);
-        this.recordRuntimeToolEvent(executionContext, {
-          phase: "call",
-          toolCallId: toolCall.id,
-          toolName: toolCall.function.name,
-          argumentsText: toolCall.function.arguments
-        });
-
-        onEvent?.({
-          type: "tool_call",
-          toolName: toolCall.function.name,
-          arguments: toolCall.function.arguments,
-          toolCallId: toolCall.id
-        });
-
-        const toolResult = await this.executeToolCall(toolCall, executionContext);
-        this.recordRuntimeToolEvent(executionContext, {
-          phase: "result",
-          toolCallId: toolCall.id,
-          toolName: toolResult.name,
-          isError: toolResult.isError,
-          content: toolResult.content,
-          metadata: {
-            hooks: Array.isArray(toolResult.hooks) ? toolResult.hooks.length : 0
-          }
-        });
-        assembler.appendToolResult(
-          toolResult.name,
-          toolResult.modelContent ?? toolResult.content
-        );
-
-        onEvent?.({
-          type: "tool_result",
-          toolCallId: toolCall.id,
-          toolName: toolResult.name,
-          content: toolResult.content,
-          hooks: Array.isArray(toolResult.hooks) ? toolResult.hooks : [],
-          isError: toolResult.isError,
-          mergedText: assembler.getMergedText()
-        });
-
-        conversation.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: toolResult.modelContent ?? toolResult.content
-        });
-
-        this.appendToolImageInput({
-          toolCall,
-          toolResult,
-          conversation,
-          executionContext,
-          onEvent,
-          assembler
-        });
-      }
-
-      const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
-        conversation,
-        executionContext,
-        checkpoint: "tool_results_end"
-      });
-      if (flushedInsertions.length > 0) {
-        emptyFinalResponseCount = 0;
-        continue;
-      }
-
-      emptyFinalResponseCount = 0;
-    }
+    return this.runConversationLoop({
+      validatedConfig,
+      conversation,
+      assembler,
+      onEvent,
+      executionContext,
+      approvalMode: normalizedApprovalMode,
+      approvalStore,
+      conversationId,
+      approvalRules: resolvedApprovalRules
+    });
   }
 
   async resumePendingApproval(params) {
@@ -1301,7 +1117,6 @@ export class ChatAgent {
     }
 
     const validatedConfig = this.validateRuntimeConfig(runtimeConfig ?? pendingApproval.runtimeConfig);
-    const client = createOpenAIClient(validatedConfig);
     const assembler = new StreamAssembler();
     const conversation = Array.isArray(pendingApproval.conversationSnapshot)
       ? [...pendingApproval.conversationSnapshot]
@@ -1367,7 +1182,6 @@ export class ChatAgent {
     const resolvedApprovalRules = await this.resolveApprovalRules(approvalRules);
 
     return this.runConversationLoop({
-      client,
       validatedConfig,
       conversation,
       assembler,

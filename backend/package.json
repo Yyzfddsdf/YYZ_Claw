@@ -10,6 +10,7 @@
     "build": "node -e \"console.log('backend has no compile step')\""
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
     "@larksuiteoapi/node-sdk": "^1.61.0",
     "@lumis-sh/wasm-c": "^0.26.0",
     "@lumis-sh/wasm-kotlin": "^0.26.1",

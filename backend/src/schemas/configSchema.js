@@ -1,12 +1,12 @@
 import { z } from "zod";
 
-import { COMPLETION_PROVIDERS } from "../services/providers/completionProviders.js";
+import { MODEL_PROVIDERS } from "../services/modelProviders/modelProviderDefinitions.js";
 
 const modelProfileSchema = z.object({
   id: z.string().trim().min(1).max(120),
   provider: z.enum([
-    COMPLETION_PROVIDERS.OPENAI_COMPLETION,
-    COMPLETION_PROVIDERS.DASHSCOPE_COMPLETION
+    MODEL_PROVIDERS.OPENAI_COMPLETION,
+    MODEL_PROVIDERS.DASHSCOPE_COMPLETION
   ]),
   name: z.string().trim().min(1).max(120),
   model: z.string().trim().min(1),

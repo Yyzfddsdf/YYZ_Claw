@@ -392,6 +392,12 @@ export class RemoteControlRuntimeService {
         replyTarget: inbound.replyTarget,
         channel: this
       };
+      this.wakeDispatcher?.bindRemoteRuntime?.({
+        sessionId: foregroundRun?.sessionId,
+        agentId: foregroundRun?.agentId,
+        conversationId,
+        remoteContext
+      });
 
       runResult = await this.runtimeService.runConversationById({
         conversationId,
@@ -506,24 +512,85 @@ export class RemoteControlRuntimeService {
         throw new Error("remote compact command is unavailable");
       }
 
-      const compressionResult = await this.runtimeService.compactConversationById(conversationId, {
-        onEvent: (payload) => {
-          this.conversationRunCoordinator?.emitEvent?.(null, {
-            ...payload,
-            conversationId,
-            source: "remote",
-            providerKey: this.platformKey
+      let foregroundRun = null;
+      let detachConversationBroadcast = () => {};
+      let foregroundStatus = "idle";
+
+      try {
+        this.orchestratorSupervisorService?.ensureSession?.(conversationId);
+        const resolvedRuntime = await this.runtimeService.resolveConversationRuntime(conversationId);
+        foregroundRun = this.wakeDispatcher?.beginForegroundRun?.({
+          sessionId: resolvedRuntime?.sessionId,
+          agentId: resolvedRuntime?.agentId,
+          conversationId
+        }) ?? null;
+
+        if (foregroundRun?.busy) {
+          const error = new Error("conversation agent is already running");
+          error.code = "REMOTE_CONVERSATION_BUSY";
+          throw error;
+        }
+
+        detachConversationBroadcast =
+          this.conversationRunCoordinator?.attachConversationBroadcast?.(foregroundRun, {
+            listenerId: `remote_compact_broadcast_${this.platformKey}_${Date.now()}`
+          }) ?? (() => {});
+
+        this.conversationRunCoordinator?.emitEvent?.(foregroundRun, {
+          type: "session_start",
+          mode: "background",
+          source: "remote",
+          providerKey: this.platformKey
+        });
+
+        const compressionResult = await this.runtimeService.compactConversationById(conversationId, {
+          onEvent: (payload) => {
+            this.conversationRunCoordinator?.emitEvent?.(foregroundRun, {
+              ...payload,
+              conversationId,
+              source: "remote",
+              providerKey: this.platformKey
+            });
+          }
+        });
+        const compressed = Boolean(compressionResult?.compression?.compressed);
+        const reason = normalizeText(compressionResult?.compression?.reason);
+
+        this.conversationRunCoordinator?.emitEvent?.(foregroundRun, {
+          type: "session_end",
+          mode: "background",
+          source: "remote",
+          providerKey: this.platformKey,
+          status: "completed",
+          history: compressionResult?.history ?? null
+        });
+
+        await this.deliverReplyToChannel({
+          replyTarget: inbound.replyTarget,
+          text: compressed
+            ? "已完成当前会话压缩。"
+            : `未执行压缩${reason ? `：${reason}` : "。"}`
+        });
+      } catch (error) {
+        foregroundStatus = "error";
+        this.conversationRunCoordinator?.emitEvent?.(foregroundRun, {
+          type: "error",
+          mode: "background",
+          source: "remote",
+          providerKey: this.platformKey,
+          message: String(error?.message || "remote compact failed")
+        });
+        throw error;
+      } finally {
+        detachConversationBroadcast?.();
+        if (foregroundRun && !foregroundRun.busy) {
+          await this.wakeDispatcher?.finishForegroundRun?.({
+            sessionId: foregroundRun.sessionId,
+            agentId: foregroundRun.agentId,
+            status: foregroundStatus
           });
         }
-      });
-      const compressed = Boolean(compressionResult?.compression?.compressed);
-      const reason = normalizeText(compressionResult?.compression?.reason);
-      await this.deliverReplyToChannel({
-        replyTarget: inbound.replyTarget,
-        text: compressed
-          ? "已完成当前会话压缩。"
-          : `未执行压缩${reason ? `：${reason}` : "。"}`
-      });
+      }
       return;
     }
 

@@ -1,18 +1,15 @@
 # SESSION MEMORY
 
 ## 上一步实际完成了什么
-- 已新增会话级 goal 追踪功能：goal 是审批模式之外的附加字段，不再作为 `approvalMode` 第三种模式。
-- 后端新增 `goal_text` 落库、`/chat/histories/:conversationId/goal` 更新接口、goal system prompt、`goal_submit` 工具。
-- 有 goal 时模型必须调用 `goal_submit` 才算目标完成；如果本轮完整结束未提交，后端追加普通 user 目标追踪提醒，并在前台/后台 run 结束后自动后台续跑。
-- `goal_submit` 只在会话有 goal 时对模型暴露，并从前端工具管理列表隐藏；提交完成后后端会清空当前会话 goal，避免后续普通消息继续被旧目标约束。
-- 前端在原审批按钮菜单中加入目标追踪编辑区，目标文本不限长度；会话顶部显示“目标追踪”徽标。
+- 已确认远程 `/compact` 的隐藏问题：旧实现把 `compression_started/compression_completed` 发给 `conversationRunCoordinator.emitEvent(null, ...)`，因为没有 run 目标，事件不会广播到前端。
+- 已修复远程压缩：远程 `/compact` 现在会为目标会话建立轻量 foreground run，挂载 conversation broadcast，再执行压缩并推送压缩开始、完成、会话结束事件。
+- `npm run build` 已通过。
 
 ## 下一步打算做什么
-- 如继续验证 goal，开一个会话设置目标，让模型先不调用 `goal_submit`，确认本轮结束后出现 `[目标追踪]` 普通 user 提醒并后台续跑。
-- 再让模型调用 `goal_submit`，确认 goal 被清空、不会继续自动追踪。
-- 如果用户想要保留已完成 goal 展示，需要另加 goal 历史/完成状态字段；当前实现是完成即清空。
+- 如继续验证，启动服务后从远程端发送 `/compact`，确认前端同一会话出现压缩中状态，并在完成后刷新为压缩后的 history 快照。
+- 如果远程压缩期间目标会话本地正在运行，应保持和远程普通消息一致，返回 busy 错误而不是强行压缩。
 
 ## 关键约束 / 风险
-- goal 续跑是“完整轮次结束后追加 user 再后台续跑”，不是原子插入，不应复用中途插入队列语义。
-- goal 提醒消息是正常 user 落库，会触发普通历史、SSE 和压缩逻辑。
-- goal 不修改 `confirm/auto` 审批语义；工具审批仍由原审批模式决定。
+- 远程普通回复只转发 `assistant_message_end` 到 IM；压缩是状态/历史事件，不是 assistant 消息，必须走会话广播给前端。
+- 不要把远程压缩做成普通 user 消息；`/compact` 是系统功能，不能入库、不能发给模型。
+- 当前工作区已有其它未提交改动，后续改同文件时不要误回退。

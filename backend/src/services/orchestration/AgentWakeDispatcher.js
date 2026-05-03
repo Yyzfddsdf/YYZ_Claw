@@ -9,6 +9,15 @@ function shouldContinueAfterReminder(runResult = {}) {
   return status === "goal_incomplete" || status === "plan_incomplete";
 }
 
+function collectAssistantContent(payload = {}) {
+  const type = normalizeText(payload.type);
+  if (type !== "assistant_message_end") {
+    return "";
+  }
+
+  return normalizeText(payload.content);
+}
+
 export class AgentWakeDispatcher {
   constructor(options = {}) {
     this.historyStore = options.historyStore ?? null;
@@ -18,6 +27,7 @@ export class AgentWakeDispatcher {
     this.orchestratorSupervisorService = options.orchestratorSupervisorService ?? null;
     this.conversationEventBroadcaster = options.conversationEventBroadcaster ?? null;
     this.conversationRunCoordinator = options.conversationRunCoordinator ?? null;
+    this.remoteRuntimeBindings = new Map();
   }
 
   getRunKey(sessionId, agentId) {
@@ -26,6 +36,45 @@ export class AgentWakeDispatcher {
 
   getActiveRun(sessionId, agentId) {
     return this.conversationRunCoordinator?.getRunByAgent?.(sessionId, agentId) ?? null;
+  }
+
+  bindRemoteRuntime(options = {}) {
+    const sessionId = normalizeText(options.sessionId);
+    const agentId = normalizeText(options.agentId);
+    const remoteContext =
+      options.remoteContext && typeof options.remoteContext === "object"
+        ? options.remoteContext
+        : null;
+    if (!sessionId || !agentId || !remoteContext?.channel) {
+      return null;
+    }
+
+    const binding = {
+      ...remoteContext,
+      boundAt: Date.now(),
+      expiresAt: Date.now() + 30 * 60 * 1000
+    };
+    this.remoteRuntimeBindings.set(this.getRunKey(sessionId, agentId), binding);
+    return binding;
+  }
+
+  getRemoteRuntimeBinding(sessionId, agentId) {
+    const key = this.getRunKey(sessionId, agentId);
+    const binding = this.remoteRuntimeBindings.get(key) ?? null;
+    if (!binding) {
+      return null;
+    }
+
+    if (Number(binding.expiresAt ?? 0) > 0 && Number(binding.expiresAt) < Date.now()) {
+      this.remoteRuntimeBindings.delete(key);
+      return null;
+    }
+
+    return binding;
+  }
+
+  clearRemoteRuntimeBinding(sessionId, agentId) {
+    this.remoteRuntimeBindings.delete(this.getRunKey(sessionId, agentId));
   }
 
   isAgentBusy(sessionId, agentId) {
@@ -207,7 +256,12 @@ export class AgentWakeDispatcher {
     }
 
     if (nextStatus !== "error") {
-      await this.continueAgentAfterInsertions(sessionId, agentId, result);
+      const continued = await this.continueAgentAfterInsertions(sessionId, agentId, result);
+      if (!continued && nextStatus !== "waiting_approval") {
+        this.clearRemoteRuntimeBinding(sessionId, agentId);
+      }
+    } else {
+      this.clearRemoteRuntimeBinding(sessionId, agentId);
     }
 
     return result;
@@ -327,6 +381,7 @@ export class AgentWakeDispatcher {
       this.conversationRunCoordinator?.attachConversationBroadcast?.(runRecord, {
         listenerId: `conversation_broadcast_${runRecord.runId}`
       }) ?? (() => {});
+    const remoteContext = this.getRemoteRuntimeBinding(sessionId, agentId);
 
     this.orchestratorStore?.upsertAgent?.({
       agentId,
@@ -352,8 +407,16 @@ export class AgentWakeDispatcher {
         currentAtomicStepId: atomic.stepId,
         runId: runRecord.runId,
         abortSignal: runRecord.signal,
+        remoteContext,
         onEvent: (payload) => {
           this.conversationRunCoordinator?.emitEvent?.(runRecord, payload);
+          const replyText = collectAssistantContent(payload);
+          if (replyText && remoteContext?.channel) {
+            void remoteContext.channel.deliverReplyToChannel?.({
+              replyTarget: remoteContext.replyTarget,
+              text: replyText
+            });
+          }
         }
       });
 
@@ -422,7 +485,10 @@ export class AgentWakeDispatcher {
         void this.startBackgroundRun(sessionId, agentId);
         return runRecord;
       }
-      await this.continueAgentAfterInsertions(sessionId, agentId, finishResult);
+      const continued = await this.continueAgentAfterInsertions(sessionId, agentId, finishResult);
+      if (!continued) {
+        this.clearRemoteRuntimeBinding(sessionId, agentId);
+      }
       return runRecord;
     } catch (error) {
       const finishResult = this.schedulerService.finishAtomicStep({
@@ -465,6 +531,7 @@ export class AgentWakeDispatcher {
         lastActiveAt: Date.now(),
         metadata: nextMetadata
       });
+      this.clearRemoteRuntimeBinding(sessionId, agentId);
       return null;
     } finally {
       detachBroadcast();

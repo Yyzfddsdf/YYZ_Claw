@@ -20,6 +20,7 @@ const IMAGE_ATTACHMENT_ESTIMATE_TOKENS = 1024;
 const EXTREME_FILE_CONTEXT_CHARS = 500_000;
 const EXTREME_PARSED_FILES_PROMPT_CHARS = 2_000_000;
 const EXTREME_SUMMARY_SERIALIZE_CHARS = 160_000;
+const SUMMARY_PREFIX_PATTERN = /^\s*(?:\[CONTEXT COMPACTION\]\s*)+/i;
 
 function createCompressionId() {
   return `compression_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -176,6 +177,10 @@ function isCompressionSummary(message) {
 
 function isToolEventMeta(message) {
   return String(message?.meta?.kind ?? "").trim() === "tool_event";
+}
+
+function stripSummaryPrefix(text) {
+  return String(text ?? "").replace(SUMMARY_PREFIX_PATTERN, "").trim();
 }
 
 function messageTokensRough(message) {
@@ -573,16 +578,17 @@ function selectEffectiveConversationMessages(
 }
 
 function buildSummaryPrompt({ previousSummary = "", messages = [], targetTokens = 1800 }) {
+  const cleanPreviousSummary = stripSummaryPrefix(previousSummary);
   const serializedMessages = messages
     .map((message) => clipForPrompt(serializeSummaryMessage(message)))
     .join("\n\n");
 
-  if (previousSummary) {
+  if (cleanPreviousSummary) {
     return [
       "You are updating a structured conversation handoff summary.",
       "",
       "PREVIOUS SUMMARY:",
-      previousSummary,
+      cleanPreviousSummary,
       "",
       "NEW MESSAGES TO INCORPORATE:",
       serializedMessages,
@@ -633,8 +639,9 @@ function buildSummaryPrompt({ previousSummary = "", messages = [], targetTokens 
 
 function createFallbackSummary({ previousSummary = "", newMessages = [] }) {
   const fallbackLines = [];
-  if (previousSummary) {
-    fallbackLines.push(previousSummary);
+  const cleanPreviousSummary = stripSummaryPrefix(previousSummary);
+  if (cleanPreviousSummary) {
+    fallbackLines.push(cleanPreviousSummary);
   }
 
   fallbackLines.push("## Goal");
@@ -996,6 +1003,7 @@ export class ConversationCompressionService {
         newMessages: messagesToSummarize
       });
     }
+    summaryBody = stripSummaryPrefix(summaryBody);
 
     const compressionId = createCompressionId();
     const tailStartMessage = rawMessages[tailStartIndex];

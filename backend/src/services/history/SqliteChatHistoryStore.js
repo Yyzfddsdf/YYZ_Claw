@@ -45,6 +45,14 @@ function buildPreviewFromMessages(messages) {
     return attachments.length > 0 ? `${label} [图片 ${attachments.length}]` : label;
   }
 
+  if (kind === "goal_continuation") {
+    return "目标追踪已提醒继续";
+  }
+
+  if (kind === "plan_continuation") {
+    return "计划追踪已提醒继续";
+  }
+
   const content = String(lastNonEmpty?.content ?? "").trim();
   if (content.length > 0) {
     return clipText(content, 80);
@@ -101,6 +109,56 @@ function normalizeApprovalMode(value) {
 
 function normalizeGoalText(value) {
   return String(value ?? "").trim();
+}
+
+function normalizePlanStatus(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return ["pending", "in_progress", "completed", "blocked", "cancelled"].includes(normalized)
+    ? normalized
+    : "pending";
+}
+
+function normalizePlanState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const items = Array.isArray(value.items)
+    ? value.items
+        .map((item, index) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) {
+            return null;
+          }
+
+          const title = String(item.title ?? item.text ?? item.content ?? "").trim();
+          if (!title) {
+            return null;
+          }
+
+          return {
+            id: String(item.id ?? `step_${index + 1}`).trim() || `step_${index + 1}`,
+            title,
+            status: normalizePlanStatus(item.status),
+            note: String(item.note ?? "").trim()
+          };
+        })
+        .filter(Boolean)
+    : [];
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    title: String(value.title ?? "执行计划").trim() || "执行计划",
+    items,
+    updatedAt: Number(value.updatedAt ?? Date.now())
+  };
+}
+
+function serializePlanState(value) {
+  const normalized = normalizePlanState(value);
+  return normalized ? JSON.stringify(normalized) : "";
 }
 
 function normalizeThinkingMode(value) {
@@ -452,6 +510,7 @@ export class SqliteChatHistoryStore {
         thinking_mode TEXT NOT NULL DEFAULT 'off',
         approval_mode TEXT NOT NULL DEFAULT 'confirm',
         goal_text TEXT NOT NULL DEFAULT '',
+        plan_state_json TEXT NOT NULL DEFAULT '',
         skills_json TEXT NOT NULL DEFAULT '[]',
         disabled_tools_json TEXT NOT NULL DEFAULT '[]',
         persona_id TEXT NOT NULL DEFAULT '',
@@ -474,6 +533,7 @@ export class SqliteChatHistoryStore {
     this.ensureConversationThinkingModeColumn();
     this.ensureConversationApprovalModeColumn();
     this.ensureConversationGoalColumn();
+    this.ensureConversationPlanStateColumn();
     this.ensureConversationSkillsColumn();
     this.ensureConversationDisabledToolsColumn();
     this.ensureConversationPersonaColumn();
@@ -597,6 +657,16 @@ export class SqliteChatHistoryStore {
 
     if (!columnNames.has("goal_text")) {
       db.exec("ALTER TABLE conversations ADD COLUMN goal_text TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  ensureConversationPlanStateColumn() {
+    const db = this.ensureDb();
+    const columns = db.prepare("PRAGMA table_info(conversations)").all();
+    const columnNames = new Set(columns.map((item) => String(item.name)));
+
+    if (!columnNames.has("plan_state_json")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN plan_state_json TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -953,6 +1023,7 @@ export class SqliteChatHistoryStore {
         c.thinking_mode,
         c.approval_mode,
         c.goal_text,
+        c.plan_state_json,
         c.skills_json,
         c.disabled_tools_json,
         c.persona_id,
@@ -1006,6 +1077,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       goal: normalizeGoalText(item.goal_text),
+      planState: normalizePlanState(normalizeJsonText(item.plan_state_json, null)),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -1072,6 +1144,7 @@ export class SqliteChatHistoryStore {
             c.thinking_mode,
             c.approval_mode,
             c.goal_text,
+            c.plan_state_json,
             c.skills_json,
             c.disabled_tools_json,
             c.persona_id,
@@ -1128,6 +1201,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: normalizeThinkingMode(item.thinking_mode),
       approvalMode: normalizeApprovalMode(item.approval_mode),
       goal: normalizeGoalText(item.goal_text),
+      planState: normalizePlanState(normalizeJsonText(item.plan_state_json, null)),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
@@ -1160,6 +1234,7 @@ export class SqliteChatHistoryStore {
             thinking_mode,
             approval_mode,
             goal_text,
+            plan_state_json,
             skills_json,
             disabled_tools_json,
             persona_id,
@@ -1226,6 +1301,7 @@ export class SqliteChatHistoryStore {
       thinkingMode: normalizeThinkingMode(conversation.thinking_mode),
       approvalMode: normalizeApprovalMode(conversation.approval_mode),
       goal: normalizeGoalText(conversation.goal_text),
+      planState: normalizePlanState(normalizeJsonText(conversation.plan_state_json, null)),
       skills: normalizeSkillNames(normalizeJsonText(conversation.skills_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(conversation.disabled_tools_json, [])),
       personaId: String(conversation.persona_id ?? "").trim(),
@@ -1579,6 +1655,7 @@ export class SqliteChatHistoryStore {
         thinking_mode,
         approval_mode,
         goal_text,
+        plan_state_json,
         skills_json,
         disabled_tools_json,
         workplace_locked,
@@ -1602,6 +1679,9 @@ export class SqliteChatHistoryStore {
       payload.approvalMode ?? existing?.approval_mode
     );
     const goal = normalizeGoalText(payload.goal ?? existing?.goal_text);
+    const planStateJson = Object.prototype.hasOwnProperty.call(payload, "planState")
+      ? serializePlanState(payload.planState)
+      : String(existing?.plan_state_json ?? "").trim();
     const skills = normalizeSkillNames(
       payload.skills ?? normalizeJsonText(existing?.skills_json, [])
     );
@@ -1672,6 +1752,7 @@ export class SqliteChatHistoryStore {
             thinking_mode = ?,
             approval_mode = ?,
             goal_text = ?,
+            plan_state_json = ?,
             skills_json = ?,
             disabled_tools_json = ?,
             persona_id = ?,
@@ -1690,6 +1771,7 @@ export class SqliteChatHistoryStore {
           thinkingMode,
           approvalMode,
           goal,
+          planStateJson,
           JSON.stringify(skills),
           JSON.stringify(disabledTools),
           personaId,
@@ -1713,6 +1795,7 @@ export class SqliteChatHistoryStore {
               thinking_mode,
               approval_mode,
               goal_text,
+              plan_state_json,
               skills_json,
               disabled_tools_json,
               persona_id,
@@ -1722,7 +1805,7 @@ export class SqliteChatHistoryStore {
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
           `
         ).run(
           conversationId,
@@ -1735,6 +1818,7 @@ export class SqliteChatHistoryStore {
           thinkingMode,
           approvalMode,
           goal,
+          planStateJson,
           JSON.stringify(skills),
           JSON.stringify(disabledTools),
           personaId,
@@ -1798,6 +1882,9 @@ export class SqliteChatHistoryStore {
       thinkingMode: payload.thinkingMode ?? existing.thinkingMode,
       approvalMode: payload.approvalMode ?? existing.approvalMode,
       goal: payload.goal ?? existing.goal,
+      planState: Object.prototype.hasOwnProperty.call(payload, "planState")
+        ? payload.planState
+        : existing.planState,
       skills: payload.skills ?? existing.skills,
       disabledTools: payload.disabledTools ?? existing.disabledTools,
       personaId: payload.personaId ?? existing.personaId,
@@ -2097,6 +2184,9 @@ export class SqliteChatHistoryStore {
       thinkingMode: payload.thinkingMode ?? sourceConversation.thinkingMode,
       approvalMode: payload.approvalMode ?? sourceConversation.approvalMode,
       goal: payload.goal ?? sourceConversation.goal,
+      planState: Object.prototype.hasOwnProperty.call(payload, "planState")
+        ? payload.planState
+        : sourceConversation.planState,
       skills: payload.skills ?? sourceConversation.skills,
       disabledTools: payload.disabledTools ?? sourceConversation.disabledTools,
       personaId: payload.personaId ?? sourceConversation.personaId,
@@ -2265,6 +2355,35 @@ export class SqliteChatHistoryStore {
         WHERE id = ?
       `
     ).run(normalizedGoal, Date.now(), conversationId);
+
+    return this.getConversation(conversationId);
+  }
+
+  updateConversationPlanState(conversationId, planState) {
+    const db = this.ensureDb();
+    const normalizedPlanStateJson = serializePlanState(planState);
+
+    const existing = db
+      .prepare(
+        `
+          SELECT id
+          FROM conversations
+          WHERE id = ?
+        `
+      )
+      .get(conversationId);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET plan_state_json = ?, updated_at = ?
+        WHERE id = ?
+      `
+    ).run(normalizedPlanStateJson, Date.now(), conversationId);
 
     return this.getConversation(conversationId);
   }

@@ -12,6 +12,7 @@ import {
   compressHistoryById,
   deleteHistoryById,
   deleteHistoryMessageById,
+  deleteHistoryPlanById,
   fetchHistories,
   fetchHistoryById,
   fetchChatTools,
@@ -393,6 +394,14 @@ function buildPreviewFromMessages(messages) {
     return imageCount > 0 ? `${label} [图片 ${imageCount}]` : label;
   }
 
+  if (kind === "goal_continuation") {
+    return "目标追踪已提醒继续";
+  }
+
+  if (kind === "plan_continuation") {
+    return "计划追踪已提醒继续";
+  }
+
   if (!normalized.content.trim()) {
     return imageCount > 0 ? `[图片 ${imageCount}]` : "";
   }
@@ -429,6 +438,7 @@ function toSummary(history) {
     workplaceLocked: Boolean(history?.workplaceLocked),
     approvalMode: String(history?.approvalMode ?? "confirm"),
     goal: normalizeGoal(history?.goal),
+    planState: normalizePlanState(history?.planState),
     personaId: String(history?.personaId ?? "").trim(),
     developerPrompt: String(history?.developerPrompt ?? ""),
     skills: Array.isArray(history?.skills)
@@ -463,6 +473,7 @@ function normalizeSummaryList(histories) {
     workplaceLocked: Boolean(item.workplaceLocked),
     approvalMode: String(item.approvalMode ?? "confirm"),
     goal: normalizeGoal(item.goal),
+    planState: normalizePlanState(item.planState),
     personaId: String(item.personaId ?? "").trim(),
     developerPrompt: String(item.developerPrompt ?? ""),
     skills: Array.isArray(item.skills)
@@ -641,6 +652,66 @@ function normalizeGoal(value) {
   return String(value ?? "").trim();
 }
 
+function normalizePlanStatus(value) {
+  const normalized = String(value ?? "").trim();
+  return ["pending", "in_progress", "completed", "blocked", "cancelled"].includes(normalized)
+    ? normalized
+    : "pending";
+}
+
+function normalizePlanState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const items = Array.isArray(value.items)
+    ? value.items
+        .map((item, index) => {
+          const title = String(item?.title ?? item?.text ?? item?.content ?? "").trim();
+          if (!title) {
+            return null;
+          }
+
+          return {
+            id: String(item?.id ?? `step_${index + 1}`).trim() || `step_${index + 1}`,
+            title,
+            status: normalizePlanStatus(item?.status),
+            note: String(item?.note ?? "").trim()
+          };
+        })
+        .filter(Boolean)
+    : [];
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    title: String(value.title ?? "执行计划").trim() || "执行计划",
+    items,
+    updatedAt: Number(value.updatedAt ?? Date.now())
+  };
+}
+
+function readPlanStateFromToolResult(event) {
+  const toolName = String(event?.toolName ?? "").trim();
+  if (!["plan_create", "plan_update", "plan_modify", "plan_view"].includes(toolName)) {
+    return null;
+  }
+
+  const content = String(event?.content ?? "").trim();
+  if (!content) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(content);
+    return normalizePlanState(parsed?.plan);
+  } catch {
+    return null;
+  }
+}
+
 function buildGoalStartMessage(goal) {
   const normalizedGoal = normalizeGoal(goal);
   if (!normalizedGoal) {
@@ -782,6 +853,7 @@ function buildConversationUpsertPayload({
   thinkingMode = "off",
   developerPrompt = "",
   goal = "",
+  planState = null,
   skills = [],
   disabledTools = [],
   messages = []
@@ -794,6 +866,7 @@ function buildConversationUpsertPayload({
     thinkingMode: normalizeThinkingMode(thinkingMode),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt),
     goal: normalizeGoal(goal),
+    planState: normalizePlanState(planState),
     skills: Array.isArray(skills)
       ? Array.from(
           new Set(
@@ -823,6 +896,7 @@ function buildPersistenceSignature({
   thinkingMode = "off",
   developerPrompt = "",
   goal = "",
+  planState = null,
   disabledTools = []
 } = {}) {
   return JSON.stringify({
@@ -835,6 +909,7 @@ function buildPersistenceSignature({
     thinkingMode: normalizeThinkingMode(thinkingMode),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt),
     goal: normalizeGoal(goal),
+    planState: normalizePlanState(planState),
     disabledTools: normalizeToolNames(disabledTools)
   });
 }
@@ -855,6 +930,7 @@ function isSameSummary(left, right) {
     left?.workplaceLocked === right?.workplaceLocked &&
     left?.approvalMode === right?.approvalMode &&
     left?.goal === right?.goal &&
+    JSON.stringify(left?.planState ?? null) === JSON.stringify(right?.planState ?? null) &&
     left?.developerPrompt === right?.developerPrompt &&
     JSON.stringify(left?.skills ?? []) === JSON.stringify(right?.skills ?? []) &&
     JSON.stringify(left?.disabledTools ?? []) === JSON.stringify(right?.disabledTools ?? []) &&
@@ -1080,6 +1156,7 @@ export function useChatSession(runtimeConfig = {}) {
   const [messages, setMessages] = useState([]);
   const [queuedUserMessages, setQueuedUserMessages] = useState([]);
   const [conversationList, setConversationList] = useState([]);
+  const [conversationPlanOverrides, setConversationPlanOverrides] = useState({});
   const [activeConversationId, setActiveConversationId] = useState("");
   const [draftConversation, setDraftConversation] = useState(null);
   const [workplaceSelecting, setWorkplaceSelecting] = useState(false);
@@ -1182,6 +1259,23 @@ export function useChatSession(runtimeConfig = {}) {
     const current = conversationList.find((item) => item.id === activeConversationId);
     return normalizeGoal(current?.goal ?? "");
   }, [conversationList, activeConversationId, draftConversation]);
+
+  const activeConversationPlanState = useMemo(() => {
+    const normalizedConversationId = String(activeConversationId ?? "").trim();
+    if (
+      normalizedConversationId &&
+      Object.prototype.hasOwnProperty.call(conversationPlanOverrides, normalizedConversationId)
+    ) {
+      return normalizePlanState(conversationPlanOverrides[normalizedConversationId]);
+    }
+
+    if (draftConversation?.id === activeConversationId) {
+      return normalizePlanState(draftConversation.planState);
+    }
+
+    const current = conversationList.find((item) => item.id === activeConversationId);
+    return normalizePlanState(current?.planState);
+  }, [conversationList, conversationPlanOverrides, activeConversationId, draftConversation]);
 
   const activeConversationPersonaId = useMemo(() => {
     if (draftConversation?.id === activeConversationId) {
@@ -1467,6 +1561,7 @@ export function useChatSession(runtimeConfig = {}) {
             thinkingMode: "off",
             developerPrompt: "",
             goal: "",
+            planState: null,
             skills: []
           });
           setMessages([]);
@@ -2042,6 +2137,14 @@ export function useChatSession(runtimeConfig = {}) {
 
     writeConversationMessages(normalizedConversationId, normalizedMessages);
     clearResolvedPendingInsertions(normalizedConversationId, normalizedMessages);
+    setConversationPlanOverrides((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, normalizedConversationId)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[normalizedConversationId];
+      return next;
+    });
     setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
 
     if (activeConversationIdRef.current === normalizedConversationId) {
@@ -2155,6 +2258,7 @@ export function useChatSession(runtimeConfig = {}) {
       personaId: activeConversationPersonaId,
       thinkingMode,
       goal: activeConversationGoal,
+      planState: activeConversationPlanState,
       developerPrompt: activeConversationDeveloperPrompt
     };
 
@@ -2189,6 +2293,7 @@ export function useChatSession(runtimeConfig = {}) {
               history.approvalMode ?? activeConversationApprovalMode ?? "confirm"
             ),
             goal: normalizeGoal(history.goal ?? activeConversationGoal),
+            planState: normalizePlanState(history.planState ?? activeConversationPlanState),
             personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
             thinkingMode: normalizeThinkingMode(history.thinkingMode ?? thinkingMode),
             developerPrompt: normalizeDeveloperPrompt(
@@ -2309,6 +2414,7 @@ export function useChatSession(runtimeConfig = {}) {
       thinkingMode: "off",
       developerPrompt: "",
       goal: "",
+      planState: null,
       skills: [...selectedSkillsRef.current],
       disabledTools: []
     });
@@ -2321,6 +2427,7 @@ export function useChatSession(runtimeConfig = {}) {
       thinkingMode: "off",
       developerPrompt: "",
       goal: "",
+      planState: null,
       skills: [...selectedSkillsRef.current],
       disabledTools: []
     };
@@ -2451,6 +2558,7 @@ export function useChatSession(runtimeConfig = {}) {
       modelProfileId: activeConversationModelProfileId,
       thinkingMode,
       goal: activeConversationGoal,
+      planState: activeConversationPlanState,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
       messages: toPersistableMessages(truncatedMessages)
@@ -2539,6 +2647,7 @@ export function useChatSession(runtimeConfig = {}) {
       modelProfileId: activeConversationModelProfileId,
       thinkingMode,
       goal: activeConversationGoal,
+      planState: activeConversationPlanState,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
       messages: toPersistableMessages(truncatedMessages)
@@ -2966,6 +3075,50 @@ export function useChatSession(runtimeConfig = {}) {
       await persistConversationGoalValue(nextGoal);
     } catch (goalError) {
       setError(goalError?.message || "设置目标失败");
+    }
+  }
+
+  async function clearConversationPlan() {
+    if (
+      !historyLoaded ||
+      !activeConversationId ||
+      activeConversationIsRunning ||
+      isCompressing ||
+      pendingApproval
+    ) {
+      return;
+    }
+
+    const targetConversationId = String(activeConversationId).trim();
+
+    if (isDraftConversationActive || isDraftConversationId(targetConversationId)) {
+      setDraftConversation((prev) =>
+        prev?.id === targetConversationId
+          ? {
+              ...prev,
+              planState: null
+            }
+          : prev
+      );
+      setConversationPlanOverrides((prev) => ({
+        ...prev,
+        [targetConversationId]: null
+      }));
+      setError("");
+      return;
+    }
+
+    try {
+      const response = await deleteHistoryPlanById(targetConversationId);
+      const updatedSummary = toSummary(response?.history ?? {});
+      setConversationPlanOverrides((prev) => ({
+        ...prev,
+        [targetConversationId]: null
+      }));
+      setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
+      setError("");
+    } catch (planError) {
+      setError(planError?.message || "删除计划失败");
     }
   }
 
@@ -3892,6 +4045,24 @@ export function useChatSession(runtimeConfig = {}) {
     }
 
     if (event?.type === "tool_result") {
+      const nextPlanState = readPlanStateFromToolResult(event);
+      if (nextPlanState) {
+        setConversationPlanOverrides((prev) => ({
+          ...prev,
+          [normalizedTargetConversationId]: nextPlanState
+        }));
+        setConversationList((prev) =>
+          prev.map((item) =>
+            item.id === normalizedTargetConversationId
+              ? {
+                  ...item,
+                  planState: nextPlanState
+                }
+              : item
+          )
+        );
+      }
+
       updateTargetMessages((prev) => {
         const nextList = [...prev];
         const targetIndex = findToolMessageIndex(nextList, event);
@@ -4842,6 +5013,7 @@ export function useChatSession(runtimeConfig = {}) {
         modelProfileId: activeConversationModelProfileId,
         thinkingMode,
         goal: effectiveGoal,
+        planState: activeConversationPlanState,
         developerPrompt: "",
         skills: selectedSkillsRef.current,
         disabledTools: activeConversationDisabledTools,
@@ -5083,6 +5255,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationWorkplaceLocked,
       activeConversationApprovalMode,
       activeConversationGoal,
+      activeConversationPlanState,
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
@@ -5146,6 +5319,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationApprovalMode,
       setConversationGoal,
       sendConversationGoal,
+      clearConversationPlan,
       setConversationPersona,
       setConversationModelProfile,
       setConversationThinkingMode,
@@ -5171,6 +5345,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationWorkplaceLocked,
       activeConversationApprovalMode,
       activeConversationGoal,
+      activeConversationPlanState,
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
@@ -5231,6 +5406,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationApprovalMode,
       setConversationGoal,
       sendConversationGoal,
+      clearConversationPlan,
       setConversationPersona,
       setConversationModelProfile,
       setConversationThinkingMode,

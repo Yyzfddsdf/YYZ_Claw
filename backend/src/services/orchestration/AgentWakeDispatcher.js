@@ -405,7 +405,10 @@ export class AgentWakeDispatcher {
           runResult.subagentCompletionRequest
         );
       }
-      if (normalizeText(runResult?.status) === "goal_incomplete") {
+      if (
+        normalizeText(runResult?.status) === "goal_incomplete" ||
+        normalizeText(runResult?.status) === "plan_incomplete"
+      ) {
         void this.startBackgroundRun(sessionId, agentId);
         return runRecord;
       }

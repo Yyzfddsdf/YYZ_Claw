@@ -52,26 +52,16 @@ function normalizeTool(toolModule) {
     name: candidate.name,
     description: candidate.description,
     parameters: candidate.parameters,
-    execute: candidate.execute,
-    isAvailable:
-      typeof candidate.isAvailable === "function" ? candidate.isAvailable : null
+    execute: candidate.execute
   };
 }
 
-function isToolAvailable(tool, executionContext = {}) {
+function isToolEnabled(tool, executionContext = {}) {
   if (!tool || typeof tool !== "object") {
     return false;
   }
 
-  if (normalizeDisabledTools(executionContext).has(String(tool.name ?? "").trim())) {
-    return false;
-  }
-
-  if (typeof tool.isAvailable !== "function") {
-    return true;
-  }
-
-  return Boolean(tool.isAvailable(executionContext));
+  return !normalizeDisabledTools(executionContext).has(String(tool.name ?? "").trim());
 }
 
 export class ToolRegistry {
@@ -115,7 +105,7 @@ export class ToolRegistry {
       return tools;
     }
 
-    return tools.filter((tool) => isToolAvailable(tool, executionContext));
+    return tools.filter((tool) => isToolEnabled(tool, executionContext));
   }
 
   getOpenAITools(executionContext = {}) {
@@ -141,8 +131,8 @@ export class ToolRegistry {
     if (!tool) {
       throw new Error(`Tool is not registered: ${toolName}`);
     }
-    if (!isToolAvailable(tool, executionContext)) {
-      throw new Error(`Tool is not available in the current runtime: ${toolName}`);
+    if (!isToolEnabled(tool, executionContext)) {
+      throw new Error(`Tool is disabled for this conversation: ${toolName}`);
     }
 
     const rawArguments = toolCall?.function?.arguments ?? "{}";

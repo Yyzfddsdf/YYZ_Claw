@@ -249,6 +249,119 @@ function isMemoryToolName(toolName) {
   return String(toolName ?? "").trim().startsWith("memory_");
 }
 
+function safeParseJson(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isPlanToolName(toolName) {
+  return ["plan_create", "plan_update", "plan_modify", "plan_view"].includes(
+    String(toolName ?? "").trim()
+  );
+}
+
+function normalizePlanStatus(value) {
+  const normalized = String(value ?? "").trim();
+  return ["pending", "in_progress", "completed", "blocked", "cancelled"].includes(normalized)
+    ? normalized
+    : "pending";
+}
+
+function normalizePlanToolPayload(toolPayload) {
+  if (!toolPayload || !isPlanToolName(toolPayload.toolName) || !toolPayload.result) {
+    return null;
+  }
+
+  const parsed = safeParseJson(toolPayload.result);
+  return normalizePlanObject(parsed?.plan, String(parsed?.message ?? "").trim());
+}
+
+function normalizePlanObject(plan, message = "") {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    return null;
+  }
+
+  const rawItems = Array.isArray(plan?.items) ? plan.items : [];
+  const items = rawItems
+    .map((item, index) => {
+      const title = String(item?.title ?? item?.text ?? item?.content ?? "").trim();
+      if (!title) {
+        return null;
+      }
+
+      return {
+        id: String(item?.id ?? `step_${index + 1}`).trim() || `step_${index + 1}`,
+        title,
+        status: normalizePlanStatus(item?.status),
+        note: String(item?.note ?? "").trim()
+      };
+    })
+    .filter(Boolean);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    title: String(plan?.title ?? "执行计划").trim() || "执行计划",
+    message: String(message ?? "").trim(),
+    items
+  };
+}
+
+function resolveVisiblePlanFromMessages(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const message = list[index];
+    const kind = getMessageMetaKind(message);
+
+    if (kind === "plan_continuation") {
+      const plan = normalizePlanObject(message?.meta?.plan);
+      if (plan) {
+        return plan;
+      }
+    }
+
+    if (String(message?.role ?? "").trim() !== "tool") {
+      continue;
+    }
+
+    const toolPayload =
+      message?.meta?.kind === "tool_event"
+        ? message.meta
+        : parseToolMessagePayload(message?.content);
+    const plan = normalizePlanToolPayload(toolPayload);
+    if (plan) {
+      return plan;
+    }
+  }
+
+  return null;
+}
+
+function getPlanStatusLabel(status) {
+  switch (normalizePlanStatus(status)) {
+    case "completed":
+      return "已完成";
+    case "in_progress":
+      return "进行中";
+    case "blocked":
+      return "阻塞";
+    case "cancelled":
+      return "已取消";
+    default:
+      return "待处理";
+  }
+}
+
 function getMemoryToolSummary(toolName) {
   const normalizedToolName = String(toolName ?? "").trim();
 
@@ -741,6 +854,7 @@ export function ChatPanel({
   const [copiedMessageId, setCopiedMessageId] = useState("");
   const [editingMessageId, setEditingMessageId] = useState("");
   const [editingMessageText, setEditingMessageText] = useState("");
+  const [planPanelCollapsed, setPlanPanelCollapsed] = useState(false);
   const chatStreamRef = useRef(null);
   const inputRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -761,10 +875,18 @@ export function ChatPanel({
   const modelMenuRef = useRef(null);
   const toolMenuRef = useRef(null);
   const automationTemplateMenuRef = useRef(null);
+  const activeVisiblePlan = useMemo(
+    () => normalizePlanObject(chat.activeConversationPlanState),
+    [chat.activeConversationPlanState]
+  );
 
   useEffect(() => {
     setHistoryPaneOpen(Boolean(showHistoryPane));
   }, [showHistoryPane]);
+
+  useEffect(() => {
+    setPlanPanelCollapsed(false);
+  }, [chat.activeConversationId]);
 
   useEffect(() => {
     return () => {
@@ -2775,6 +2897,7 @@ export function ChatPanel({
               const isRuntimeHookInjectedMessage = messageMetaKind === "runtime_hook_injected";
               const isOrchestratorMessage = messageMetaKind === "orchestrator_message";
               const isGoalContinuationMessage = messageMetaKind === "goal_continuation";
+              const isPlanContinuationMessage = messageMetaKind === "plan_continuation";
               const imageAttachments = getImageAttachments(message);
               const parsedFileAttachments = getParsedFileAttachments(message);
               const messageText = String(message.content ?? "").trim();
@@ -2945,6 +3068,8 @@ export function ChatPanel({
                   } ${
                     isGoalContinuationMessage ? "bubble-goal-continuation" : ""
                   } ${
+                    isPlanContinuationMessage ? "bubble-plan-continuation" : ""
+                  } ${
                     isStreamingThisMessage ? "is-streaming" : ""
                   }`}
                 >
@@ -2978,6 +3103,13 @@ export function ChatPanel({
                       <div className="goal-continuation-main">
                         <span className="goal-continuation-badge">目标追踪</span>
                         <p>系统已提醒继续推进目标。</p>
+                      </div>
+                    </div>
+                  ) : isPlanContinuationMessage ? (
+                    <div className="plan-continuation-card">
+                      <div className="plan-continuation-main">
+                        <span className="plan-continuation-badge">计划追踪</span>
+                        <p>系统已提醒继续完成计划。</p>
                       </div>
                     </div>
                   ) : isCompressionSummary ? (
@@ -3311,6 +3443,60 @@ export function ChatPanel({
           </div>
 
           <form className="chat-input-row" onSubmit={handleSend}>
+            {activeVisiblePlan && (
+              <div className={`composer-plan-panel ${planPanelCollapsed ? "is-collapsed" : ""}`}>
+                <button
+                  type="button"
+                  className="composer-plan-head"
+                  onClick={() => setPlanPanelCollapsed((value) => !value)}
+                  aria-expanded={!planPanelCollapsed}
+                >
+                  <span className="composer-plan-badge">Plan</span>
+                  <strong>{activeVisiblePlan.title}</strong>
+                  <small>
+                    {activeVisiblePlan.items.filter((item) => item.status === "completed").length}/
+                    {activeVisiblePlan.items.length}
+                  </small>
+                  <span className="composer-plan-toggle">
+                    {planPanelCollapsed ? "展开" : "隐藏"}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="composer-plan-delete"
+                  onClick={() => chat.clearConversationPlan?.()}
+                  disabled={chat.isStreaming || chat.isCompressing || chat.pendingApproval}
+                  title="删除当前计划"
+                  aria-label="删除当前计划"
+                >
+                  删除
+                </button>
+
+                {!planPanelCollapsed && (
+                  <ol className="composer-plan-list">
+                    {activeVisiblePlan.items.map((item, itemIndex) => {
+                      const isDone = item.status === "completed" || item.status === "cancelled";
+                      return (
+                        <li
+                          key={`${item.id}-${itemIndex}`}
+                          className={`composer-plan-item is-${item.status} ${isDone ? "is-done" : ""}`}
+                        >
+                          <span className="composer-plan-check" aria-hidden="true">
+                            {item.status === "completed" ? "✓" : item.status === "cancelled" ? "×" : ""}
+                          </span>
+                          <div className="composer-plan-item-main">
+                            <span>{item.title}</span>
+                            {item.note && <small>{item.note}</small>}
+                          </div>
+                          <em>{getPlanStatusLabel(item.status)}</em>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
+            )}
+
             {queuedUserMessages.length > 0 && (
               <div className="composer-queue composer-queue-above" aria-label="待发送队列">
                 <div className="composer-queue-head">

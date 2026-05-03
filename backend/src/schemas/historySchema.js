@@ -26,6 +26,19 @@ const tokenUsageSchema = z.object({
   conversationId: z.string().trim().optional()
 });
 
+const planItemSchema = z.object({
+  id: z.string().trim().optional(),
+  title: z.string().trim().min(1),
+  status: z.enum(["pending", "in_progress", "completed", "blocked", "cancelled"]).optional(),
+  note: z.string().optional()
+});
+
+const planStateSchema = z.object({
+  title: z.string().trim().optional(),
+  items: z.array(planItemSchema).min(1),
+  updatedAt: z.number().int().nonnegative().optional()
+});
+
 export const historyMessageSchema = z.object({
   id: z.string().trim().min(1, "message.id is required"),
   role: z.enum(["system", "user", "assistant", "tool"]),
@@ -44,6 +57,7 @@ export const conversationUpsertSchema = z.object({
   workplacePath: z.string().trim().min(1, "workplacePath cannot be empty").optional(),
   approvalMode: approvalModeSchema.optional(),
   goal: z.string().optional(),
+  planState: planStateSchema.nullable().optional(),
   skills: z.array(z.string().trim().min(1)).optional(),
   disabledTools: z.array(z.string().trim().min(1)).optional(),
   personaId: z.string().trim().max(120).optional(),

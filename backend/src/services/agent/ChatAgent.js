@@ -15,6 +15,7 @@ import {
   throwIfAborted
 } from "../runs/runAbort.js";
 import { ToolCallPreflightService } from "../tools/ToolCallPreflightService.js";
+import { isPlanIncomplete } from "../chat/conversationRuntimeShared.js";
 
 const DEFAULT_APPROVAL_MODE = "confirm";
 const MAX_RUNTIME_TOOL_EVENT_CONTENT_CHARS = 1800;
@@ -36,6 +37,25 @@ function getAssistantContentText(assistantRound) {
 
 function isGoalSubmitted(executionContext = {}) {
   return Boolean(executionContext?.goalState?.submitted);
+}
+
+function mergeRuntimeStateObject(targetContext = {}, sourceContext = {}, stateKey) {
+  if (
+    !sourceContext?.[stateKey] ||
+    typeof sourceContext[stateKey] !== "object" ||
+    Array.isArray(sourceContext[stateKey])
+  ) {
+    return;
+  }
+
+  const currentState =
+    targetContext[stateKey] &&
+    typeof targetContext[stateKey] === "object" &&
+    !Array.isArray(targetContext[stateKey])
+      ? targetContext[stateKey]
+      : {};
+  Object.assign(currentState, sourceContext[stateKey]);
+  targetContext[stateKey] = currentState;
 }
 
 function createToolCallSkeleton() {
@@ -480,20 +500,8 @@ export class ChatAgent {
 
     try {
       const result = await this.toolRegistry.executeToolCall(toolCall, nestedExecutionContext);
-      if (
-        nestedExecutionContext.goalState &&
-        typeof nestedExecutionContext.goalState === "object" &&
-        !Array.isArray(nestedExecutionContext.goalState)
-      ) {
-        const currentGoalState =
-          executionContext.goalState &&
-          typeof executionContext.goalState === "object" &&
-          !Array.isArray(executionContext.goalState)
-            ? executionContext.goalState
-            : {};
-        Object.assign(currentGoalState, nestedExecutionContext.goalState);
-        executionContext.goalState = currentGoalState;
-      }
+      mergeRuntimeStateObject(executionContext, nestedExecutionContext, "goalState");
+      mergeRuntimeStateObject(executionContext, nestedExecutionContext, "planState");
       throwIfAborted(nestedExecutionContext?.abortSignal);
       return result;
     } catch (error) {
@@ -821,6 +829,12 @@ export class ChatAgent {
         !Array.isArray(executionContext.goalState)
           ? { ...executionContext.goalState }
           : {},
+      planState:
+        executionContext?.planState &&
+        typeof executionContext.planState === "object" &&
+        !Array.isArray(executionContext.planState)
+          ? { ...executionContext.planState }
+          : {},
       activeSkillNames: Array.isArray(executionContext?.activeSkillNames)
         ? executionContext.activeSkillNames
             .map((item) => String(item ?? "").trim())
@@ -1004,6 +1018,17 @@ export class ChatAgent {
 
         const finalState = assembler.snapshot();
         onEvent?.({ type: "final", ...finalState });
+        if (isPlanIncomplete(executionContext?.planState)) {
+          onEvent?.({
+            type: "plan_incomplete",
+            plan: executionContext.planState,
+            mergedText: assembler.getMergedText()
+          });
+          return {
+            status: "plan_incomplete",
+            ...finalState
+          };
+        }
         if (String(executionContext?.goal ?? "").trim() && !isGoalSubmitted(executionContext)) {
           onEvent?.({
             type: "goal_incomplete",

@@ -40,7 +40,7 @@ const PROVIDER_DEFINITIONS = Object.freeze({
     supportsReasoningEffort: true,
     supportsThinkingSwitch: true,
     supportsReasoningContent: true,
-    supportsVision: false
+    supportsVision: true
   }),
   [MODEL_PROVIDERS.DASHSCOPE_COMPLETION]: Object.freeze({
     id: MODEL_PROVIDERS.DASHSCOPE_COMPLETION,

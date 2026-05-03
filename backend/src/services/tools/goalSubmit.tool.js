@@ -21,13 +21,19 @@ export default {
     required: ["summary"],
     additionalProperties: false
   },
-  isAvailable(executionContext = {}) {
-    return Boolean(normalizeText(executionContext?.goal));
-  },
   async execute(args = {}, executionContext = {}) {
     const summary = normalizeText(args.summary);
     const evidence = normalizeText(args.evidence);
     const goal = normalizeText(executionContext?.goal);
+    if (!goal) {
+      return {
+        submitted: false,
+        summary,
+        evidence,
+        goal: "",
+        message: "当前没有活动目标，无法提交。"
+      };
+    }
 
     const goalState =
       executionContext.goalState &&

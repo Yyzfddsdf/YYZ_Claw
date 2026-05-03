@@ -124,12 +124,7 @@ export default {
         description: "Optional image MIME type, for example image/png."
       }
     },
-    anyOf: [{ required: ["filePath"] }, { required: ["imageUrl"] }],
     additionalProperties: false
-  },
-  isAvailable(executionContext = {}) {
-    return executionContext?.visionRuntimeConfig?.supportsVision !== false &&
-      Boolean(normalizeText(executionContext?.visionRuntimeConfig?.model));
   },
   async execute(args = {}, executionContext = {}) {
     const visionRuntimeConfig = executionContext?.visionRuntimeConfig;

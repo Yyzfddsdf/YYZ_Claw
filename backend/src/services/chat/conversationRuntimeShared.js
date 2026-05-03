@@ -372,6 +372,150 @@ export function createGoalContinuationMessage(goal) {
   };
 }
 
+function normalizePlanStatus(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["pending", "in_progress", "completed", "blocked", "cancelled"].includes(normalized)) {
+    return normalized;
+  }
+  return "pending";
+}
+
+function normalizePlanItem(item, index = 0) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return null;
+  }
+
+  const title = String(item.title ?? item.text ?? item.content ?? "").trim();
+  if (!title) {
+    return null;
+  }
+
+  return {
+    id: String(item.id ?? `step_${index + 1}`).trim() || `step_${index + 1}`,
+    title,
+    status: normalizePlanStatus(item.status),
+    note: String(item.note ?? "").trim()
+  };
+}
+
+export function normalizePlanState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const items = Array.isArray(value.items)
+    ? value.items.map((item, index) => normalizePlanItem(item, index)).filter(Boolean)
+    : [];
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    title: String(value.title ?? "执行计划").trim() || "执行计划",
+    items,
+    updatedAt: Number(value.updatedAt ?? Date.now()),
+    source: String(value.source ?? "tool").trim() || "tool"
+  };
+}
+
+export function isPlanIncomplete(planState) {
+  const normalized = normalizePlanState(planState);
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.items.some((item) => item.status !== "completed" && item.status !== "cancelled");
+}
+
+function safeParseJson(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function extractPlanStateFromToolMessage(message) {
+  if (String(message?.role ?? "").trim() !== "tool") {
+    return null;
+  }
+
+  const metaToolName = String(message?.meta?.toolName ?? message?.toolName ?? "").trim();
+  if (!metaToolName.startsWith("plan_")) {
+    return null;
+  }
+
+  const parsedPayload =
+    message?.meta?.kind === "tool_event"
+      ? message.meta
+      : safeParseJson(String(message?.content ?? ""));
+  const resultText = String(parsedPayload?.result ?? "").trim();
+  const parsedResult = safeParseJson(resultText);
+  return normalizePlanState(parsedResult?.plan);
+}
+
+export function resolvePlanStateFromMessages(messages = []) {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const planState = extractPlanStateFromToolMessage(messages[index]);
+    if (planState) {
+      return planState;
+    }
+  }
+
+  return null;
+}
+
+function formatPlanContinuation(planState) {
+  const normalized = normalizePlanState(planState);
+  if (!normalized) {
+    return "";
+  }
+
+  const lines = [`计划：${normalized.title}`];
+  normalized.items.forEach((item, index) => {
+    const marker =
+      item.status === "completed"
+        ? "已完成"
+        : item.status === "cancelled"
+          ? "已取消"
+          : item.status === "blocked"
+            ? "阻塞"
+            : item.status === "in_progress"
+              ? "进行中"
+              : "待处理";
+    lines.push(`${index + 1}. [${marker}] ${item.title}${item.note ? ` - ${item.note}` : ""}`);
+  });
+  return lines.join("\n");
+}
+
+export function createPlanContinuationMessage(planState) {
+  const normalizedPlan = normalizePlanState(planState);
+  return {
+    id: `msg_plan_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+    role: "user",
+    content: [
+      "[计划追踪] 本轮回复结束，但当前计划仍有未完成项。",
+      "请继续推进计划；完成某项后必须调用 plan_update 标记状态。",
+      "如果计划本身需要调整，请调用 plan_modify；不要在未完成计划时直接结束。",
+      formatPlanContinuation(normalizedPlan)
+    ].filter(Boolean).join("\n"),
+    meta: {
+      kind: "plan_continuation",
+      plan: normalizedPlan
+    },
+    timestamp: Date.now()
+  };
+}
+
 export function buildSubagentGuardPrompt() {
   return [
     "你当前运行在子智能体模式。",

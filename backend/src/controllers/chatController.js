@@ -29,11 +29,14 @@ import {
   buildConversationPromptMessages,
   buildForkTitle,
   createGoalContinuationMessage,
+  createPlanContinuationMessage,
   createValidationError,
   extractFirstSentence,
   isGoalEnabled,
+  isPlanIncomplete,
   isAutoTitleCandidate,
   loadApprovalRules,
+  normalizePlanState,
   normalizeUsageRecordPayload,
   buildThinkingRuntimeOptions,
   inferThinkingModeFromRuntimeOptions,
@@ -1430,6 +1433,28 @@ export function createChatController({
       });
     },
 
+    clearPlanById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const history = historyStore.getConversation(conversationId);
+      if (!history) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const updated = historyStore.updateConversationPlanState(conversationId, null);
+
+      res.json({
+        history: enrichHistoryDetail(updated, orchestratorStore, historyStore),
+        planState: null
+      });
+    },
+
     updateSkillsById: async (req, res) => {
       const conversationId = String(req.params.conversationId || "").trim();
 
@@ -1865,6 +1890,9 @@ export function createChatController({
         ),
         approvalMode: validation.data.approvalMode,
         goal: validation.data.goal ?? existing?.goal,
+        planState: Object.prototype.hasOwnProperty.call(validation.data, "planState")
+          ? validation.data.planState
+          : existing?.planState,
         skills: validation.data.skills,
         disabledTools: validation.data.disabledTools,
         personaId,
@@ -2147,6 +2175,7 @@ export function createChatController({
       let executionContext = null;
       let completionDispatchRequest = null;
       let continueGoalAfterFinish = false;
+      let continuePlanAfterFinish = false;
 
       try {
         if (toolRegistry && typeof toolRegistry.refresh === "function") {
@@ -2236,6 +2265,9 @@ export function createChatController({
             typeof resolvedPendingApproval.executionContext.goalState === "object"
               ? { ...resolvedPendingApproval.executionContext.goalState }
               : {},
+          planState:
+            normalizePlanState(resolvedPendingApproval.executionContext?.planState) ??
+            normalizePlanState(resumedHistory?.planState),
           memoryStore,
           skillCatalog,
           skillValidator,
@@ -2348,8 +2380,34 @@ export function createChatController({
         }
 
         if (
+          runResult?.status === "plan_incomplete" &&
+          isPlanIncomplete(executionContext?.planState)
+        ) {
+          const planContinuationMessage = createPlanContinuationMessage(executionContext.planState);
+          updatedResumedHistory = historyStore.appendMessages(
+            resolvedPendingApproval.conversationId,
+            [planContinuationMessage],
+            {
+              updatedAt: planContinuationMessage.timestamp
+            }
+          ) ?? updatedResumedHistory;
+          continuePlanAfterFinish = true;
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "conversation_messages_appended",
+              messages: [planContinuationMessage],
+              checkpoint: "plan_incomplete_end"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+
+        if (
           runResult?.status !== "pending_approval" &&
-          runResult?.status !== "goal_incomplete"
+          runResult?.status !== "goal_incomplete" &&
+          runResult?.status !== "plan_incomplete"
         ) {
           memorySummaryService?.scheduleRefresh?.({
             conversationId: resolvedPendingApproval.conversationId
@@ -2386,7 +2444,9 @@ export function createChatController({
         completionDispatchRequest = resolveSubagentCompletionDispatchRequest({
           executionContext,
           runResult,
-          status: runResult?.status === "goal_incomplete" ? "goal_incomplete" : foregroundStatus,
+          status: runResult?.status === "goal_incomplete" || runResult?.status === "plan_incomplete"
+            ? runResult.status
+            : foregroundStatus,
           displayName:
             orchestratorStore?.findAgentByConversationId?.(resolvedPendingApproval.conversationId)
               ?.displayName ?? "",
@@ -2426,7 +2486,7 @@ export function createChatController({
             status: foregroundStatus
           });
         }
-        if (continueGoalAfterFinish && foregroundRun) {
+        if ((continueGoalAfterFinish || continuePlanAfterFinish) && foregroundRun) {
           void wakeDispatcher?.startBackgroundRun?.(
             foregroundRun.sessionId,
             foregroundRun.agentId
@@ -2516,6 +2576,7 @@ export function createChatController({
       let executionContext = null;
       let completionDispatchRequest = null;
       let continueGoalAfterFinish = false;
+      let continuePlanAfterFinish = false;
 
       try {
         if (toolRegistry && typeof toolRegistry.refresh === "function") {
@@ -2835,6 +2896,7 @@ export function createChatController({
             : [],
           goal: String(existingConversation?.goal ?? "").trim(),
           goalState: {},
+          planState: normalizePlanState(existingConversation?.planState),
           memoryStore,
           skillCatalog,
           skillValidator,
@@ -2939,9 +3001,35 @@ export function createChatController({
         }
 
         if (
+          runResult?.status === "plan_incomplete" &&
+          isPlanIncomplete(executionContext?.planState)
+        ) {
+          const planContinuationMessage = createPlanContinuationMessage(executionContext.planState);
+          existingConversation = historyStore.appendMessages(
+            conversationId,
+            [planContinuationMessage],
+            {
+              updatedAt: planContinuationMessage.timestamp
+            }
+          ) ?? existingConversation;
+          continuePlanAfterFinish = true;
+          emitRunEvent(
+            foregroundRun,
+            {
+              type: "conversation_messages_appended",
+              messages: [planContinuationMessage],
+              checkpoint: "plan_incomplete_end"
+            },
+            conversationRunCoordinator,
+            res
+          );
+        }
+
+        if (
           !resolvedRuntime?.isSubagent &&
           runResult?.status !== "pending_approval" &&
-          runResult?.status !== "goal_incomplete"
+          runResult?.status !== "goal_incomplete" &&
+          runResult?.status !== "plan_incomplete"
         ) {
           memorySummaryService?.scheduleRefresh?.({
             conversationId
@@ -2978,7 +3066,9 @@ export function createChatController({
         completionDispatchRequest = resolveSubagentCompletionDispatchRequest({
           executionContext,
           runResult,
-          status: runResult?.status === "goal_incomplete" ? "goal_incomplete" : foregroundStatus,
+          status: runResult?.status === "goal_incomplete" || runResult?.status === "plan_incomplete"
+            ? runResult.status
+            : foregroundStatus,
           displayName:
             orchestratorStore?.findAgentByConversationId?.(conversationId)?.displayName ?? "",
           agentType: resolvedRuntime?.agentType
@@ -3016,7 +3106,7 @@ export function createChatController({
             status: foregroundStatus
           });
         }
-        if (continueGoalAfterFinish && foregroundRun) {
+        if ((continueGoalAfterFinish || continuePlanAfterFinish) && foregroundRun) {
           void wakeDispatcher?.startBackgroundRun?.(
             foregroundRun.sessionId,
             foregroundRun.agentId

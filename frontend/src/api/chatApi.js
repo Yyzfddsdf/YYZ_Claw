@@ -62,6 +62,12 @@ export function updateHistoryGoalById(conversationId, goal) {
   });
 }
 
+export function deleteHistoryPlanById(conversationId) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/plan`, {
+    method: "DELETE"
+  });
+}
+
 export function updateHistorySkillsById(conversationId, skills) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/skills`, {
     method: "PUT",

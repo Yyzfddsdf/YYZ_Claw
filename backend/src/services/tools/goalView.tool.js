@@ -11,14 +11,12 @@ export default {
     properties: {},
     additionalProperties: false
   },
-  isAvailable(executionContext = {}) {
-    return Boolean(normalizeText(executionContext?.goal));
-  },
   async execute(args = {}, executionContext = {}) {
     const goal = normalizeText(executionContext?.goal);
 
     return {
       goal,
+      exists: Boolean(goal),
       submitted: Boolean(executionContext?.goalState?.submitted)
     };
   }

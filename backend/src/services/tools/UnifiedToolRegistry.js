@@ -17,20 +17,12 @@ function normalizeDisabledTools(executionContext = {}) {
   );
 }
 
-function isToolAvailable(tool, executionContext = {}) {
+function isToolEnabled(tool, executionContext = {}) {
   if (!tool || typeof tool !== "object") {
     return false;
   }
 
-  if (normalizeDisabledTools(executionContext).has(String(tool.name ?? "").trim())) {
-    return false;
-  }
-
-  if (typeof tool.isAvailable !== "function") {
-    return true;
-  }
-
-  return Boolean(tool.isAvailable(executionContext));
+  return !normalizeDisabledTools(executionContext).has(String(tool.name ?? "").trim());
 }
 
 export class UnifiedToolRegistry {
@@ -63,7 +55,7 @@ export class UnifiedToolRegistry {
     }
 
     for (const tool of this.mcpManager?.listTools?.() ?? []) {
-      if (!toolMap.has(tool.name) && (!executionContext || isToolAvailable(tool, executionContext))) {
+      if (!toolMap.has(tool.name) && (!executionContext || isToolEnabled(tool, executionContext))) {
         toolMap.set(tool.name, tool);
       }
     }
@@ -92,7 +84,7 @@ export class UnifiedToolRegistry {
 
     const availableTool = this.listTools(executionContext).find((tool) => tool.name === toolName);
     if (!availableTool) {
-      throw new Error(`Tool is not available in the current runtime: ${toolName}`);
+      throw new Error(`Tool is disabled or not registered: ${toolName}`);
     }
 
     if (this.localToolRegistry.hasTool(toolName)) {

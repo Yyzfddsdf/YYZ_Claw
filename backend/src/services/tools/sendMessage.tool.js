@@ -13,10 +13,6 @@ function resolveRemoteContext(executionContext = {}) {
   return remoteContext;
 }
 
-function isRemoteRuntime(executionContext = {}) {
-  return Boolean(resolveRemoteContext(executionContext));
-}
-
 export default {
   name: "send_message",
   description:
@@ -36,7 +32,6 @@ export default {
     required: [],
     additionalProperties: false
   },
-  isAvailable: isRemoteRuntime,
   async execute(args = {}, executionContext = {}) {
     const remoteContext = resolveRemoteContext(executionContext);
     if (!remoteContext || typeof remoteContext.channel?.sendMessageToChannel !== "function") {

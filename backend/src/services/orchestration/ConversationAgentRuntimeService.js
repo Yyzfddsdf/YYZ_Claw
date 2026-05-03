@@ -4,10 +4,13 @@ import {
   buildCompressionSnapshotMetadata,
   buildCompressionTokenSnapshot,
   createGoalContinuationMessage,
+  createPlanContinuationMessage,
   extractFirstSentence,
   isGoalEnabled,
+  isPlanIncomplete,
   isAutoTitleCandidate,
   loadApprovalRules,
+  normalizePlanState,
   normalizeUsageRecordPayload,
   buildThinkingRuntimeOptions,
   inferThinkingModeFromRuntimeOptions,
@@ -371,6 +374,7 @@ export class ConversationAgentRuntimeService {
       runtimeConfig,
       goal: normalizeText(existingConversation?.goal),
       goalState: {},
+      planState: normalizePlanState(existingConversation?.planState),
       memoryStore: this.memoryStore,
       skillCatalog: this.skillCatalog,
       skillValidator: this.skillValidator,
@@ -460,6 +464,7 @@ export class ConversationAgentRuntimeService {
     syncRecorderToHistory();
     let updatedHistory = this.historyStore.getConversation(conversationId);
     let goalContinuationMessage = null;
+    let planContinuationMessage = null;
 
     if (executionContext?.goalState?.submitted) {
       updatedHistory = this.historyStore.updateConversationGoal(conversationId, "") ?? updatedHistory;
@@ -484,6 +489,25 @@ export class ConversationAgentRuntimeService {
       });
     }
 
+    if (
+      normalizeText(runResult?.status) === "plan_incomplete" &&
+      isPlanIncomplete(executionContext?.planState)
+    ) {
+      planContinuationMessage = createPlanContinuationMessage(executionContext.planState);
+      updatedHistory = this.historyStore.appendMessages(
+        conversationId,
+        [planContinuationMessage],
+        {
+          updatedAt: planContinuationMessage.timestamp
+        }
+      ) ?? updatedHistory;
+      options.onEvent?.({
+        type: "conversation_messages_appended",
+        messages: [planContinuationMessage],
+        checkpoint: "plan_incomplete_end"
+      });
+    }
+
     if (firstSentence && isAutoTitleCandidate(updatedHistory?.title)) {
       scheduleAsyncTitleGeneration({
         conversationId,
@@ -496,7 +520,8 @@ export class ConversationAgentRuntimeService {
     if (
       !resolved.isSubagent &&
       normalizeText(runResult?.status) !== "pending_approval" &&
-      normalizeText(runResult?.status) !== "goal_incomplete"
+      normalizeText(runResult?.status) !== "goal_incomplete" &&
+      normalizeText(runResult?.status) !== "plan_incomplete"
     ) {
       this.memorySummaryService?.scheduleRefresh?.({
         conversationId
@@ -515,6 +540,7 @@ export class ConversationAgentRuntimeService {
       ...runResult,
       history: updatedHistory,
       goalContinuationMessage,
+      planContinuationMessage,
       sessionId: resolved.sessionId,
       agentId: resolved.agentId,
       agentType: resolved.agentType,

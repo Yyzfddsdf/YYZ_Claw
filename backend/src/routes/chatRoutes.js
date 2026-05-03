@@ -48,6 +48,7 @@ export function createChatRoutes(services) {
     "/chat/histories/:conversationId/goal",
     asyncHandler(controller.updateGoalById)
   );
+  router.delete("/chat/histories/:conversationId/plan", asyncHandler(controller.clearPlanById));
   router.put("/chat/histories/:conversationId/skills", asyncHandler(controller.updateSkillsById));
   router.put("/chat/histories/:conversationId/tools", asyncHandler(controller.updateToolsById));
   router.put("/chat/histories/:conversationId/persona", asyncHandler(controller.updatePersonaById));

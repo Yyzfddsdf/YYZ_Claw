@@ -39,7 +39,7 @@ export const MODEL_PROVIDER_OPTIONS = [
       supportsReasoningEffort: true,
       supportsThinkingSwitch: true,
       supportsReasoningContent: true,
-      supportsVision: false
+      supportsVision: true
     }
   },
   {

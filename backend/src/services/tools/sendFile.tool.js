@@ -15,10 +15,6 @@ function resolveRemoteContext(executionContext = {}) {
   return remoteContext;
 }
 
-function isRemoteRuntime(executionContext = {}) {
-  return Boolean(resolveRemoteContext(executionContext));
-}
-
 function resolveWorkingDirectory(executionContext = {}) {
   const candidate = String(
     executionContext.workingDirectory ?? executionContext.workplacePath ?? ""
@@ -64,7 +60,6 @@ export default {
     required: [],
     additionalProperties: false
   },
-  isAvailable: isRemoteRuntime,
   async execute(args = {}, executionContext = {}) {
     const remoteContext = resolveRemoteContext(executionContext);
     if (!remoteContext || typeof remoteContext.channel?.sendMessageToChannel !== "function") {

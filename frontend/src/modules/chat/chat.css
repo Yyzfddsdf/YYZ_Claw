@@ -2093,14 +2093,16 @@
   border: 1px solid #c7d2fe;
 }
 
-.bubble-goal-continuation .bubble-content {
+.bubble-goal-continuation .bubble-content,
+.bubble-plan-continuation .bubble-content {
   background: transparent;
   border: none;
   box-shadow: none;
   padding: 0;
 }
 
-.goal-continuation-card {
+.goal-continuation-card,
+.plan-continuation-card {
   display: grid;
   gap: 0.65rem;
   padding: 0.42rem 0.62rem;
@@ -2112,14 +2114,24 @@
   color: #78350f;
 }
 
-.goal-continuation-main {
+.plan-continuation-card {
+  border-color: rgba(37, 99, 235, 0.24);
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.13), rgba(239, 246, 255, 0.78)),
+    rgba(255, 255, 255, 0.62);
+  color: #1e3a8a;
+}
+
+.goal-continuation-main,
+.plan-continuation-main {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   flex-wrap: wrap;
 }
 
-.goal-continuation-main p {
+.goal-continuation-main p,
+.plan-continuation-main p {
   margin: 0;
   font-size: 0.76rem;
   font-weight: 650;
@@ -2130,7 +2142,8 @@
   color: #92400e;
 }
 
-.goal-continuation-badge {
+.goal-continuation-badge,
+.plan-continuation-badge {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
@@ -2140,6 +2153,12 @@
   color: #92400e;
   font-size: 0.66rem;
   font-weight: 800;
+}
+
+.plan-continuation-badge {
+  background: rgba(37, 99, 235, 0.16);
+  border-color: rgba(37, 99, 235, 0.28);
+  color: #1d4ed8;
 }
 
 .bubble-delete-button {
@@ -3252,6 +3271,188 @@
   gap: 0.6rem;
   background: white;
   border-top: 1px solid var(--border-light);
+}
+
+.composer-plan-panel {
+  position: relative;
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid rgba(14, 165, 233, 0.22);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(14, 165, 233, 0.1), rgba(240, 253, 250, 0.74)),
+    rgba(255, 255, 255, 0.76);
+  box-shadow: 0 14px 30px rgb(15 23 42 / 0.07);
+  padding: 0.55rem;
+}
+
+.composer-plan-panel.is-collapsed {
+  padding-bottom: 0.55rem;
+}
+
+.composer-plan-head {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.05rem 3.15rem 0.05rem 0.1rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.composer-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.5rem;
+  background: rgba(14, 165, 233, 0.14);
+  color: #0369a1;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer-plan-head strong {
+  min-width: 0;
+  color: var(--text-main);
+  font-size: 0.84rem;
+  font-weight: 780;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-plan-head small {
+  border-radius: 999px;
+  padding: 0.18rem 0.48rem;
+  background: rgba(255, 255, 255, 0.72);
+  color: #0369a1;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.composer-plan-toggle {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.composer-plan-delete {
+  position: absolute;
+  top: 0.52rem;
+  right: 0.55rem;
+  border: none;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.09);
+  color: #b91c1c;
+  font-size: 0.7rem;
+  font-weight: 780;
+  padding: 0.2rem 0.48rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.composer-plan-delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.composer-plan-delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.composer-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.32rem;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.composer-plan-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--text-main);
+}
+
+.composer-plan-item.is-done {
+  color: var(--text-muted);
+  background: rgba(241, 245, 249, 0.68);
+}
+
+.composer-plan-check {
+  width: 1.08rem;
+  height: 1.08rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  color: #059669;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.composer-plan-item.is-completed .composer-plan-check {
+  border-color: rgba(5, 150, 105, 0.34);
+  background: rgba(5, 150, 105, 0.12);
+}
+
+.composer-plan-item.is-cancelled .composer-plan-check {
+  color: #64748b;
+  background: rgba(100, 116, 139, 0.1);
+}
+
+.composer-plan-item.is-in_progress .composer-plan-check {
+  border-color: rgba(37, 99, 235, 0.32);
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.composer-plan-item.is-blocked .composer-plan-check {
+  border-color: rgba(220, 38, 38, 0.34);
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.composer-plan-item-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.08rem;
+}
+
+.composer-plan-item-main span {
+  font-size: 0.8rem;
+  font-weight: 680;
+  line-height: 1.35;
+}
+
+.composer-plan-item.is-done .composer-plan-item-main span {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.composer-plan-item-main small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.composer-plan-item em {
+  font-style: normal;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
 }
 
 .composer-approval-card {

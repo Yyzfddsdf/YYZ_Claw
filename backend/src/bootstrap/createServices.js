@@ -75,6 +75,14 @@ import { EdgeTextToSpeechService } from "../services/tts/EdgeTextToSpeechService
 import { ToolRegistry } from "../services/tools/ToolRegistry.js";
 import { UnifiedToolRegistry } from "../services/tools/UnifiedToolRegistry.js";
 
+function runStartupTask(label, task) {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[startup] ${label} failed`, error);
+    });
+}
+
 export async function createServices() {
   await ensureYyzHome();
 
@@ -127,7 +135,7 @@ export async function createServices() {
   const mcpManager = new McpManager({
     configStore: mcpConfigStore
   });
-  await mcpManager.refresh();
+  runStartupTask("mcp refresh", () => mcpManager.refresh());
   const speechToTextService = new SpeechToTextService();
   const edgeTextToSpeechService = new EdgeTextToSpeechService({
     defaultVoice: "zh-CN-XiaoxiaoNeural",
@@ -268,13 +276,15 @@ export async function createServices() {
     label: "飞书",
     adapter: feishuProviderAdapter
   });
-  const initialRemoteControlConfig = await remoteControlConfigStore.read();
-  await feishuProviderAdapter.setActive(
-    String(initialRemoteControlConfig.activeProviderKey ?? "").trim().toLowerCase() === "feishu",
-    {
-      forceRefresh: true
-    }
-  );
+  runStartupTask("remote provider activation", async () => {
+    const initialRemoteControlConfig = await remoteControlConfigStore.read();
+    await feishuProviderAdapter.setActive(
+      String(initialRemoteControlConfig.activeProviderKey ?? "").trim().toLowerCase() === "feishu",
+      {
+        forceRefresh: true
+      }
+    );
+  });
   const conversationAgentRuntimeService = new ConversationAgentRuntimeService({
     chatAgent: null,
     agentRuntimeFactory,

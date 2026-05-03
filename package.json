@@ -19,8 +19,27 @@
     "start:backend": "npm run start --workspace backend"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "@larksuiteoapi/node-sdk": "^1.61.0",
+    "@lumis-sh/wasm-c": "^0.26.0",
+    "@lumis-sh/wasm-kotlin": "^0.26.1",
+    "@lumis-sh/wasm-scala": "^0.26.0",
+    "@lumis-sh/wasm-swift": "^0.26.0",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "cors": "^2.8.5",
     "edge-tts-universal": "^1.4.0",
-    "esbuild": "^0.25.4"
+    "esbuild": "^0.25.4",
+    "express": "^4.19.2",
+    "mammoth": "^1.9.1",
+    "multer": "^2.0.2",
+    "node-pty": "^1.1.0",
+    "openai": "^4.104.0",
+    "pdf-parse": "^1.1.1",
+    "playwright-core": "^1.59.1",
+    "ws": "^8.20.0",
+    "xlsx": "^0.18.5",
+    "yaml": "^2.8.3",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "d3-hierarchy": "^3.1.2",
@@ -34,6 +53,7 @@
     "appId": "com.yyzclaw.app",
     "productName": "YYZ_CLAW",
     "asar": false,
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
@@ -66,8 +86,7 @@
           ]
         }
       ],
-      "icon": "build/icons/icon.ico",
-      "signAndEditExecutable": false
+      "icon": "build/icons/icon.ico"
     },
     "nsis": {
       "oneClick": false,

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } = require("electron");
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 
@@ -19,6 +20,50 @@ let mainWindow = null;
 let workspaceWindow = null;
 let tray = null;
 let quitting = false;
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+function buildStartupPage(message = "正在启动 YYZ_CLAW 服务...") {
+  const safeMessage = String(message || "正在启动 YYZ_CLAW 服务...")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  return [
+    "<!doctype html>",
+    "<html lang=\"zh-CN\">",
+    "<head>",
+    "<meta charset=\"UTF-8\" />",
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />",
+    "<title>YYZ_CLAW</title>",
+    "<style>",
+    "html,body{height:100%;margin:0;background:#101418;color:#f6efe5;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;}",
+    "body{display:grid;place-items:center;overflow:hidden;}",
+    ".shell{width:min(460px,80vw);padding:34px 36px;border:1px solid rgba(255,255,255,.12);border-radius:26px;background:linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.05));box-shadow:0 28px 80px rgba(0,0,0,.38);}",
+    ".brand{display:flex;align-items:center;gap:14px;font-size:24px;font-weight:800;letter-spacing:.04em;}",
+    ".orb{width:46px;height:46px;border-radius:18px;background:linear-gradient(135deg,#ffcf8b,#f28c7b 48%,#7ac7d7);box-shadow:0 0 36px rgba(242,140,123,.38);}",
+    ".msg{margin-top:18px;color:#d9cdbc;font-size:14px;line-height:1.7;}",
+    ".bar{position:relative;height:7px;margin-top:24px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;}",
+    ".bar::after{content:'';position:absolute;inset:0;width:42%;border-radius:inherit;background:linear-gradient(90deg,#ffd08a,#ff8f73);animation:run 1.25s ease-in-out infinite;}",
+    "@keyframes run{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}",
+    "</style>",
+    "</head>",
+    "<body>",
+    "<main class=\"shell\">",
+    "<div class=\"brand\"><div class=\"orb\"></div><div>YYZ_CLAW</div></div>",
+    `<div class="msg">${safeMessage}</div>`,
+    "<div class=\"bar\"></div>",
+    "</main>",
+    "</body>",
+    "</html>"
+  ].join("");
+}
+
+function loadStartupPage(message) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildStartupPage(message))}`);
+}
 
 function waitForServer(url, timeoutMs = 90000) {
   const startedAt = Date.now();
@@ -62,6 +107,10 @@ function startBackendService() {
     DEFAULT_ASSET_DIR_CANDIDATES.find((candidate) => require("node:fs").existsSync(candidate)) ||
     DEFAULT_ASSET_DIR_CANDIDATES[0];
   const serviceEntry = path.join(PROJECT_ROOT, "service.js");
+  const logDir = path.join(app.getPath("userData"), "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const stdoutLog = fs.openSync(path.join(logDir, "backend.out.log"), "a");
+  const stderrLog = fs.openSync(path.join(logDir, "backend.err.log"), "a");
 
   const child = spawn(process.execPath, [serviceEntry], {
     cwd: PROJECT_ROOT,
@@ -72,7 +121,7 @@ function startBackendService() {
       PORT: String(DEFAULT_PORT),
       YYZ_CLAW_DEFAULTS_DIR: defaultAssetsDir
     },
-    stdio: "inherit",
+    stdio: app.isPackaged ? ["ignore", stdoutLog, stderrLog] : "inherit",
     windowsHide: true
   });
 
@@ -101,7 +150,7 @@ function createMainWindow() {
     }
   });
 
-  mainWindow.loadURL(SERVER_URL);
+  loadStartupPage();
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
@@ -201,13 +250,38 @@ function createTray() {
   });
 }
 
-app.whenReady().then(async () => {
-  backendProcess = startBackendService();
-  await waitForServer(SERVER_URL);
-  ipcMain.on("workspace:open", (_event, workspaceRoot) => openWorkspaceWindow(workspaceRoot));
-  createMainWindow();
-  createTray();
-});
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  app.whenReady().then(async () => {
+    backendProcess = startBackendService();
+    ipcMain.on("workspace:open", (_event, workspaceRoot) => openWorkspaceWindow(workspaceRoot));
+    createMainWindow();
+    createTray();
+
+    waitForServer(SERVER_URL)
+      .then(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadURL(SERVER_URL);
+        }
+      })
+      .catch((error) => {
+        console.error("[electron] service startup failed", error);
+        loadStartupPage(`YYZ_CLAW 服务启动失败：${error?.message ?? "unknown error"}`);
+      });
+  });
+}
 
 app.on("window-all-closed", (event) => {
   event.preventDefault();

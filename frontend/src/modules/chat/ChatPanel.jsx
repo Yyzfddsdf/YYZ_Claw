@@ -807,7 +807,10 @@ export function ChatPanel({
   disabledReason,
   onNavigate,
   showHistoryPane = true,
-  onBack
+  onBack,
+  hideWorkspaceDock = false,
+  headerExtra = null,
+  footerExtra = null
 }) {
   const [draft, setDraft] = useState("");
   const [pendingImages, setPendingImages] = useState([]);
@@ -818,7 +821,7 @@ export function ChatPanel({
   const [reasoningNow, setReasoningNow] = useState(() => Date.now());
   const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
-  const [historyPaneOpen, setHistoryPaneOpen] = useState(Boolean(showHistoryPane));
+  const [historyPaneOpen, setHistoryPaneOpen] = useState(false);
   const [contextPopupOpen, setContextPopupOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
@@ -881,7 +884,9 @@ export function ChatPanel({
   );
 
   useEffect(() => {
-    setHistoryPaneOpen(Boolean(showHistoryPane));
+    if (!showHistoryPane) {
+      setHistoryPaneOpen(false);
+    }
   }, [showHistoryPane]);
 
   useEffect(() => {
@@ -1179,6 +1184,7 @@ export function ChatPanel({
         String(message?.id ?? "").trim() === String(activeConversationRuntimeReplyError?.messageId ?? "").trim()
     );
   const showWorkspaceDock =
+    !hideWorkspaceDock &&
     chat.historyLoaded &&
     !chat.isDraftConversation &&
     Boolean(String(chat.activeConversationId ?? "").trim()) &&
@@ -2191,10 +2197,37 @@ export function ChatPanel({
 
   return (
     <div className="module chat-module">
-      <div className={`chat-workspace ${showHistoryPane ? "" : "chat-workspace-no-history"}`}>
+      <div
+        className={`chat-workspace ${
+          showHistoryPane && historyPaneOpen ? "" : "chat-workspace-no-history"
+        }`}
+      >
         {showHistoryPane && (
-        <aside className="history-pane" style={{ display: historyPaneOpen ? 'flex' : 'none' }}>
+        <aside className={`history-pane ${historyPaneOpen ? "is-open" : "is-collapsed"}`}>
+          {!historyPaneOpen ? (
+            <button
+              type="button"
+              className="history-pane-collapsed-button"
+              onClick={() => setHistoryPaneOpen(true)}
+              title="显示会话列表"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
+              </svg>
+            </button>
+          ) : (
+          <>
           <div className="history-pane-head">
+            <button
+              type="button"
+              className="history-pane-toggle"
+              onClick={() => setHistoryPaneOpen(false)}
+              title="隐藏会话列表"
+            >
+              <svg viewBox="0 0 24 24" width="17" height="17" stroke="currentColor" strokeWidth="2" fill="none">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m15 18-6-6 6-6" />
+              </svg>
+            </button>
             <h3>历史记录</h3>
             <button
               type="button"
@@ -2398,6 +2431,8 @@ export function ChatPanel({
               </section>
             ))}
           </div>
+          </>
+          )}
 
         </aside>
         )}
@@ -2405,29 +2440,7 @@ export function ChatPanel({
         <section className="chat-pane">
           <div className="chat-pane-head">
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                {showHistoryPane ? (
-                  <button
-                    type="button"
-                    onClick={() => setHistoryPaneOpen((prev) => !prev)}
-                    title="切换会话记录"
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '0.2rem',
-                      borderRadius: '4px',
-                      color: 'var(--text-muted)'
-                    }}
-                    onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-active)'}
-                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                  </button>
-                ) : (
+                {!showHistoryPane && (
                   <button
                     type="button"
                     className="chat-back-btn"
@@ -2441,6 +2454,7 @@ export function ChatPanel({
                   </button>
                 )}
                 <h3>{chat.activeConversationTitle || "当前会话"}</h3>
+                {headerExtra}
                 {showWorkspaceDock && (
                   <WorkspaceDock workspaceRoot={chat.activeConversationWorkplace} />
                 )}
@@ -4257,6 +4271,7 @@ export function ChatPanel({
               </div>
 
               <div className="chat-actions chat-actions-secondary">
+                {footerExtra}
                 <button type="button" onClick={chat.clearChat} disabled={chat.isStreaming || chat.isCompressing || !chat.historyLoaded}>
                   清空会话
                 </button>

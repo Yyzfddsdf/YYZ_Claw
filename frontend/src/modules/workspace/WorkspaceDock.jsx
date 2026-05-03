@@ -20,6 +20,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   fetchWorkspaceInfo,
   fetchWorkspaceTree,
+  getWorkspaceAssetUrl,
   readWorkspaceFile,
   writeWorkspaceFile
 } from "../../api/workspaceApi";
@@ -49,8 +50,24 @@ const LANGUAGE_BY_EXT = new Map([
   ["yml", "yaml"]
 ]);
 
+const IMAGE_EXTENSIONS = new Set(["apng", "avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"]);
+const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "ogg", "wav", "webm"]);
+const VIDEO_EXTENSIONS = new Set(["m4v", "mov", "mp4", "ogv", "webm"]);
+
+function getExtension(filePath) {
+  return String(filePath ?? "").split(".").pop()?.toLowerCase() ?? "";
+}
+
+function getPreviewKind(filePath) {
+  const extension = getExtension(filePath);
+  if (IMAGE_EXTENSIONS.has(extension)) return "image";
+  if (AUDIO_EXTENSIONS.has(extension)) return "audio";
+  if (VIDEO_EXTENSIONS.has(extension)) return "video";
+  return "text";
+}
+
 function getLanguageForPath(filePath) {
-  const extension = String(filePath ?? "").split(".").pop()?.toLowerCase() ?? "";
+  const extension = getExtension(filePath);
   return LANGUAGE_BY_EXT.get(extension) ?? "plaintext";
 }
 
@@ -63,6 +80,8 @@ function getFileIcon(entry) {
   if (["js", "jsx", "mjs"].includes(extension)) return "JS";
   if (extension === "css") return "#";
   if (extension === "json") return "{}";
+  if (AUDIO_EXTENSIONS.has(extension)) return "♪";
+  if (VIDEO_EXTENSIONS.has(extension)) return "▶";
   return "•";
 }
 
@@ -77,7 +96,9 @@ function getFileIconTone(entry) {
   if (extension === "css") return "css";
   if (["html", "htm", "xml"].includes(extension)) return "markup";
   if (extension === "md") return "md";
-  if (["png", "jpg", "jpeg", "webp", "gif", "svg", "avif"].includes(extension)) return "image";
+  if (IMAGE_EXTENSIONS.has(extension)) return "image";
+  if (AUDIO_EXTENSIONS.has(extension)) return "audio";
+  if (VIDEO_EXTENSIONS.has(extension)) return "video";
   if (["ps1", "sh", "bat", "cmd"].includes(extension)) return "shell";
   if (["go", "py", "sql", "yaml", "yml"].includes(extension)) return extension;
   return "plain";
@@ -310,19 +331,28 @@ function openWorkspaceWindow(workspaceRoot = "") {
   openedWindow?.focus();
 }
 
-export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWorkspaceRoot = "" } = {}) {
+export function WorkspaceDock({
+  standalone = false,
+  embedded = false,
+  modeSwitch = null,
+  rightPane = null,
+  workspaceRoot: requestedWorkspaceRoot = ""
+} = {}) {
   const editorHostRef = useRef(null);
   const editorRef = useRef(null);
+  const shellRef = useRef(null);
   const activeFilePathRef = useRef("");
   const fileStatesRef = useRef(new Map());
   const saveActiveFileRef = useRef(null);
   const terminalIdSeedRef = useRef(0);
-  const [isOpen, setIsOpen] = useState(Boolean(standalone));
+  const [isOpen, setIsOpen] = useState(Boolean(standalone || embedded));
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [rootEntries, setRootEntries] = useState([]);
   const [childrenByPath, setChildrenByPath] = useState(() => new Map());
   const [expandedPaths, setExpandedPaths] = useState(() => new Set());
   const [loadingPath, setLoadingPath] = useState("");
+  const [treeWidth, setTreeWidth] = useState(270);
+  const [rightPaneWidth, setRightPaneWidth] = useState(420);
   const [openTabs, setOpenTabs] = useState([]);
   const [activeFilePath, setActiveFilePath] = useState("");
   const [, setEditorRevision] = useState(0);
@@ -344,10 +374,10 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
   }, [activeFilePath, workspaceRoot]);
 
   useEffect(() => {
-    if (standalone) {
+    if (standalone || embedded) {
       setIsOpen(true);
     }
-  }, [standalone]);
+  }, [embedded, standalone]);
 
   useEffect(() => {
     setWorkspaceRoot("");
@@ -358,16 +388,26 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
 
   useEffect(() => {
     monaco.editor.defineTheme(EDITOR_THEME, {
-      base: "vs-dark",
+      base: "vs",
       inherit: true,
       rules: [],
       colors: {
-        "editor.background": "#0f172a",
-        "editor.foreground": "#dbeafe",
+        "editor.background": "#00000000",
+        "editor.foreground": "#0f172a",
         "editorLineNumber.foreground": "#64748b",
-        "editorCursor.foreground": "#f8fafc",
-        "editor.selectionBackground": "#2563eb66",
-        "editor.lineHighlightBackground": "#1e293b88"
+        "editorCursor.foreground": "#1d4ed8",
+        "editor.selectionBackground": "#93c5fd66",
+        "editor.lineHighlightBackground": "#ffffff28",
+        "minimap.background": "#00000000",
+        "minimap.selectionHighlight": "#93c5fd55",
+        "minimap.findMatchHighlight": "#60a5fa66",
+        "minimap.errorHighlight": "#f8717166",
+        "minimap.warningHighlight": "#fbbf2466",
+        "editorOverviewRuler.background": "#00000000",
+        "editorOverviewRuler.border": "#00000000",
+        "scrollbarSlider.background": "#cbd5e166",
+        "scrollbarSlider.hoverBackground": "#94a3b899",
+        "scrollbarSlider.activeBackground": "#64748bcc"
       }
     });
   }, []);
@@ -418,6 +458,8 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
       fontFamily: "'JetBrains Mono', 'Cascadia Mono', Consolas, monospace",
       fontSize: 13,
       minimap: { enabled: true },
+      wordWrap: "on",
+      wrappingStrategy: "advanced",
       scrollBeyondLastLine: false,
       smoothScrolling: true,
       tabSize: 2
@@ -448,6 +490,16 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
       editorRef.current = null;
     };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!editorRef.current) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      editorRef.current?.layout();
+    });
+  }, [activeFilePath, treeWidth, rightPaneWidth, terminalVisible, terminalHeight, embedded]);
 
   async function handleToggleDirectory(path) {
     const nextExpanded = new Set(expandedPaths);
@@ -488,8 +540,10 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
     activeFilePathRef.current = path;
     setActiveFilePath(path);
     if (editorRef.current) {
-      editorRef.current.setModel(state.model);
-      editorRef.current.focus();
+      editorRef.current.setModel(state.kind === "text" ? state.model : null);
+      if (state.kind === "text") {
+        editorRef.current.focus();
+      }
     }
   }
 
@@ -501,10 +555,35 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
 
     setError("");
     try {
+      const previewKind = getPreviewKind(path);
+      if (previewKind !== "text") {
+        const name = path.split("/").pop() ?? path;
+        fileStatesRef.current.set(path, {
+          kind: previewKind,
+          file: {
+            path,
+            name,
+            assetUrl: getWorkspaceAssetUrl(path, requestedWorkspaceRoot)
+          },
+          model: null,
+          savedContent: "",
+          currentContent: ""
+        });
+        setOpenTabs((tabs) => {
+          if (tabs.some((tab) => tab.path === path)) {
+            return tabs;
+          }
+          return [...tabs, { path, name }];
+        });
+        activateOpenFile(path);
+        return;
+      }
+
       const file = await readWorkspaceFile(path, requestedWorkspaceRoot);
       const content = file.content ?? "";
       const model = monaco.editor.createModel(content, getLanguageForPath(path));
       fileStatesRef.current.set(path, {
+        kind: "text",
         file,
         model,
         savedContent: content,
@@ -526,6 +605,9 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
     const filePath = activeFilePathRef.current;
     const state = filePath ? fileStatesRef.current.get(filePath) : null;
     if (!filePath || !state) {
+      return;
+    }
+    if (state.kind !== "text" || !state.model) {
       return;
     }
 
@@ -625,7 +707,7 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
     setOpenTabs((tabs) => {
       const nextTabs = tabs.filter((tab) => tab.path !== path);
       const closingActiveTab = activeFilePathRef.current === path;
-      fileStatesRef.current.get(path)?.model?.dispose();
+      fileStatesRef.current.get(path)?.model?.dispose?.();
       fileStatesRef.current.delete(path);
 
       if (closingActiveTab) {
@@ -633,7 +715,8 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
         activeFilePathRef.current = nextActive;
         setActiveFilePath(nextActive);
         if (nextActive) {
-          editorRef.current?.setModel(fileStatesRef.current.get(nextActive)?.model ?? null);
+          const nextState = fileStatesRef.current.get(nextActive);
+          editorRef.current?.setModel(nextState?.kind === "text" ? nextState.model : null);
         } else {
           editorRef.current?.setModel(null);
         }
@@ -665,9 +748,141 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
     };
   }, [isOpen]);
 
+  function startTreeResize() {
+    const shellRect = shellRef.current?.getBoundingClientRect();
+    if (!shellRect) {
+      return;
+    }
+
+    const minTreeWidth = 180;
+    const reservedRightPaneWidth = rightPane ? rightPaneWidth + 10 : 0;
+    const maxTreeWidth = Math.max(
+      minTreeWidth,
+      Math.min(420, shellRect.width - reservedRightPaneWidth - 420 - 10)
+    );
+
+    function handlePointerMove(event) {
+      const nextWidth = Math.min(
+        maxTreeWidth,
+        Math.max(minTreeWidth, event.clientX - shellRect.left)
+      );
+      setTreeWidth(nextWidth);
+    }
+
+    function handlePointerUp() {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+  }
+
+  function startRightPaneResize() {
+    const shellRect = shellRef.current?.getBoundingClientRect();
+    if (!shellRect || !rightPane) {
+      return;
+    }
+
+    const minRightPaneWidth = 320;
+    const minEditorWidth = 420;
+    const maxRightPaneWidth = Math.max(minRightPaneWidth, shellRect.width - treeWidth - minEditorWidth - 20);
+
+    function handlePointerMove(event) {
+      const nextWidth = Math.min(
+        maxRightPaneWidth,
+        Math.max(minRightPaneWidth, shellRect.right - event.clientX)
+      );
+      setRightPaneWidth(nextWidth);
+    }
+
+    function handlePointerUp() {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+  }
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const minTreeWidth = 180;
+
+    function clampWorkspaceWidths() {
+      const shellRect = shellRef.current?.getBoundingClientRect();
+      if (!shellRect) {
+        return;
+      }
+
+      const minEditorWidth = 420;
+      const minRightPaneWidth = rightPane ? 320 : 0;
+      const maxTreeWidth = Math.max(
+        minTreeWidth,
+        Math.min(420, shellRect.width - minEditorWidth - minRightPaneWidth - (rightPane ? 20 : 10))
+      );
+      setTreeWidth((current) => Math.min(maxTreeWidth, Math.max(minTreeWidth, current)));
+      setRightPaneWidth((current) => {
+        if (!rightPane) {
+          return current;
+        }
+        return Math.min(
+          Math.max(minRightPaneWidth, shellRect.width - minTreeWidth - minEditorWidth - 20),
+          Math.max(minRightPaneWidth, current)
+        );
+      });
+    }
+
+    clampWorkspaceWidths();
+    window.addEventListener("resize", clampWorkspaceWidths);
+    return () => {
+      window.removeEventListener("resize", clampWorkspaceWidths);
+    };
+  }, [isOpen, rightPane, rightPaneWidth, treeWidth]);
+
+  useEffect(() => {
+    if (!isOpen || !rightPane) {
+      return undefined;
+    }
+
+    const minRightPaneWidth = 320;
+
+    function clampRightPaneWidth() {
+      const shellRect = shellRef.current?.getBoundingClientRect();
+      if (!shellRect) {
+        return;
+      }
+
+      const maxRightPaneWidth = Math.max(
+        minRightPaneWidth,
+        shellRect.width - treeWidth - 420 - 20
+      );
+      setRightPaneWidth((current) =>
+        Math.min(maxRightPaneWidth, Math.max(minRightPaneWidth, current))
+      );
+    }
+
+    clampRightPaneWidth();
+    window.addEventListener("resize", clampRightPaneWidth);
+    return () => {
+      window.removeEventListener("resize", clampRightPaneWidth);
+    };
+  }, [isOpen, rightPane, rightPaneWidth, treeWidth]);
+
   return (
     <>
-      {!standalone && (
+      {!standalone && !embedded && (
         <button
           type="button"
           className="workspace-dock-launcher"
@@ -684,32 +899,56 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
         </button>
       )}
 
-      {standalone && (
+      {(standalone || embedded) && (
         <div
-          className={`workspace-dock-shell is-standalone ${isOpen ? "is-open" : ""}`}
+          ref={shellRef}
+          className={`workspace-dock-shell ${standalone ? "is-standalone" : ""} ${
+            embedded ? "is-embedded" : ""
+          } ${isOpen ? "is-open" : ""}`}
           role="dialog"
           aria-label="workspace editor"
           aria-hidden={!isOpen}
         >
-          <header className="workspace-dock-head">
-            <div>
-              <p>WORKBENCH</p>
-              <h2>{drawerTitle}</h2>
+          <header className={`workspace-dock-head ${embedded ? "is-embedded" : ""}`}>
+            <div className="workspace-dock-title-block">
+              <p>{embedded ? "CODE MODE" : "WORKBENCH"}</p>
+              <div className="workspace-dock-title-row">
+                <h2>{drawerTitle}</h2>
+                {embedded && (
+                  <div className="workspace-dock-inline-actions">
+                    {modeSwitch}
+                    <button
+                      type="button"
+                      onClick={() => openWorkspaceWindow(requestedWorkspaceRoot)}
+                    >
+                      独立窗口
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openTerminalPanel}
+                    >
+                      终端
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="workspace-dock-head-actions">
-              <button
-                type="button"
-                className="workspace-dock-close"
-                onClick={() => {
-                  if (standalone) {
-                    window.close();
-                    return;
-                  }
-                  setIsOpen(false);
-                }}
-              >
-                ×
-              </button>
+              {!embedded && (
+                <button
+                  type="button"
+                  className="workspace-dock-close"
+                  onClick={() => {
+                    if (standalone) {
+                      window.close();
+                      return;
+                    }
+                    setIsOpen(false);
+                  }}
+                >
+                  ×
+                </button>
+              )}
             </div>
           </header>
 
@@ -717,7 +956,11 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
 
           <div
             className={`workspace-dock-body ${terminalVisible ? "has-terminal" : ""}`}
-            style={{ "--workspace-terminal-height": `${terminalHeight}px` }}
+            style={{
+              "--workspace-terminal-height": `${terminalHeight}px`,
+              "--workspace-tree-width": `${treeWidth}px`,
+              "--workspace-right-pane-width": `${rightPaneWidth}px`
+            }}
           >
             <aside className="workspace-tree">
               <div className="workspace-tree-head">
@@ -740,6 +983,12 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
                 ))}
               </div>
             </aside>
+            <div
+              className="workspace-tree-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              onPointerDown={startTreeResize}
+            />
 
             <section className="workspace-main-surface">
               <div className="workspace-editor-tabs" role="tablist" aria-label="打开的文件">
@@ -749,7 +998,7 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
                   openTabs.map((tab) => {
                     const state = fileStatesRef.current.get(tab.path);
                     const tabDirty =
-                      Boolean(state) && state.currentContent !== state.savedContent;
+                      Boolean(state) && state.kind === "text" && state.currentContent !== state.savedContent;
                     const active = activeFilePath === tab.path;
 
                     return (
@@ -792,9 +1041,6 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
                   })
                 )}
                 <div className="workspace-editor-shortcut">
-                  <button type="button" onClick={openTerminalPanel}>
-                    终端
-                  </button>
                   <span>Ctrl+S 保存</span>
                 </div>
               </div>
@@ -803,7 +1049,35 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
                 {!activeFile && (
                   <div className="workspace-empty-editor">从左侧文件树选择一个文件开始编辑。</div>
                 )}
-                <div ref={editorHostRef} className="workspace-editor-host" />
+                {activeFileState?.kind === "image" && (
+                  <div className="workspace-media-preview workspace-media-preview-image">
+                    <img src={activeFile.assetUrl} alt={activeFile.name ?? activeFilePath} />
+                  </div>
+                )}
+                {activeFileState?.kind === "audio" && (
+                  <div className="workspace-media-preview workspace-media-preview-audio">
+                    <div className="workspace-media-card">
+                      <span className="workspace-media-icon">♪</span>
+                      <strong>{activeFile.name ?? activeFilePath}</strong>
+                      <audio controls src={activeFile.assetUrl}>
+                        当前浏览器不支持音频播放。
+                      </audio>
+                    </div>
+                  </div>
+                )}
+                {activeFileState?.kind === "video" && (
+                  <div className="workspace-media-preview workspace-media-preview-video">
+                    <video controls src={activeFile.assetUrl}>
+                      当前浏览器不支持视频播放。
+                    </video>
+                  </div>
+                )}
+                <div
+                  ref={editorHostRef}
+                  className={`workspace-editor-host ${
+                    activeFileState && activeFileState.kind !== "text" ? "is-hidden" : ""
+                  }`}
+                />
               </div>
 
               <section
@@ -905,6 +1179,19 @@ export function WorkspaceDock({ standalone = false, workspaceRoot: requestedWork
                 </div>
               </section>
             </section>
+            {rightPane && (
+              <>
+                <div
+                  className="workspace-right-pane-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  onPointerDown={startRightPaneResize}
+                />
+                <aside className="workspace-right-pane">
+                  {rightPane}
+                </aside>
+              </>
+            )}
           </div>
         </div>
       )}

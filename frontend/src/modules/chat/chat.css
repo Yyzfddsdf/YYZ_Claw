@@ -339,6 +339,77 @@
   flex-direction: column;
   flex-shrink: 0;
   z-index: 10;
+  overflow: hidden;
+  transition:
+    width 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.history-pane.is-collapsed {
+  width: 2.75rem;
+  align-items: center;
+  padding-top: 0.72rem;
+}
+
+.history-pane-collapsed-button,
+.history-pane-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, var(--border-light));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-light) 62%, rgba(255, 255, 255, 0.78));
+  color: color-mix(in srgb, var(--brand) 72%, var(--text-main));
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.history-pane-collapsed-button {
+  width: 1.92rem;
+  height: 1.92rem;
+  padding: 0;
+  transform: translateX(0);
+  animation: history-collapse-arrow-in 0.22s ease both;
+}
+
+.history-pane-collapsed-button svg {
+  transition: transform 0.22s ease;
+}
+
+.history-pane-toggle {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  animation: history-expand-arrow-in 0.22s ease both;
+}
+
+.history-pane-collapsed-button:hover,
+.history-pane-toggle:hover {
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--border-light));
+  background: color-mix(in srgb, var(--brand-light) 82%, rgba(255, 255, 255, 0.88));
+}
+
+@keyframes history-collapse-arrow-in {
+  from {
+    opacity: 0;
+    transform: translateX(-0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes history-expand-arrow-in {
+  from {
+    opacity: 0;
+    transform: translateX(0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .history-pane-head { padding: 0.5rem 1rem;

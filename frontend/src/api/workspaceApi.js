@@ -26,6 +26,10 @@ export function readWorkspaceFile(path, root = "") {
   return requestJson(`/workspace/files${buildWorkspaceQuery({ path, root })}`);
 }
 
+export function getWorkspaceAssetUrl(path, root = "") {
+  return `/api/workspace/assets${buildWorkspaceQuery({ path, root })}`;
+}
+
 export function writeWorkspaceFile(path, content, root = "") {
   return requestJson("/workspace/files", {
     method: "PUT",

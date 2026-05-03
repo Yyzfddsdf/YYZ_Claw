@@ -106,6 +106,42 @@ function collectActiveSceneActors(chat) {
   return Array.from(actorsById.values());
 }
 
+function ModeSwitch({ viewMode, onChange }) {
+  function handlePointerUp(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const nextMode = event.clientX - rect.left > rect.width / 2 ? "code" : "work";
+    onChange(nextMode);
+  }
+
+  return (
+    <div
+      className={`app-mode-switch ${viewMode === "code" ? "is-code" : "is-work"}`}
+      role="slider"
+      aria-label="view mode"
+      aria-valuemin={0}
+      aria-valuemax={1}
+      aria-valuenow={viewMode === "code" ? 1 : 0}
+      aria-valuetext={viewMode === "code" ? "Code" : "Work"}
+      tabIndex={0}
+      onPointerUp={handlePointerUp}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          onChange("work");
+        }
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          onChange("code");
+        }
+      }}
+    >
+      <span className="app-mode-switch-thumb" />
+      <span>Work</span>
+      <span>Code</span>
+    </div>
+  );
+}
+
 function MainApp() {
   const [config, setConfig] = useState(createEmptyConfig);
   const [configError, setConfigError] = useState("");
@@ -118,6 +154,7 @@ function MainApp() {
   const [mcpSaving, setMcpSaving] = useState(false);
   const [appearance, setAppearance] = useState(createEmptyAppearance);
   const [activeWorkspace, setActiveWorkspace] = useState("chat");
+  const [viewMode, setViewMode] = useState("work");
 
   const chat = useChatSession(config);
 
@@ -263,6 +300,14 @@ function MainApp() {
     setActiveWorkspace("chat");
   }
 
+  function handleChangeViewMode(nextMode) {
+    const normalizedMode = nextMode === "code" ? "code" : "work";
+    setViewMode(normalizedMode);
+    if (normalizedMode === "code") {
+      setActiveWorkspace("chat");
+    }
+  }
+
   const canChat = useMemo(() => hasRuntimeConfig(config), [config]);
   const activeBackground = useMemo(
     () =>
@@ -271,6 +316,7 @@ function MainApp() {
     [appearance]
   );
   const activeSceneActors = useMemo(() => collectActiveSceneActors(chat), [chat.conversationList]);
+  const isCodeMode = viewMode === "code";
   const appShellStyle = activeBackground
     ? (() => {
         const surfaceOpacity = Number(appearance.settings?.surfaceOpacity ?? 0.68);
@@ -286,11 +332,13 @@ function MainApp() {
 
   return (
     <div
-      className={`app-shell ${activeBackground ? "has-background" : ""}`}
+      className={`app-shell ${activeBackground ? "has-background" : ""} ${
+        isCodeMode ? "is-code-mode" : "is-work-mode"
+      }`}
       style={appShellStyle}
     >
       <GlobalFeedbackHost />
-      <aside className="app-sidebar">
+      {!isCodeMode && <aside className="app-sidebar">
         <header className="app-sidebar-header">
           <img className="app-brand-icon" src={appIconUrl} alt="" />
           <h1>YYZ_CLAW</h1>
@@ -439,19 +487,44 @@ function MainApp() {
             远程控制
           </button>
         </nav>
-      </aside>
+      </aside>}
 
-      <main className="workspace-main">
+      <main className={`workspace-main ${isCodeMode ? "is-code-mode" : ""}`}>
         {activeWorkspace === "chat" && (
-          <section className="panel panel-chat" role="tabpanel" aria-label="chat workspace">
-            <ChatPanel
-              chat={chat}
-              modelContextWindow={Number(chat.activeConversationModelProfile?.maxContextWindow ?? 0)}
-              disabled={!canChat}
-              disabledReason="请先到配置中心保存模型配置"
-              onNavigate={(nav) => setActiveWorkspace(nav)}
-            />
-          </section>
+          isCodeMode ? (
+            <section className="panel panel-chat panel-code-mode" role="tabpanel" aria-label="code workspace">
+              <div className="code-mode-stage">
+                <WorkspaceDock
+                  embedded
+                  workspaceRoot={chat.activeConversationWorkplace}
+                  modeSwitch={<ModeSwitch viewMode={viewMode} onChange={handleChangeViewMode} />}
+                  rightPane={
+                    <ChatPanel
+                      chat={chat}
+                      modelContextWindow={Number(chat.activeConversationModelProfile?.maxContextWindow ?? 0)}
+                      disabled={!canChat}
+                      disabledReason="请先到配置中心保存模型配置"
+                      onNavigate={(nav) => setActiveWorkspace(nav)}
+                      onBack={() => handleChangeViewMode("work")}
+                      showHistoryPane={false}
+                      hideWorkspaceDock
+                    />
+                  }
+                />
+              </div>
+            </section>
+          ) : (
+            <section className="panel panel-chat" role="tabpanel" aria-label="chat workspace">
+              <ChatPanel
+                chat={chat}
+                modelContextWindow={Number(chat.activeConversationModelProfile?.maxContextWindow ?? 0)}
+                disabled={!canChat}
+                disabledReason="请先到配置中心保存模型配置"
+                onNavigate={(nav) => setActiveWorkspace(nav)}
+                headerExtra={<ModeSwitch viewMode={viewMode} onChange={handleChangeViewMode} />}
+              />
+            </section>
+          )
         )}
 
         {activeWorkspace === "skills" && (

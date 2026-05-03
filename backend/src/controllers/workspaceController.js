@@ -59,6 +59,20 @@ export function createWorkspaceController() {
       });
     },
 
+    async streamAsset(req, res) {
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
+      const { absolutePath } = resolveWorkspacePath(rootDir, req.query.path ?? "");
+      const stat = await fs.stat(absolutePath);
+
+      if (!stat.isFile()) {
+        const error = new Error("只能预览文件");
+        error.statusCode = 400;
+        throw error;
+      }
+
+      res.sendFile(absolutePath);
+    },
+
     async writeFile(req, res) {
       const targetPath = String(req.body?.path ?? "").trim();
       const content = String(req.body?.content ?? "");

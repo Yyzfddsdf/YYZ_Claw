@@ -24,6 +24,24 @@ function normalizeProviderConfig(config = {}) {
   return config && typeof config === "object" && !Array.isArray(config) ? { ...config } : {};
 }
 
+function getDefaultProviderConfig(providerKey) {
+  const key = normalizeProviderKey(providerKey);
+  if (key === "feishu") {
+    return {
+      appId: "",
+      appSecret: ""
+    };
+  }
+  return {};
+}
+
+function mergeProviderConfigDefaults(providerKey, config = {}) {
+  return {
+    ...getDefaultProviderConfig(providerKey),
+    ...normalizeProviderConfig(config)
+  };
+}
+
 function normalizeProviders(value) {
   return (Array.isArray(value) ? value : [])
     .map((item) => ({
@@ -447,15 +465,21 @@ export function RemoteControlPanel() {
                 placeholder="选择远程入口"
                 emptyText="暂无可用 Provider"
                 disabled={saving}
-                onChange={(nextValue) =>
+                onChange={(nextValue) => {
+                  const nextProviderKey = normalizeProviderKey(nextValue);
                   setConfig((previous) => ({
                     ...previous,
-                    activeProviderKey: normalizeProviderKey(nextValue),
-                    targetConversationId: normalizeProviderKey(nextValue)
+                    activeProviderKey: nextProviderKey,
+                    targetConversationId: nextProviderKey
                       ? previous.targetConversationId
                       : ""
-                  }))
-                }
+                  }));
+                  setProviderConfig((previous) =>
+                    nextProviderKey
+                      ? mergeProviderConfigDefaults(nextProviderKey, previous)
+                      : {}
+                  );
+                }}
               />
 
               <RemoteSelect

@@ -8,6 +8,7 @@ import {
   upsertAutomationBinding
 } from "../../api/automationApi";
 import { createTtsStreamUrl, parseChatFiles, transcribeAudioBytes } from "../../api/chatApi";
+import { searchWorkspaceFiles } from "../../api/workspaceApi";
 import { formatTimestamp } from "../../shared/formatTimestamp";
 import { TimePickerDropdown } from "../../shared/TimePickerDropdown";
 import { notify } from "../../shared/feedback";
@@ -26,6 +27,47 @@ const RECORDER_MIME_TYPE_CANDIDATES = [
   "audio/ogg"
 ];
 const TTS_MAX_TEXT_LENGTH = 1000;
+const SLASH_COMMANDS = [
+  {
+    type: "command",
+    value: "/compact",
+    label: "/compact",
+    description: "手动压缩当前会话，不入库也不发送给模型"
+  },
+  {
+    type: "command",
+    value: "/goal:",
+    label: "/goal:目标",
+    description: "设置目标，不入库也不发送给模型"
+  }
+];
+
+function fuzzyMatchText(value, query) {
+  const target = String(value ?? "").toLowerCase();
+  const needle = String(query ?? "").toLowerCase();
+  return Boolean(needle && target) && target.includes(needle);
+}
+
+function getActiveSlashSegment(value) {
+  const text = String(value ?? "");
+  const match = text.match(/(^|\s)\/([^\s]*)$/);
+  if (!match) {
+    return null;
+  }
+
+  const prefix = match[1] ?? "";
+  const query = String(match[2] ?? "").trim();
+  if (!query) {
+    return null;
+  }
+
+  return {
+    start: text.length - query.length - 1,
+    end: text.length,
+    query,
+    prefix
+  };
+}
 const GENERAL_FILE_ACCEPT = [
   ".pdf",
   ".doc",
@@ -852,6 +894,8 @@ export function ChatPanel({
   const [expandedHistoryGroupMap, setExpandedHistoryGroupMap] = useState({});
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
   const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+  const [slashFileMatches, setSlashFileMatches] = useState([]);
+  const [slashFileLoading, setSlashFileLoading] = useState(false);
   const [ttsPlayingMessageId, setTtsPlayingMessageId] = useState("");
   const [ttsLoadingMessageId, setTtsLoadingMessageId] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState("");
@@ -1083,6 +1127,68 @@ export function ChatPanel({
         : "输入消息，观察流式与工具调用";
   const queuedUserMessages = Array.isArray(chat.queuedUserMessages) ? chat.queuedUserMessages : [];
   const pendingInsertions = Array.isArray(chat.pendingInsertions) ? chat.pendingInsertions : [];
+  const activeSlashSegment = useMemo(() => getActiveSlashSegment(draft), [draft]);
+  const slashQuery = activeSlashSegment?.query ?? "";
+  const slashSuggestions = useMemo(() => {
+    if (!slashQuery) {
+      return [];
+    }
+
+    const commandItems = SLASH_COMMANDS.filter((item) =>
+      fuzzyMatchText(item.label.replace(/^\//, ""), slashQuery)
+    );
+    const skillItems = (Array.isArray(chat.skillCatalog) ? chat.skillCatalog : [])
+      .filter((skill) => fuzzyMatchText(skill?.name, slashQuery))
+      .slice(0, 8)
+      .map((skill) => ({
+        type: "skill",
+        value: `/${String(skill?.name ?? "").trim()}`,
+        label: `/${String(skill?.name ?? "").trim()}`,
+        description: String(skill?.shortDescription || skill?.description || "提示模型使用这个 skill").trim()
+      }));
+    const fileItems = slashFileMatches.slice(0, 8).map((file) => ({
+      type: "file",
+      value: `/${String(file?.path ?? "").trim()}`,
+      label: `/${String(file?.path ?? "").trim()}`,
+      description: "引用工作区文件路径，模型可自行用工具查看"
+    }));
+
+    return [...commandItems, ...skillItems, ...fileItems].slice(0, 14);
+  }, [chat.skillCatalog, slashFileMatches, slashQuery]);
+
+  useEffect(() => {
+    if (!slashQuery) {
+      setSlashFileMatches([]);
+      setSlashFileLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timerId = window.setTimeout(async () => {
+      setSlashFileLoading(true);
+      try {
+        const response = await searchWorkspaceFiles(slashQuery, chat.activeConversationWorkplace);
+        if (cancelled) {
+          return;
+        }
+        setSlashFileMatches(Array.isArray(response?.entries) ? response.entries : []);
+      } catch {
+        if (!cancelled) {
+          setSlashFileMatches([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSlashFileLoading(false);
+        }
+      }
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [chat.activeConversationWorkplace, slashQuery]);
+
   const orchestratorMessages = useMemo(
     () =>
       (Array.isArray(chat.messages) ? chat.messages : []).filter(
@@ -3812,6 +3918,45 @@ export function ChatPanel({
             )}
 
             <div className="container-ia-chat">
+              {slashSuggestions.length > 0 && (
+                <div className="slash-command-menu" role="listbox" aria-label="/ 命令候选">
+                  <div className="slash-command-head">
+                    <span>/ 快捷入口</span>
+                    {slashFileLoading && <small>搜索文件中...</small>}
+                  </div>
+                  {slashSuggestions.map((item) => (
+                    <button
+                      key={`${item.type}:${item.value}`}
+                      type="button"
+                      className={`slash-command-item is-${item.type}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        if (!activeSlashSegment) {
+                          return;
+                        }
+                        const before = draft.slice(0, activeSlashSegment.start);
+                        const after = draft.slice(activeSlashSegment.end);
+                        const nextDraft = `${before}${item.value} ${after.replace(/^\s+/, "")}`;
+                        setDraft(nextDraft);
+                        window.requestAnimationFrame(() => {
+                          inputRef.current?.focus();
+                          const nextCursor = `${before}${item.value} `.length;
+                          inputRef.current?.setSelectionRange(nextCursor, nextCursor);
+                        });
+                      }}
+                      role="option"
+                    >
+                      <span className="slash-command-type">
+                        {item.type === "command" ? "CMD" : item.type === "skill" ? "SKILL" : "FILE"}
+                      </span>
+                      <span className="slash-command-copy">
+                        <strong>{item.label}</strong>
+                        <small>{item.description}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <textarea
                 ref={inputRef}
                 id="input-text"

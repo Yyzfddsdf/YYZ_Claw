@@ -251,6 +251,7 @@ export class AutomationSchedulerService {
     let foregroundStatus = "idle";
     let foregroundRun = null;
     let detachConversationBroadcast = () => {};
+    let runResult = null;
 
     try {
       const conversationId = normalizeText(task?.conversationId);
@@ -297,7 +298,7 @@ export class AutomationSchedulerService {
         source: "automation"
       });
 
-      const runResult = await this.runtimeService.runConversationById({
+      runResult = await this.runtimeService.runConversationById({
         conversationId: conversation.id,
         runId: foregroundRun?.runId,
         currentAtomicStepId: foregroundRun?.stepId,
@@ -359,7 +360,8 @@ export class AutomationSchedulerService {
         await this.wakeDispatcher?.finishForegroundRun?.({
           sessionId: foregroundRun.sessionId,
           agentId: foregroundRun.agentId,
-          status: foregroundStatus
+          status: foregroundStatus,
+          runResult
         });
       }
       this.taskStore.finishTaskRun(taskId, {

@@ -12,6 +12,18 @@ function normalizeFilePath(filePath) {
   return String(filePath ?? "").trim() || "SKILL.md";
 }
 
+function formatSkillContentForDisplay(content) {
+  const source = String(content ?? "").replace(/\r\n/g, "\n");
+  const match = source.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  if (!match) {
+    return source;
+  }
+
+  const frontmatter = String(match[1] ?? "").trimEnd().replace(/\n/g, "  \n");
+  const body = source.slice(String(match[0] ?? "").length);
+  return [`---`, frontmatter, `---`, body].join("\n");
+}
+
 function normalizeBrandColor(value) {
   const text = String(value ?? "").trim();
   if (
@@ -73,14 +85,25 @@ function getSkillInitial(skill) {
 function SkillIcon({ skill, size = "small", workspacePath = "" }) {
   const iconSrc = resolveSkillIconSrc(skill, size, workspacePath);
   const className = `skill-icon skill-icon-${size}`;
+  const [imageFailed, setImageFailed] = useState(false);
 
-  if (!iconSrc) {
+  useEffect(() => {
+    setImageFailed(false);
+  }, [iconSrc]);
+
+  if (!iconSrc || imageFailed) {
     return <span className={`${className} is-fallback`}>{getSkillInitial(skill)}</span>;
   }
 
   return (
     <span className={className}>
-      <img src={iconSrc} alt="" loading="lazy" decoding="async" />
+      <img
+        src={iconSrc}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onError={() => setImageFailed(true)}
+      />
     </span>
   );
 }
@@ -442,7 +465,7 @@ export function SkillsPanel({ chat, onNavigate }) {
 
                         <div className="skills-detail-content">
                           <MarkdownMessage
-                            content={skillDetail.content || ""}
+                            content={formatSkillContentForDisplay(skillDetail.content || "")}
                             className="skills-detail-markdown"
                           />
                         </div>

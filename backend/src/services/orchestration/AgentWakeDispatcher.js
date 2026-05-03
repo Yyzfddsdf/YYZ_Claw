@@ -4,6 +4,11 @@ function normalizeText(value) {
   return String(value ?? "").trim();
 }
 
+function shouldContinueAfterReminder(runResult = {}) {
+  const status = normalizeText(runResult?.status);
+  return status === "goal_incomplete" || status === "plan_incomplete";
+}
+
 export class AgentWakeDispatcher {
   constructor(options = {}) {
     this.historyStore = options.historyStore ?? null;
@@ -196,6 +201,11 @@ export class AgentWakeDispatcher {
     });
 
     await this.handleReadyInsertions(agentRecord?.conversationId ?? activeRun.conversationId, result);
+    if (shouldContinueAfterReminder(options.runResult) && nextStatus !== "error") {
+      void this.startBackgroundRun(sessionId, agentId);
+      return result;
+    }
+
     if (nextStatus !== "error") {
       await this.continueAgentAfterInsertions(sessionId, agentId, result);
     }

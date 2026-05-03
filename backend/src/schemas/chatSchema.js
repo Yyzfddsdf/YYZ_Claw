@@ -63,3 +63,9 @@ export const conversationCompressionSchema = z.object({
   messages: z.array(chatMessageSchema).min(1, "at least one message is required"),
   trigger: compressionTriggerSchema.default("manual")
 });
+
+export const slashCommandSchema = z.object({
+  conversationId: z.string().trim().optional().default(""),
+  text: z.string(),
+  workplacePath: z.string().trim().optional().default("")
+});

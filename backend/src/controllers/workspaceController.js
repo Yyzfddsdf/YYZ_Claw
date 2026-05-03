@@ -9,9 +9,68 @@ import {
 } from "../services/workspace/workspacePath.js";
 
 const MAX_EDITABLE_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_WORKSPACE_SEARCH_RESULTS = 40;
+const SEARCH_IGNORED_DIR_NAMES = new Set([
+  ".git",
+  ".cache",
+  ".next",
+  ".turbo",
+  "coverage",
+  "dist",
+  "node_modules",
+  "release"
+]);
 
 function toPublicWorkspaceRoot(rootDir = PROJECT_ROOT) {
   return String(rootDir ?? PROJECT_ROOT).replace(/\\/g, "/");
+}
+
+function fuzzyIncludes(value, query) {
+  const target = String(value ?? "").toLowerCase();
+  const needle = String(query ?? "").toLowerCase();
+  return Boolean(needle) && target.includes(needle);
+}
+
+async function searchWorkspaceFiles(rootDir, query) {
+  const normalizedQuery = String(query ?? "").trim();
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const results = [];
+  async function walk(relativeDir = "") {
+    if (results.length >= MAX_WORKSPACE_SEARCH_RESULTS) {
+      return;
+    }
+
+    const { absolutePath } = resolveWorkspacePath(rootDir, relativeDir);
+    const entries = await fs.readdir(absolutePath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (results.length >= MAX_WORKSPACE_SEARCH_RESULTS) {
+        return;
+      }
+      if (entry.isDirectory() && SEARCH_IGNORED_DIR_NAMES.has(entry.name)) {
+        continue;
+      }
+
+      const childPath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(childPath);
+        continue;
+      }
+
+      if (entry.isFile() && fuzzyIncludes(childPath, normalizedQuery)) {
+        results.push({
+          name: entry.name,
+          path: childPath.replace(/\\/g, "/"),
+          type: "file"
+        });
+      }
+    }
+  }
+
+  await walk("");
+  return results;
 }
 
 export function createWorkspaceController() {
@@ -26,6 +85,15 @@ export function createWorkspaceController() {
     async listTree(req, res) {
       const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
       const entries = await readWorkspaceDirectory(rootDir, req.query.path ?? "");
+      res.json({
+        root: toPublicWorkspaceRoot(rootDir),
+        entries
+      });
+    },
+
+    async searchFiles(req, res) {
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
+      const entries = await searchWorkspaceFiles(rootDir, req.query.query ?? "");
       res.json({
         root: toPublicWorkspaceRoot(rootDir),
         entries

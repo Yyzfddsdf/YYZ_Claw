@@ -3650,6 +3650,111 @@
   margin: 0;
 }
 
+.slash-command-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.65rem);
+  z-index: 36;
+  max-height: min(20rem, 44vh);
+  overflow: auto;
+  padding: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border-light));
+  border-radius: 1.1rem;
+  background:
+    radial-gradient(circle at 12% 0, color-mix(in srgb, var(--brand) 12%, transparent), transparent 32%),
+    color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  box-shadow: 0 24px 60px rgb(15 23 42 / 0.18);
+  backdrop-filter: blur(18px);
+}
+
+.slash-command-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.28rem 0.45rem 0.55rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.slash-command-head small {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.slash-command-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 3.3rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.58rem;
+  border: 1px solid transparent;
+  border-radius: 0.88rem;
+  padding: 0.62rem;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+  text-align: left;
+  transition: var(--transition);
+}
+
+.slash-command-item:hover {
+  border-color: color-mix(in srgb, var(--brand) 18%, var(--border-light));
+  background: color-mix(in srgb, var(--brand) 8%, var(--bg-main));
+  transform: translateY(-1px);
+}
+
+.slash-command-type {
+  display: inline-grid;
+  place-items: center;
+  min-width: 0;
+  border-radius: 999px;
+  padding: 0.24rem 0.42rem;
+  background: color-mix(in srgb, var(--brand) 12%, var(--bg-main));
+  color: var(--brand);
+  font-size: 0.66rem;
+  font-weight: 900;
+}
+
+.slash-command-item.is-skill .slash-command-type {
+  background: color-mix(in srgb, #8b5cf6 12%, var(--bg-main));
+  color: #7c3aed;
+}
+
+.slash-command-item.is-file .slash-command-type {
+  background: color-mix(in srgb, #10b981 12%, var(--bg-main));
+  color: #059669;
+}
+
+.slash-command-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.slash-command-copy strong,
+.slash-command-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-command-copy strong {
+  font-size: 0.84rem;
+  color: var(--text-main);
+}
+
+.slash-command-copy small {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
 .container-upload-files {
   position: absolute;
   left: 0.25rem;

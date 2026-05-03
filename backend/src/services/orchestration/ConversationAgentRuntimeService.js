@@ -181,6 +181,105 @@ export class ConversationAgentRuntimeService {
     };
   }
 
+  async compactConversationById(conversationId, options = {}) {
+    const normalizedConversationId = normalizeText(conversationId);
+    if (!normalizedConversationId) {
+      throw new Error("conversationId is required");
+    }
+    if (!this.compressionService) {
+      throw new Error("compression service is unavailable");
+    }
+
+    const configValidation = configSchema.safeParse(await this.configStore.read());
+    if (!configValidation.success) {
+      throw new Error("config/config.json is invalid. Save model/baseURL/apiKey from frontend first.");
+    }
+
+    const resolved = await this.resolveConversationRuntime(normalizedConversationId);
+    const existingConversation = resolved.history;
+    const effectiveMessages = Array.isArray(existingConversation?.messages)
+      ? existingConversation.messages
+      : [];
+    if (effectiveMessages.length === 0) {
+      return {
+        history: existingConversation,
+        compression: {
+          compressed: false,
+          reason: "nothing_to_compact"
+        }
+      };
+    }
+
+    const runtimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
+      isSubagent: Boolean(resolved?.isSubagent),
+      modelProfileId: existingConversation?.modelProfileId
+    });
+
+    options.onEvent?.({
+      type: "compression_started",
+      trigger: "manual"
+    });
+
+    const compressionResult = await this.compressionService.compressConversation({
+      messages: effectiveMessages,
+      runtimeConfig,
+      latestTokenUsage: existingConversation?.tokenUsage ?? null,
+      trigger: "manual"
+    });
+
+    const nextMessages = Array.isArray(compressionResult?.messages)
+      ? compressionResult.messages
+      : effectiveMessages;
+    let updatedHistory = this.historyStore.upsertConversation({
+      conversationId: normalizedConversationId,
+      title: existingConversation?.title,
+      workplacePath: existingConversation?.workplacePath,
+      parentConversationId: existingConversation?.parentConversationId,
+      source: existingConversation?.source,
+      model: existingConversation?.model,
+      modelProfileId: existingConversation?.modelProfileId,
+      thinkingMode: existingConversation?.thinkingMode,
+      approvalMode: existingConversation?.approvalMode,
+      goal: existingConversation?.goal,
+      planState: existingConversation?.planState,
+      skills: existingConversation?.skills,
+      disabledTools: existingConversation?.disabledTools,
+      personaId: existingConversation?.personaId,
+      developerPrompt: existingConversation?.developerPrompt,
+      messages: nextMessages
+    });
+
+    if (compressionResult?.compressed) {
+      const snapshot = buildCompressionTokenSnapshot(compressionResult);
+      if (snapshot) {
+        updatedHistory =
+          this.historyStore.updateConversationTokenSnapshot(
+            normalizedConversationId,
+            snapshot,
+            buildCompressionSnapshotMetadata(compressionResult, existingConversation?.model)
+          ) ?? updatedHistory;
+      }
+    }
+
+    options.onEvent?.({
+      type: "compression_completed",
+      trigger: "manual",
+      history: updatedHistory,
+      compression: {
+        compressed: Boolean(compressionResult?.compressed),
+        reason: normalizeText(compressionResult?.reason),
+        usageRatio: Number(compressionResult?.usageRatio ?? 0),
+        estimatedTokensBefore: Number(compressionResult?.estimatedTokensBefore ?? 0),
+        estimatedTokensAfter: Number(compressionResult?.estimatedTokensAfter ?? 0)
+      }
+    });
+
+    return {
+      history: updatedHistory,
+      compression: compressionResult
+    };
+  }
+
   async runConversationById(options = {}) {
     const conversationId = normalizeText(options.conversationId);
     if (!conversationId) {

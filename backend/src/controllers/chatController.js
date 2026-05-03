@@ -8,7 +8,8 @@ import {
   chatRequestSchema,
   conversationApprovalModeSchema,
   conversationGoalSchema,
-  conversationCompressionSchema
+  conversationCompressionSchema,
+  slashCommandSchema
 } from "../schemas/chatSchema.js";
 import { configSchema } from "../schemas/configSchema.js";
 import {
@@ -54,6 +55,40 @@ function formatZodError(zodError) {
   return zodError.issues
     .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`)
     .join("; ");
+}
+
+function parseSlashCommandText(text) {
+  const rawText = String(text ?? "").trim();
+  if (!rawText.startsWith("/")) {
+    return {
+      handled: false,
+      action: "none",
+      messageText: rawText
+    };
+  }
+
+  if (/^\/compact\s*$/i.test(rawText)) {
+    return {
+      handled: true,
+      action: "compact"
+    };
+  }
+
+  const goalMatch = rawText.match(/^\/goal\s*[:：]\s*([\s\S]+)$/i);
+  if (goalMatch) {
+    const goal = String(goalMatch[1] ?? "").trim();
+    return {
+      handled: Boolean(goal),
+      action: goal ? "goal" : "none",
+      goal
+    };
+  }
+
+  return {
+    handled: false,
+    action: "none",
+    messageText: rawText
+  };
 }
 
 function buildAgentMeta(agent) {
@@ -1798,6 +1833,15 @@ export function createChatController({
       });
     },
 
+    parseSlashCommand: async (req, res) => {
+      const validation = slashCommandSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      res.json(parseSlashCommandText(validation.data.text));
+    },
+
     upsertHistoryById: async (req, res) => {
       const conversationId = String(req.params.conversationId || "").trim();
 
@@ -2174,8 +2218,6 @@ export function createChatController({
       let runResult = null;
       let executionContext = null;
       let completionDispatchRequest = null;
-      let continueGoalAfterFinish = false;
-      let continuePlanAfterFinish = false;
 
       try {
         if (toolRegistry && typeof toolRegistry.refresh === "function") {
@@ -2366,7 +2408,6 @@ export function createChatController({
               updatedAt: goalContinuationMessage.timestamp
             }
           ) ?? updatedResumedHistory;
-          continueGoalAfterFinish = true;
           emitRunEvent(
             foregroundRun,
             {
@@ -2391,7 +2432,6 @@ export function createChatController({
               updatedAt: planContinuationMessage.timestamp
             }
           ) ?? updatedResumedHistory;
-          continuePlanAfterFinish = true;
           emitRunEvent(
             foregroundRun,
             {
@@ -2483,14 +2523,9 @@ export function createChatController({
           await wakeDispatcher?.finishForegroundRun?.({
             sessionId: foregroundRun.sessionId,
             agentId: foregroundRun.agentId,
-            status: foregroundStatus
+            status: foregroundStatus,
+            runResult
           });
-        }
-        if ((continueGoalAfterFinish || continuePlanAfterFinish) && foregroundRun) {
-          void wakeDispatcher?.startBackgroundRun?.(
-            foregroundRun.sessionId,
-            foregroundRun.agentId
-          );
         }
         if (completionDispatchRequest) {
           await orchestratorSupervisorService?.dispatchCompletionToPrimary?.(completionDispatchRequest);
@@ -2575,8 +2610,6 @@ export function createChatController({
       let runResult = null;
       let executionContext = null;
       let completionDispatchRequest = null;
-      let continueGoalAfterFinish = false;
-      let continuePlanAfterFinish = false;
 
       try {
         if (toolRegistry && typeof toolRegistry.refresh === "function") {
@@ -2987,7 +3020,6 @@ export function createChatController({
               updatedAt: goalContinuationMessage.timestamp
             }
           ) ?? existingConversation;
-          continueGoalAfterFinish = true;
           emitRunEvent(
             foregroundRun,
             {
@@ -3012,7 +3044,6 @@ export function createChatController({
               updatedAt: planContinuationMessage.timestamp
             }
           ) ?? existingConversation;
-          continuePlanAfterFinish = true;
           emitRunEvent(
             foregroundRun,
             {
@@ -3103,14 +3134,9 @@ export function createChatController({
           await wakeDispatcher?.finishForegroundRun?.({
             sessionId: foregroundRun.sessionId,
             agentId: foregroundRun.agentId,
-            status: foregroundStatus
+            status: foregroundStatus,
+            runResult
           });
-        }
-        if ((continueGoalAfterFinish || continuePlanAfterFinish) && foregroundRun) {
-          void wakeDispatcher?.startBackgroundRun?.(
-            foregroundRun.sessionId,
-            foregroundRun.agentId
-          );
         }
         if (completionDispatchRequest) {
           await orchestratorSupervisorService?.dispatchCompletionToPrimary?.(completionDispatchRequest);

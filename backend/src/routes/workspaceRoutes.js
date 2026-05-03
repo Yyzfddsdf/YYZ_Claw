@@ -9,6 +9,7 @@ export function createWorkspaceRoutes() {
 
   router.get("/workspace", asyncHandler(controller.getWorkspaceInfo));
   router.get("/workspace/tree", asyncHandler(controller.listTree));
+  router.get("/workspace/search", asyncHandler(controller.searchFiles));
   router.get("/workspace/assets", asyncHandler(controller.streamAsset));
   router.get("/workspace/files", asyncHandler(controller.readFile));
   router.put("/workspace/files", asyncHandler(controller.writeFile));

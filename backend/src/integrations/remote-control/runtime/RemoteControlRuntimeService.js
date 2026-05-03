@@ -125,6 +125,41 @@ function createUserMessage(inbound) {
   };
 }
 
+function parseRemoteSlashCommand(inbound) {
+  const content = normalizeText(inbound?.content);
+  const hasExtraPayload =
+    (Array.isArray(inbound?.parsedFiles) && inbound.parsedFiles.length > 0) ||
+    (Array.isArray(inbound?.attachments) && inbound.attachments.length > 0);
+  if (hasExtraPayload || !content.startsWith("/")) {
+    return {
+      handled: false,
+      action: "none"
+    };
+  }
+
+  if (/^\/compact\s*$/i.test(content)) {
+    return {
+      handled: true,
+      action: "compact"
+    };
+  }
+
+  const goalMatch = content.match(/^\/goal\s*[:：]\s*([\s\S]+)$/i);
+  if (goalMatch) {
+    const goal = normalizeText(goalMatch[1]);
+    return {
+      handled: Boolean(goal),
+      action: goal ? "goal" : "none",
+      goal
+    };
+  }
+
+  return {
+    handled: false,
+    action: "none"
+  };
+}
+
 function collectAssistantContent(payload = {}) {
   const type = normalizeText(payload.type);
   if (type !== "assistant_message_end") {
@@ -293,11 +328,23 @@ export class RemoteControlRuntimeService {
 
     const conversation = await this.resolveTargetConversation();
     const conversationId = normalizeText(conversation.id);
+    const slashCommand = parseRemoteSlashCommand(inbound);
+    if (slashCommand.handled) {
+      await this.handleSlashCommand({
+        conversation,
+        conversationId,
+        inbound,
+        slashCommand
+      });
+      return;
+    }
+
     const userMessage = createUserMessage(inbound);
     let foregroundRun = null;
     let detachConversationBroadcast = () => {};
     let foregroundStatus = "idle";
     let assistantReplyCount = 0;
+    let runResult = null;
 
     this.orchestratorSupervisorService?.ensureSession?.(conversationId);
     const resolvedRuntime = await this.runtimeService.resolveConversationRuntime(conversationId);
@@ -346,7 +393,7 @@ export class RemoteControlRuntimeService {
         channel: this
       };
 
-      const runResult = await this.runtimeService.runConversationById({
+      runResult = await this.runtimeService.runConversationById({
         conversationId,
         runId: foregroundRun?.runId,
         currentAtomicStepId: foregroundRun?.stepId,
@@ -419,7 +466,8 @@ export class RemoteControlRuntimeService {
         await this.wakeDispatcher?.finishForegroundRun?.({
           sessionId: foregroundRun.sessionId,
           agentId: foregroundRun.agentId,
-          status: foregroundStatus
+          status: foregroundStatus,
+          runResult
         });
       }
       this.lastRunAt = Date.now();
@@ -429,6 +477,60 @@ export class RemoteControlRuntimeService {
         this.scheduleFlush(0);
       }
     }
+  }
+
+  async handleSlashCommand({ conversation, conversationId, inbound, slashCommand }) {
+    const action = normalizeText(slashCommand?.action).toLowerCase();
+
+    if (action === "goal") {
+      const goal = normalizeText(slashCommand?.goal);
+      if (!goal) {
+        return;
+      }
+      this.historyStore.updateConversationGoal(conversationId, goal);
+      this.conversationRunCoordinator?.emitEvent?.(null, {
+        type: "conversation_updated",
+        conversationId,
+        source: "remote",
+        providerKey: this.platformKey
+      });
+      await this.deliverReplyToChannel({
+        replyTarget: inbound.replyTarget,
+        text: `已设置目标：${goal}`
+      });
+      return;
+    }
+
+    if (action === "compact") {
+      if (typeof this.runtimeService?.compactConversationById !== "function") {
+        throw new Error("remote compact command is unavailable");
+      }
+
+      const compressionResult = await this.runtimeService.compactConversationById(conversationId, {
+        onEvent: (payload) => {
+          this.conversationRunCoordinator?.emitEvent?.(null, {
+            ...payload,
+            conversationId,
+            source: "remote",
+            providerKey: this.platformKey
+          });
+        }
+      });
+      const compressed = Boolean(compressionResult?.compression?.compressed);
+      const reason = normalizeText(compressionResult?.compression?.reason);
+      await this.deliverReplyToChannel({
+        replyTarget: inbound.replyTarget,
+        text: compressed
+          ? "已完成当前会话压缩。"
+          : `未执行压缩${reason ? `：${reason}` : "。"}`
+      });
+      return;
+    }
+
+    const userMessage = createUserMessage(inbound);
+    this.historyStore.appendMessages(conversationId, [userMessage], {
+      updatedAt: Date.now()
+    });
   }
 
   async deliverReplyToChannel({ replyTarget, text }) {

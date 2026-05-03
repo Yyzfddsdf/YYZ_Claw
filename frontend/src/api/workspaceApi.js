@@ -10,6 +10,10 @@ function buildWorkspaceQuery(params = {}) {
   if (path) {
     query.set("path", path);
   }
+  const searchQuery = String(params.query ?? "").trim();
+  if (searchQuery) {
+    query.set("query", searchQuery);
+  }
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
 }
@@ -20,6 +24,10 @@ export function fetchWorkspaceInfo(root = "") {
 
 export function fetchWorkspaceTree(path = "", root = "") {
   return requestJson(`/workspace/tree${buildWorkspaceQuery({ path, root })}`);
+}
+
+export function searchWorkspaceFiles(query = "", root = "") {
+  return requestJson(`/workspace/search${buildWorkspaceQuery({ query, root })}`);
 }
 
 export function readWorkspaceFile(path, root = "") {

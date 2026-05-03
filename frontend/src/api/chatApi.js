@@ -134,6 +134,13 @@ export function compressHistoryById(conversationId, payload) {
   });
 }
 
+export function parseSlashCommand(payload) {
+  return requestJson("/chat/slash-command", {
+    method: "POST",
+    body: payload
+  });
+}
+
 export function deleteHistoryById(conversationId) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}`, {
     method: "DELETE"

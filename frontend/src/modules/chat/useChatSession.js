@@ -19,6 +19,7 @@ import {
   fetchConversationRuntimeById,
   forkHistoryById,
   fetchSkills,
+  parseSlashCommand,
   confirmToolApprovalById,
   queueConversationInsertionById,
   rejectToolApprovalById,
@@ -4971,6 +4972,35 @@ export function useChatSession(runtimeConfig = {}) {
       imageAttachments,
       parsedFileAttachments
     };
+
+    if (
+      text.startsWith("/") &&
+      imageAttachments.length === 0 &&
+      parsedFileAttachments.length === 0
+    ) {
+      try {
+        const slashResult = await parseSlashCommand({
+          conversationId: targetConversationId,
+          text,
+          workplacePath: activeConversationWorkplace
+        });
+        const slashAction = String(slashResult?.action ?? "").trim();
+
+        if (slashResult?.handled && slashAction === "compact") {
+          await compressConversation("manual");
+          return;
+        }
+
+        if (slashResult?.handled && slashAction === "goal") {
+          await setConversationGoal(String(slashResult.goal ?? ""));
+          return;
+        }
+      } catch (slashError) {
+        setError(slashError?.message || "解析 / 命令失败");
+        return;
+      }
+    }
+
     const activeConversationQueuedCount = queuedUserMessagesRef.current.filter(
       (item) => String(item?.conversationId ?? "").trim() === String(targetConversationId ?? "").trim()
     ).length;

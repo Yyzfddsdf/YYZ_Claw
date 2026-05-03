@@ -64,6 +64,7 @@ export function createChatRoutes(services) {
     "/chat/histories/:conversationId/compress",
     asyncHandler(controller.compressHistoryById)
   );
+  router.post("/chat/slash-command", asyncHandler(controller.parseSlashCommand));
   router.put("/chat/histories/:conversationId", asyncHandler(controller.upsertHistoryById));
   router.delete(
     "/chat/histories/:conversationId/messages/:messageId",

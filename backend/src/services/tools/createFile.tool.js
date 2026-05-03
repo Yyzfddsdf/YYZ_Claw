@@ -16,7 +16,20 @@ function getTracker(taskKey) {
     });
   }
 
-  return FILE_TOOL_STATE.trackers.get(taskKey);
+  const tracker = FILE_TOOL_STATE.trackers.get(taskKey);
+  if (!tracker || typeof tracker !== "object") {
+    const nextTracker = {
+      readTimestamps: new Map()
+    };
+    FILE_TOOL_STATE.trackers.set(taskKey, nextTracker);
+    return nextTracker;
+  }
+
+  if (!(tracker.readTimestamps instanceof Map)) {
+    tracker.readTimestamps = new Map();
+  }
+
+  return tracker;
 }
 function resolveContextWorkingDirectory(executionContext = {}) {
   const candidate =

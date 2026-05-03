@@ -105,7 +105,32 @@ function getTrackerEntry(taskKey) {
     });
   }
 
-  return FILE_TOOL_STATE.trackers.get(taskKey);
+  const tracker = FILE_TOOL_STATE.trackers.get(taskKey);
+  if (!tracker || typeof tracker !== "object") {
+    const nextTracker = {
+      lastKey: "",
+      consecutive: 0,
+      dedup: new Map(),
+      readTimestamps: new Map()
+    };
+    FILE_TOOL_STATE.trackers.set(taskKey, nextTracker);
+    return nextTracker;
+  }
+
+  if (!(tracker.dedup instanceof Map)) {
+    tracker.dedup = new Map();
+  }
+  if (!(tracker.readTimestamps instanceof Map)) {
+    tracker.readTimestamps = new Map();
+  }
+  if (typeof tracker.lastKey !== "string") {
+    tracker.lastKey = "";
+  }
+  if (!Number.isFinite(Number(tracker.consecutive))) {
+    tracker.consecutive = 0;
+  }
+
+  return tracker;
 }
 
 async function updateReadTimestamp(filePath, taskKey) {

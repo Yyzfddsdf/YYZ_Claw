@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -125,10 +125,27 @@ function encodeNestedPowerShellCommandArguments(command) {
   );
 }
 
+function findWindowsExecutable(commandName) {
+  try {
+    const result = execFileSync("where.exe", [commandName], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 1000
+    });
+    return String(result ?? "").split(/\r?\n/).map((item) => item.trim()).find(Boolean) || "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveWindowsPowerShellFile() {
+  return findWindowsExecutable("pwsh.exe") || findWindowsExecutable("powershell.exe") || "powershell.exe";
+}
+
 function buildShellCommand(command) {
   if (process.platform === "win32") {
     return {
-      file: "powershell.exe",
+      file: resolveWindowsPowerShellFile(),
       args: [
         "-NoProfile",
         "-NonInteractive",

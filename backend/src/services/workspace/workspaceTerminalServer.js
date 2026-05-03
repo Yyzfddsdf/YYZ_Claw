@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,10 +31,33 @@ function normalizeProcessTitle(processName = "") {
 
 function resolveShellTitle() {
   if (os.platform() === "win32") {
-    return "PowerShell";
+    return resolveWindowsShell().title;
   }
   const shellName = String(process.env.SHELL || "").split(/[\\/]/).pop();
   return normalizeProcessTitle(shellName) || "Terminal";
+}
+
+function resolveWindowsShell() {
+  const candidate = findWindowsExecutable("pwsh.exe") || findWindowsExecutable("powershell.exe") || "powershell.exe";
+
+  return {
+    file: candidate,
+    args: ["-NoLogo"],
+    title: "PowerShell"
+  };
+}
+
+function findWindowsExecutable(commandName) {
+  try {
+    const result = execFileSync("where.exe", [commandName], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 1000
+    });
+    return String(result ?? "").split(/\r?\n/).map((item) => item.trim()).find(Boolean) || "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeCommandTitle(command = "") {
@@ -143,32 +166,16 @@ function createInputCommandTracker({ shellTitle, sendTitle, onCommandStart }) {
 
 function createShellProcess(cwd) {
   if (os.platform() === "win32") {
-    const startupScript = [
-      "[Console]::InputEncoding=[System.Text.Encoding]::UTF8",
-      "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8",
-      "$OutputEncoding=[System.Text.Encoding]::UTF8",
-      "chcp 65001 > $null",
-      "try { Set-PSReadLineOption -PredictionSource None } catch {}"
-    ].join("; ");
-
-    return pty.spawn(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-NoExit",
-        "-Command",
-        startupScript
-      ],
-      {
-        cwd,
-        env: {
-          ...process.env,
-          TERM: "xterm-256color"
-        }
+    const shell = resolveWindowsShell();
+    const spawnOptions = {
+      cwd,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color"
       }
-    );
+    };
+
+    return pty.spawn(shell.file, shell.args, spawnOptions);
   }
 
   return pty.spawn(process.env.SHELL || "/bin/bash", ["-l"], {

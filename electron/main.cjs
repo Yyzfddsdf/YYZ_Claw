@@ -118,6 +118,7 @@ function startBackendService() {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
       YYZ_CLAW_SKIP_FRONTEND_BUILD: app.isPackaged ? "1" : "",
+      YYZ_CLAW_USE_BACKEND_DIST: app.isPackaged ? "1" : "",
       PORT: String(DEFAULT_PORT),
       YYZ_CLAW_DEFAULTS_DIR: defaultAssetsDir
     },

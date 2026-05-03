@@ -5,14 +5,15 @@ const { pathToFileURL } = require("node:url");
 const esbuild = require("esbuild");
 
 const PROJECT_ROOT = __dirname;
+const PACKAGED_BACKEND_ROOT = path.join(PROJECT_ROOT, "backend-dist");
+const usePackagedBackend = process.env.YYZ_CLAW_USE_BACKEND_DIST === "1";
+const RUNTIME_BACKEND_ROOT = usePackagedBackend && require("node:fs").existsSync(path.join(PACKAGED_BACKEND_ROOT, "src"))
+  ? PACKAGED_BACKEND_ROOT
+  : path.join(PROJECT_ROOT, "backend");
 const FRONTEND_ROOT = path.join(PROJECT_ROOT, "frontend");
 const FRONTEND_DIST = path.join(FRONTEND_ROOT, "dist");
 const FRONTEND_ENTRY = path.join(FRONTEND_ROOT, "src", "main.jsx");
 const APP_ICON_FILE = path.join(FRONTEND_ROOT, "src", "assets", "yyz-claw-icon.png");
-
-function resolveModulePath(relativePath) {
-  return pathToFileURL(path.join(PROJECT_ROOT, relativePath)).href;
-}
 
 async function buildFrontendBundle() {
   await fs.rm(FRONTEND_DIST, { recursive: true, force: true });
@@ -80,11 +81,11 @@ async function startService() {
   }
 
   const [{ createServices }, { createApp }] = await Promise.all([
-    import(resolveModulePath("backend/src/bootstrap/createServices.js")),
-    import(resolveModulePath("backend/src/app.js"))
+    import(pathToFileURL(path.join(RUNTIME_BACKEND_ROOT, "src", "bootstrap", "createServices.js")).href),
+    import(pathToFileURL(path.join(RUNTIME_BACKEND_ROOT, "src", "app.js")).href)
   ]);
   const { attachWorkspaceTerminalServer } = await import(
-    resolveModulePath("backend/src/services/workspace/workspaceTerminalServer.js")
+    pathToFileURL(path.join(RUNTIME_BACKEND_ROOT, "src", "services", "workspace", "workspaceTerminalServer.js")).href
   );
 
   const services = await createServices();

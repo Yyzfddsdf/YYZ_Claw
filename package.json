@@ -11,11 +11,12 @@
     "dev": "node service.js",
     "start": "node service.js",
     "build": "node service.js --build-only",
+    "package:prepare": "npm run build && node scripts/prepare-electron-package.mjs",
     "build:backend": "npm run build --workspace backend",
     "build:frontend": "node service.js --build-only",
     "electron:dev": "electron electron/main.cjs",
-    "electron:pack": "npm run build && electron-builder --dir",
-    "electron:dist": "npm run build && electron-builder",
+    "electron:pack": "npm run package:prepare && electron-builder --dir",
+    "electron:dist": "npm run package:prepare && electron-builder",
     "start:backend": "npm run start --workspace backend"
   },
   "dependencies": {
@@ -52,7 +53,7 @@
   "build": {
     "appId": "com.yyzclaw.app",
     "productName": "YYZ_CLAW",
-    "asar": false,
+    "asar": true,
     "npmRebuild": false,
     "directories": {
       "output": "release"
@@ -61,11 +62,15 @@
       "service.js",
       "package.json",
       "package-lock.json",
-      "backend/**",
-      "frontend/**",
+      "backend-dist/**",
+      "frontend/dist/**",
       "electron/**",
+      "!backend/**",
+      "!frontend/src/**",
+      "!frontend/*.html",
       "!resources/**",
       "!release/**",
+      "!scripts/**",
       "!.yyz/**",
       "!models/**",
       "!History/**",

@@ -392,7 +392,6 @@ export class ChatAgent {
     let assistantText = "";
     let reasoningText = "";
     let usage = null;
-
     throwIfAborted(signal);
 
     for await (const chunk of stream) {

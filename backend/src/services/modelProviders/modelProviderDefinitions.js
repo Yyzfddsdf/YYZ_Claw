@@ -1,6 +1,5 @@
 export const MODEL_PROVIDERS = Object.freeze({
   OPENAI_COMPLETION: "openai-completion",
-  OPENAI_RESPONSES: "openai-responses",
   DEEPSEEK_COMPLETION: "deepseek-completion",
   DASHSCOPE_COMPLETION: "dashscope-completion",
   ANTHROPIC_MESSAGES: "anthropic-messages"
@@ -8,7 +7,6 @@ export const MODEL_PROVIDERS = Object.freeze({
 
 export const MODEL_PROVIDER_PROTOCOLS = Object.freeze({
   OPENAI_CHAT_COMPLETIONS: "openai-chat-completions",
-  OPENAI_RESPONSES: "openai-responses",
   ANTHROPIC_MESSAGES: "anthropic-messages"
 });
 
@@ -22,15 +20,6 @@ const PROVIDER_DEFINITIONS = Object.freeze({
     supportsReasoningEffort: true,
     supportsThinkingSwitch: false,
     supportsReasoningContent: false,
-    supportsVision: true
-  }),
-  [MODEL_PROVIDERS.OPENAI_RESPONSES]: Object.freeze({
-    id: MODEL_PROVIDERS.OPENAI_RESPONSES,
-    label: "OpenAI Responses",
-    protocol: MODEL_PROVIDER_PROTOCOLS.OPENAI_RESPONSES,
-    supportsReasoningEffort: true,
-    supportsThinkingSwitch: false,
-    supportsReasoningContent: true,
     supportsVision: true
   }),
   [MODEL_PROVIDERS.DEEPSEEK_COMPLETION]: Object.freeze({
@@ -64,11 +53,12 @@ const PROVIDER_DEFINITIONS = Object.freeze({
 
 export function normalizeModelProvider(value) {
   const provider = String(value ?? "").trim();
-  return PROVIDER_DEFINITIONS[provider] ? provider : DEFAULT_MODEL_PROVIDER;
+  return PROVIDER_DEFINITIONS[provider] ? provider : "";
 }
 
 export function getModelProviderDefinition(value) {
-  return PROVIDER_DEFINITIONS[normalizeModelProvider(value)];
+  const normalized = normalizeModelProvider(value);
+  return PROVIDER_DEFINITIONS[normalized || DEFAULT_MODEL_PROVIDER];
 }
 
 export function listModelProviderDefinitions() {

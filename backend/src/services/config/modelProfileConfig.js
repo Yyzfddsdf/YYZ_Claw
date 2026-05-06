@@ -21,7 +21,10 @@ function normalizeBoolean(value, fallback = true) {
 function inferLegacyProvider(source = {}) {
   const explicit = normalizeText(source.provider);
   if (explicit) {
-    return normalizeModelProvider(explicit);
+    const normalizedExplicit = normalizeModelProvider(explicit);
+    if (normalizedExplicit) {
+      return normalizedExplicit;
+    }
   }
 
   const baseURL = normalizeText(source.baseURL).toLowerCase();
@@ -66,7 +69,7 @@ export function normalizeModelProfile(profile = {}) {
   const baseURL = normalizeText(source.baseURL);
   const apiKey = normalizeText(source.apiKey);
 
-  if (!id || !name || !model || !baseURL || !apiKey) {
+  if (!id || !provider || !name || !model || !baseURL || !apiKey) {
     return null;
   }
 

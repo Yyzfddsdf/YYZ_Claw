@@ -555,6 +555,7 @@ export class SqliteChatHistoryStore {
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         reasoning_content TEXT NOT NULL DEFAULT '',
+        response_items_json TEXT NOT NULL DEFAULT '',
         tool_call_id TEXT NOT NULL DEFAULT '',
         tool_name TEXT NOT NULL DEFAULT '',
         tool_calls_json TEXT NOT NULL DEFAULT '',
@@ -783,6 +784,10 @@ export class SqliteChatHistoryStore {
 
     if (!columnNames.has("reasoning_content")) {
       db.exec("ALTER TABLE conversation_messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''");
+    }
+
+    if (!columnNames.has("response_items_json")) {
+      db.exec("ALTER TABLE conversation_messages ADD COLUMN response_items_json TEXT NOT NULL DEFAULT ''");
     }
 
     if (!columnNames.has("tool_name")) {
@@ -1678,8 +1683,8 @@ export class SqliteChatHistoryStore {
         memory_summary_prompt
           FROM conversations
           WHERE id = ?
-        `
-      )
+      `
+    )
       .get(conversationId);
 
     const requestedWorkplacePath = String(payload.workplacePath ?? "").trim();

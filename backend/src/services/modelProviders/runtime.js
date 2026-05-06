@@ -9,10 +9,6 @@ import {
   convertAnthropicMessageToCompletion,
   convertAnthropicStreamToOpenAIChunks
 } from "./anthropicAdapter.js";
-import {
-  convertOpenAIResponseToCompletion,
-  convertOpenAIResponsesStreamToOpenAIChunks
-} from "./openaiResponsesAdapter.js";
 import { buildModelProviderRequest } from "./requestBuilder.js";
 
 function createUnsupportedProviderError(provider) {
@@ -25,19 +21,6 @@ async function runOpenAIChatCompletions(runtimeConfig = {}, params = {}, options
   const requestOptions = options?.signal ? { signal: options.signal } : undefined;
 
   return client.chat.completions.create(request, requestOptions);
-}
-
-async function runOpenAIResponses(runtimeConfig = {}, params = {}, options = {}) {
-  const client = createOpenAIClient(runtimeConfig);
-  const request = buildModelProviderRequest(runtimeConfig, params);
-  const requestOptions = options?.signal ? { signal: options.signal } : undefined;
-  const response = await client.responses.create(request, requestOptions);
-
-  if (request.stream) {
-    return convertOpenAIResponsesStreamToOpenAIChunks(response);
-  }
-
-  return convertOpenAIResponseToCompletion(response);
 }
 
 function createAnthropicClient(runtimeConfig = {}) {
@@ -73,10 +56,6 @@ export async function runModelProviderCompletion(runtimeConfig = {}, params = {}
 
   if (provider.protocol === MODEL_PROVIDER_PROTOCOLS.ANTHROPIC_MESSAGES) {
     return runAnthropicMessages(runtimeConfig, params, options);
-  }
-
-  if (provider.protocol === MODEL_PROVIDER_PROTOCOLS.OPENAI_RESPONSES) {
-    return runOpenAIResponses(runtimeConfig, params, options);
   }
 
   throw createUnsupportedProviderError(provider);

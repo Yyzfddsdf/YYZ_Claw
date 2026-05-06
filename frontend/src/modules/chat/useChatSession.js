@@ -351,7 +351,7 @@ function normalizeChatMessage(message) {
     timestamp: normalizeMessageTimestamp(message?.timestamp, normalizedMessageId),
     toolCallId: String(message?.toolCallId ?? "").trim(),
     toolName: String(message?.toolName ?? "").trim(),
-    toolCalls: normalizeToolCalls(message?.toolCalls),
+    toolCalls: normalizeToolCalls(message?.toolCalls ?? message?.tool_calls),
     meta: normalizeMessageMeta(message?.meta),
     tokenUsage: message?.tokenUsage ?? null
   };

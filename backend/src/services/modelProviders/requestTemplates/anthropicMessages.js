@@ -137,6 +137,18 @@ function convertAssistantToolCalls(toolCalls) {
     .filter(Boolean);
 }
 
+function convertAssistantThinkingBlock(message) {
+  const thinking = normalizeText(message?.reasoning_content ?? message?.reasoningContent);
+  if (!thinking) {
+    return null;
+  }
+
+  return {
+    type: "thinking",
+    thinking
+  };
+}
+
 function convertToolResultMessage(message) {
   const toolUseId = normalizeText(message?.tool_call_id ?? message?.toolCallId);
   if (!toolUseId) {
@@ -202,6 +214,10 @@ function convertMessages(messages = []) {
     const content = convertOpenAIContentToAnthropic(message?.content);
     if (role === "assistant") {
       const contentParts = [];
+      const thinkingBlock = convertAssistantThinkingBlock(message);
+      if (thinkingBlock) {
+        contentParts.push(thinkingBlock);
+      }
       if (typeof content === "string" && content) {
         contentParts.push({ type: "text", text: content });
       } else if (Array.isArray(content)) {

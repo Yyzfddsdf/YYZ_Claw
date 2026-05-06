@@ -1,0 +1,9 @@
+interface:
+  display_name: "Codex Non-Interactive"
+  short_description: "Script Codex CLI and resume sessions by id"
+  default_prompt: "Use codex-noninteractive when the user needs non-interactive Codex CLI usage, prompt piping, JSON output, or resuming a session by id."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#2563eb"
+policy:
+  allow_implicit_invocation: true

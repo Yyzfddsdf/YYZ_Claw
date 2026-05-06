@@ -9,6 +9,8 @@ const DEFAULT_PORT = Number(process.env.PORT || 3000);
 const SERVER_URL = process.env.YYZ_CLAW_SERVER_URL || `http://127.0.0.1:${DEFAULT_PORT}`;
 const PRELOAD_FILE = path.join(__dirname, "preload.cjs");
 const APP_ICON_FILE = path.join(PROJECT_ROOT, "frontend", "src", "assets", "yyz-claw-icon.png");
+const PET_WINDOW_WIDTH = 260;
+const PET_WINDOW_HEIGHT = 176;
 const DEFAULT_ASSET_DIR_CANDIDATES = [
   path.join(PROJECT_ROOT, "resources", "defaults"),
   path.join(process.resourcesPath || "", "resources", "defaults"),
@@ -18,6 +20,7 @@ const DEFAULT_ASSET_DIR_CANDIDATES = [
 let backendProcess = null;
 let mainWindow = null;
 let workspaceWindow = null;
+let petWindow = null;
 let tray = null;
 let quitting = false;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -185,6 +188,57 @@ function buildWorkspaceWindowUrl(workspaceRoot = "") {
   return nextUrl.toString();
 }
 
+function buildPetWindowUrl(payload = {}) {
+  const nextUrl = new URL("/pet-window", SERVER_URL);
+  const { selectedPet, activeSessions } = normalizePetPayload(payload);
+  const x = Number(payload?.x);
+  const y = Number(payload?.y);
+  if (selectedPet) {
+    nextUrl.searchParams.set("selectedPet", selectedPet);
+  }
+  if (activeSessions.length > 0) {
+    nextUrl.searchParams.set("activeSessions", JSON.stringify(activeSessions));
+  }
+  if (Number.isFinite(x)) {
+    nextUrl.searchParams.set("x", String(Math.round(x)));
+  }
+  if (Number.isFinite(y)) {
+    nextUrl.searchParams.set("y", String(Math.round(y)));
+  }
+  return nextUrl.toString();
+}
+
+function normalizePetPayload(payload = {}) {
+  return {
+    selectedPet: String(payload?.selectedPet || "").trim(),
+    activeSessions: Array.isArray(payload?.activeSessions)
+      ? payload.activeSessions
+          .map((item) => ({
+            conversationId: String(item?.conversationId ?? "").trim(),
+            title: String(item?.title ?? "").trim()
+          }))
+          .filter((item) => item.conversationId && item.title)
+          .slice(0, 3)
+      : []
+  };
+}
+
+function sendPetUpdate(payload = {}) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+  const normalizedPayload = normalizePetPayload(payload);
+  if (petWindow.webContents.isLoading()) {
+    petWindow.webContents.once("did-finish-load", () => {
+      if (petWindow && !petWindow.isDestroyed()) {
+        petWindow.webContents.send("pet:update", normalizedPayload);
+      }
+    });
+    return;
+  }
+  petWindow.webContents.send("pet:update", normalizedPayload);
+}
+
 function openWorkspaceWindow(workspaceRoot = "") {
   const targetUrl = buildWorkspaceWindowUrl(workspaceRoot);
   if (workspaceWindow && !workspaceWindow.isDestroyed()) {
@@ -216,6 +270,127 @@ function openWorkspaceWindow(workspaceRoot = "") {
   workspaceWindow.on("closed", () => {
     workspaceWindow = null;
   });
+}
+
+function openPetWindow(payload = {}) {
+  const targetUrl = buildPetWindowUrl(payload);
+  const x = Number(payload?.x);
+  const y = Number(payload?.y);
+
+  if (petWindow && !petWindow.isDestroyed()) {
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      petWindow.setBounds({
+        x: Math.round(x),
+        y: Math.round(y),
+        width: PET_WINDOW_WIDTH,
+        height: PET_WINDOW_HEIGHT
+      });
+    }
+    sendPetUpdate(payload);
+    petWindow.showInactive();
+    return;
+  }
+
+  petWindow = new BrowserWindow({
+    width: PET_WINDOW_WIDTH,
+    height: PET_WINDOW_HEIGHT,
+    x: Number.isFinite(x) ? Math.round(x) : undefined,
+    y: Number.isFinite(y) ? Math.round(y) : undefined,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    show: false,
+    title: "YYZ_CLAW Pet",
+    icon: APP_ICON_FILE,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: PRELOAD_FILE
+    }
+  });
+
+  petWindow.setMenuBarVisibility(false);
+  petWindow.setAlwaysOnTop(true);
+  petWindow.setBackgroundColor("#00000000");
+  petWindow.setMinimumSize(PET_WINDOW_WIDTH, PET_WINDOW_HEIGHT);
+  petWindow.setMaximumSize(PET_WINDOW_WIDTH, PET_WINDOW_HEIGHT);
+  petWindow.loadURL(targetUrl);
+  petWindow.once("ready-to-show", () => {
+    petWindow?.showInactive();
+  });
+  petWindow.on("closed", () => {
+    petWindow = null;
+  });
+}
+
+function movePetWindow(payload = {}) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+  const x = Number(payload?.x);
+  const y = Number(payload?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return;
+  }
+  petWindow.setBounds({
+    x: Math.round(x),
+    y: Math.round(y),
+    width: PET_WINDOW_WIDTH,
+    height: PET_WINDOW_HEIGHT
+  });
+}
+
+function updatePetWindow(payload = {}) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    openPetWindow(payload);
+    return;
+  }
+  sendPetUpdate(payload);
+}
+
+function dragPetWindow(payload = {}) {
+  if (!petWindow || petWindow.isDestroyed()) {
+    return;
+  }
+  const dx = Number(payload?.dx);
+  const dy = Number(payload?.dy);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
+    return;
+  }
+  const bounds = petWindow.getBounds();
+  petWindow.setBounds({
+    x: Math.round(bounds.x + dx),
+    y: Math.round(bounds.y + dy),
+    width: PET_WINDOW_WIDTH,
+    height: PET_WINDOW_HEIGHT
+  });
+}
+
+function closePetWindow() {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.close();
+  }
+}
+
+function openPetConversation(conversationId = "") {
+  const normalizedId = String(conversationId || "").trim();
+  if (!normalizedId || !mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send("pet:conversation:open", normalizedId);
 }
 
 function createTray() {
@@ -268,6 +443,14 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(async () => {
     backendProcess = startBackendService();
     ipcMain.on("workspace:open", (_event, workspaceRoot) => openWorkspaceWindow(workspaceRoot));
+    ipcMain.on("pet:open", (_event, payload) => openPetWindow(payload));
+    ipcMain.on("pet:update", (_event, payload) => updatePetWindow(payload));
+    ipcMain.on("pet:move", (_event, payload) => movePetWindow(payload));
+    ipcMain.on("pet:drag", (_event, payload) => dragPetWindow(payload));
+    ipcMain.on("pet:conversation:open", (_event, conversationId) =>
+      openPetConversation(conversationId)
+    );
+    ipcMain.on("pet:close", () => closePetWindow());
     createMainWindow();
     createTray();
 
@@ -293,6 +476,9 @@ app.on("before-quit", () => {
 });
 
 app.on("will-quit", () => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.destroy();
+  }
   if (backendProcess && !backendProcess.killed) {
     backendProcess.kill();
   }

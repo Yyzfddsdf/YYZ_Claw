@@ -12,6 +12,7 @@ import {
   REMOTE_CONTROL_CONFIG_FILE,
   MEMORY_SUMMARY_FILE,
   MEMORY_SUMMARY_DIR,
+  PETS_DIR,
   PERSONAS_DIR,
   DEBATE_DB_FILE,
   HISTORY_DB_FILE,
@@ -27,6 +28,7 @@ import { ensureYyzHome } from "../config/ensureYyzHome.js";
 import { ChatAgent } from "../services/agent/ChatAgent.js";
 import { ConfigStore } from "../services/config/ConfigStore.js";
 import { BackgroundStore } from "../services/appearance/BackgroundStore.js";
+import { PetStore } from "../services/pets/PetStore.js";
 import { FeishuConfigStore } from "../im/feishu/config/FeishuConfigStore.js";
 import { ApprovalRulesStore } from "../services/config/ApprovalRulesStore.js";
 import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
@@ -103,6 +105,11 @@ export async function createServices() {
     rootDir: BACKGROUNDS_DIR
   });
   await backgroundStore.ensureDir();
+  const petStore = new PetStore({
+    rootDir: PETS_DIR,
+    defaultRootDir: path.join(PROJECT_ROOT, "resources", "defaults", "pet")
+  });
+  await petStore.ensureDir();
 
   const mcpConfigStore = new McpConfigStore(MCP_CONFIG_FILE);
   await mcpConfigStore.ensureFile();
@@ -374,6 +381,7 @@ export async function createServices() {
     orchestratorSupervisorService,
     configStore,
     backgroundStore,
+    petStore,
     remoteControlConfigStore,
     remoteControlProviderRegistry,
     feishuConfigStore,

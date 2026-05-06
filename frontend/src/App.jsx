@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchBackgrounds } from "./api/backgroundApi";
 import { fetchConfig, saveConfig } from "./api/configApi";
 import { fetchMcpConfig, saveMcpConfig } from "./api/mcpApi";
+import { fetchPets, savePetSettings } from "./api/petsApi";
 import { ActiveScenePanel } from "./modules/active-scene/ActiveScenePanel";
 import { AutomationPanel } from "./modules/automation/AutomationPanel";
 import { BackgroundPanel } from "./modules/backgrounds/BackgroundPanel";
@@ -12,6 +13,8 @@ import { ConfigPanel } from "./modules/config/ConfigPanel";
 import { DebatePanel } from "./modules/debate/DebatePanel";
 import { MemoryPanel } from "./modules/memory/MemoryPanel";
 import { PersonaPanel } from "./modules/personas/PersonaPanel";
+import { DesktopPet } from "./modules/pets/DesktopPet";
+import { PetPanel } from "./modules/pets/PetPanel";
 import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
 import { WorkspaceDock } from "./modules/workspace/WorkspaceDock";
@@ -60,6 +63,51 @@ function hasRuntimeConfig(config) {
     Boolean(config.defaultCompressionModelProfileId) &&
     Boolean(config.defaultVisionModelProfileId)
   );
+}
+
+function createEmptyPets() {
+  return {
+    pets: [],
+    settings: {
+      enabled: true,
+      selectedPet: "",
+      detached: false,
+      detachedPosition: {
+        x: 80,
+        y: 80
+      }
+    },
+    manifest: {
+      sprite: {
+        columns: 4,
+        rows: 4,
+        totalFrames: 16,
+        frameWidth: 96,
+        frameHeight: 96,
+        rowStates: [
+          { row: 0, state: "idle", label: "空闲", frames: [0, 1, 2, 3], fps: 4 },
+          { row: 1, state: "active", label: "活跃", frames: [4, 5, 6, 7], fps: 6 },
+          { row: 2, state: "hover", label: "悬停", frames: [8, 9, 10, 11], fps: 5 },
+          { row: 3, state: "detached", label: "拖出窗口", frames: [12, 13, 14, 15], fps: 6 }
+        ]
+      }
+    }
+  };
+}
+
+function normalizePetWindowPayload(payload = {}) {
+  return {
+    selectedPet: String(payload?.selectedPet ?? "").trim(),
+    activeSessions: Array.isArray(payload?.activeSessions)
+      ? payload.activeSessions
+          .map((item) => ({
+            conversationId: String(item?.conversationId ?? "").trim(),
+            title: String(item?.title ?? "").trim()
+          }))
+          .filter((item) => item.conversationId && item.title)
+          .slice(0, 3)
+      : []
+  };
 }
 
 function collectActiveSceneActors(chat) {
@@ -142,7 +190,12 @@ function ModeSwitch({ viewMode, onChange }) {
   );
 }
 
-function MainApp() {
+function MainApp({
+  initialWorkspace = "chat",
+  petWindowMode = false,
+  forcedSelectedPet = "",
+  forcedActiveSessions = []
+} = {}) {
   const [config, setConfig] = useState(createEmptyConfig);
   const [configError, setConfigError] = useState("");
   const [configLoading, setConfigLoading] = useState(true);
@@ -153,7 +206,14 @@ function MainApp() {
   const [mcpLoading, setMcpLoading] = useState(true);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [appearance, setAppearance] = useState(createEmptyAppearance);
-  const [activeWorkspace, setActiveWorkspace] = useState("chat");
+  const [petState, setPetState] = useState(createEmptyPets);
+  const [petWindowPayload, setPetWindowPayload] = useState(() =>
+    normalizePetWindowPayload({
+      selectedPet: forcedSelectedPet,
+      activeSessions: forcedActiveSessions
+    })
+  );
+  const [activeWorkspace, setActiveWorkspace] = useState(initialWorkspace);
   const [viewMode, setViewMode] = useState("work");
 
   const chat = useChatSession(config);
@@ -200,6 +260,35 @@ function MainApp() {
     }
 
     loadConfig();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadPets() {
+      try {
+        const response = await fetchPets();
+        if (!mounted) return;
+        setPetState({
+          pets: Array.isArray(response?.pets) ? response.pets : [],
+          settings: {
+            ...(response?.settings ?? createEmptyPets().settings),
+            enabled: response?.settings?.enabled ?? true,
+            selectedPet: forcedSelectedPet || response?.settings?.selectedPet || ""
+          },
+          manifest: response?.manifest ?? createEmptyPets().manifest
+        });
+      } catch {
+        if (!mounted) return;
+        setPetState(createEmptyPets());
+      }
+    }
+
+    loadPets();
 
     return () => {
       mounted = false;
@@ -300,6 +389,34 @@ function MainApp() {
     setActiveWorkspace("chat");
   }
 
+  async function handlePetSettingsChange(nextSettings) {
+    const normalized = {
+      ...petState.settings,
+      ...nextSettings,
+      detachedPosition: {
+        ...petState.settings.detachedPosition,
+        ...(nextSettings?.detachedPosition ?? {})
+      }
+    };
+
+    setPetState((previous) => ({
+      ...previous,
+      settings: normalized
+    }));
+
+    try {
+      const response = await savePetSettings(normalized);
+      setPetState((previous) => ({
+        ...previous,
+        pets: Array.isArray(response?.pets) ? response.pets : previous.pets,
+        settings: response?.settings ?? normalized,
+        manifest: response?.manifest ?? previous.manifest
+      }));
+    } catch {
+      // Keep local movement responsive even if persistence fails.
+    }
+  }
+
   function handleChangeViewMode(nextMode) {
     const normalizedMode = nextMode === "code" ? "code" : "work";
     setViewMode(normalizedMode);
@@ -316,6 +433,17 @@ function MainApp() {
     [appearance]
   );
   const activeSceneActors = useMemo(() => collectActiveSceneActors(chat), [chat.conversationList]);
+  const activePetSessions = useMemo(
+    () =>
+      activeSceneActors
+        .map((actor) => ({
+          conversationId: String(actor?.conversationId ?? "").trim(),
+          title: String(actor?.title ?? "").trim()
+        }))
+        .filter((item) => item.conversationId && item.title)
+        .slice(0, 3),
+    [activeSceneActors]
+  );
   const isCodeMode = viewMode === "code";
   const appShellStyle = activeBackground
     ? (() => {
@@ -329,6 +457,82 @@ function MainApp() {
       };
       })()
     : undefined;
+
+  useEffect(() => {
+    if (petWindowMode || !window.yyzClaw?.openPetWindow) {
+      return;
+    }
+
+    if (petState.settings?.enabled === false) {
+      window.yyzClaw?.closePetWindow?.();
+      return;
+    }
+
+    window.yyzClaw.openPetWindow({
+      selectedPet: petState.settings?.selectedPet || "",
+      activeSessions: activePetSessions
+    });
+  }, [activePetSessions, petState.settings?.enabled, petState.settings?.selectedPet, petWindowMode]);
+
+  useEffect(() => {
+    if (!petWindowMode || !window.yyzClaw?.onPetUpdate) {
+      return undefined;
+    }
+
+    return window.yyzClaw.onPetUpdate((payload) => {
+      setPetWindowPayload(normalizePetWindowPayload(payload));
+    });
+  }, [petWindowMode]);
+
+  useEffect(() => {
+    if (petWindowMode || !window.yyzClaw?.onOpenPetConversation) {
+      return undefined;
+    }
+
+    return window.yyzClaw.onOpenPetConversation((conversationId) => {
+      const normalizedId = String(conversationId ?? "").trim();
+      if (!normalizedId) {
+        return;
+      }
+      void chat.loadConversation(normalizedId);
+      setActiveWorkspace("chat");
+    });
+  }, [chat, petWindowMode]);
+
+  if (petWindowMode) {
+    return (
+      <div
+        style={{
+          width: "100vw",
+          height: "100vh",
+          overflow: "hidden",
+          background: "transparent"
+        }}
+      >
+        <style>{`
+          html, body, #root {
+            background: transparent !important;
+            overflow: hidden !important;
+          }
+          body {
+            box-shadow: none !important;
+          }
+        `}</style>
+        <DesktopPet
+          pets={petState.pets}
+          settings={{
+            ...petState.settings,
+            selectedPet: petWindowPayload.selectedPet || petState.settings.selectedPet
+          }}
+          manifest={petState.manifest}
+          active={chat.pendingRequest || petWindowPayload.activeSessions.length > 0}
+          activeSessions={petWindowPayload.activeSessions}
+          onSettingsChange={handlePetSettingsChange}
+          detachedWindow
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -398,6 +602,21 @@ function MainApp() {
               <path d="M4 21a8 8 0 0 1 16 0" />
             </svg>
             Agent 身份
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeWorkspace === "pets"}
+            className={`nav-item ${activeWorkspace === "pets" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("pets")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M8 11a2 2 0 1 0 0-4a2 2 0 0 0 0 4z" />
+              <path d="M16 11a2 2 0 1 0 0-4a2 2 0 0 0 0 4z" />
+              <path d="M6 16c0-2.2 1.8-4 4-4h4c2.2 0 4 1.8 4 4c0 1.7-1.3 3-3 3h-6c-1.7 0-3-1.3-3-3z" />
+            </svg>
+            桌宠中心
           </button>
 
           <button
@@ -554,6 +773,12 @@ function MainApp() {
           </section>
         )}
 
+        {activeWorkspace === "pets" && (
+          <section className="panel panel-pets" role="tabpanel" aria-label="pet workspace">
+            <PetPanel petState={petState} onPetStateChange={setPetState} />
+          </section>
+        )}
+
         <section
           className={`panel panel-active-scene panel-persistent ${
             activeWorkspace === "active-scene" ? "is-visible" : "is-hidden"
@@ -629,6 +854,35 @@ export default function App() {
   if (window.location.pathname === "/workspace-window") {
     const workspaceRoot = new URLSearchParams(window.location.search).get("root") ?? "";
     return <WorkspaceDock standalone workspaceRoot={workspaceRoot} />;
+  }
+
+  if (window.location.pathname === "/pet-window") {
+    const searchParams = new URLSearchParams(window.location.search);
+    const selectedPet = searchParams.get("selectedPet") ?? "";
+    const activeSessionsRaw = searchParams.get("activeSessions") ?? "[]";
+    let activeSessions = [];
+    try {
+      const parsed = JSON.parse(activeSessionsRaw);
+      activeSessions = Array.isArray(parsed)
+        ? parsed
+            .map((item) => ({
+              conversationId: String(item?.conversationId ?? "").trim(),
+              title: String(item?.title ?? "").trim()
+            }))
+            .filter((item) => item.conversationId && item.title)
+            .slice(0, 3)
+        : [];
+    } catch {
+      activeSessions = [];
+    }
+    return (
+      <MainApp
+        initialWorkspace="chat"
+        petWindowMode
+        forcedSelectedPet={selectedPet}
+        forcedActiveSessions={activeSessions}
+      />
+    );
   }
 
   return <MainApp />;

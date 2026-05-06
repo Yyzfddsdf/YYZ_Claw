@@ -18,6 +18,7 @@ export const MEMORY_SUMMARY_FILE = path.join(YYZ_DIR, "memory_summary.json");
 export const MEMORY_SUMMARY_DIR = path.join(YYZ_DIR, "memory");
 export const PERSONAS_DIR = path.join(YYZ_DIR, "personas");
 export const BACKGROUNDS_DIR = path.join(YYZ_DIR, "backgrounds");
+export const PETS_DIR = path.join(YYZ_DIR, "pet");
 export const SKILLS_DIR = path.join(YYZ_DIR, "skills");
 export const SKILLS_SNAPSHOT_FILE = path.join(SKILLS_DIR, ".skills.snapshot.json");
 export const IM_ROOT_DIR = path.join(YYZ_DIR, "integrations");

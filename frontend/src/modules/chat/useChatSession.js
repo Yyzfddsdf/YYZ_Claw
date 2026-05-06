@@ -30,6 +30,7 @@ import {
   updateHistoryGoalById,
   updateHistoryModelProfileById,
   updateHistoryPersonaById,
+  updateHistoryPluginsById,
   updateHistoryThinkingModeById,
   updateHistoryWorkplaceById,
   updateHistorySkillsById,
@@ -445,6 +446,9 @@ function toSummary(history) {
     skills: Array.isArray(history?.skills)
       ? history.skills.map((item) => String(item ?? "").trim()).filter(Boolean)
       : [],
+    plugins: Array.isArray(history?.plugins)
+      ? history.plugins.map((item) => String(item ?? "").trim()).filter(Boolean)
+      : [],
     disabledTools: normalizeToolNames(history?.disabledTools),
     preview: String(history?.preview ?? buildPreviewFromMessages(safeMessages)),
     createdAt: Number(history?.createdAt ?? 0),
@@ -479,6 +483,9 @@ function normalizeSummaryList(histories) {
     developerPrompt: String(item.developerPrompt ?? ""),
     skills: Array.isArray(item.skills)
       ? item.skills.map((value) => String(value ?? "").trim()).filter(Boolean)
+      : [],
+    plugins: Array.isArray(item.plugins)
+      ? item.plugins.map((value) => String(value ?? "").trim()).filter(Boolean)
       : [],
     disabledTools: normalizeToolNames(item.disabledTools),
     preview: String(item.preview ?? ""),
@@ -583,6 +590,8 @@ function normalizeSkillCatalog(skills) {
   return skills
     .map((item) => ({
       scope: String(item?.scope ?? ""),
+      pluginName: String(item?.pluginName ?? ""),
+      pluginDisplayName: String(item?.pluginDisplayName ?? ""),
       skillKey: String(item?.skillKey ?? ""),
       name: String(item?.name ?? ""),
       displayName: String(item?.displayName ?? item?.name ?? ""),
@@ -856,6 +865,7 @@ function buildConversationUpsertPayload({
   goal = "",
   planState = null,
   skills = [],
+  plugins = [],
   disabledTools = [],
   messages = []
 } = {}) {
@@ -875,6 +885,13 @@ function buildConversationUpsertPayload({
           )
         )
       : [],
+    plugins: Array.isArray(plugins)
+      ? Array.from(
+          new Set(
+            plugins.map((item) => String(item ?? "").trim()).filter(Boolean)
+          )
+        )
+      : [],
     disabledTools: normalizeToolNames(disabledTools),
     messages: toPersistableMessages(messages)
   };
@@ -891,6 +908,7 @@ function buildPersistenceSignature({
   title = "新会话",
   messages = [],
   skills = [],
+  plugins = [],
   workplacePath = "",
   approvalMode = "confirm",
   personaId = "",
@@ -904,6 +922,7 @@ function buildPersistenceSignature({
     title: String(title ?? "").trim() || "新会话",
     messages: toPersistableMessages(messages),
     skills: Array.isArray(skills) ? skills : [],
+    plugins: Array.isArray(plugins) ? plugins : [],
     workplacePath: String(workplacePath ?? "").trim(),
     approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
     personaId: String(personaId ?? "").trim(),
@@ -1064,6 +1083,29 @@ function resolveConversationSkills(conversationId, summaries, draftConversation 
   return Array.isArray(ownerSummary?.skills) ? ownerSummary.skills : [];
 }
 
+function resolveConversationPlugins(conversationId, summaries, draftConversation = null) {
+  const normalizedConversationId = String(conversationId ?? "").trim();
+  if (!normalizedConversationId) {
+    return [];
+  }
+
+  const ownerConversationId = resolveSkillOwnerConversationId(
+    normalizedConversationId,
+    summaries,
+    draftConversation
+  );
+
+  if (draftConversation?.id === ownerConversationId) {
+    return Array.isArray(draftConversation.plugins) ? draftConversation.plugins : [];
+  }
+
+  const ownerSummary =
+    findConversationSummaryById(summaries, ownerConversationId) ??
+    findConversationSummaryById(summaries, normalizedConversationId);
+
+  return Array.isArray(ownerSummary?.plugins) ? ownerSummary.plugins : [];
+}
+
 function toPersistableMessages(messages) {
   return (Array.isArray(messages) ? messages : []).map((item) => {
     const normalized = normalizeChatMessage(item);
@@ -1189,6 +1231,7 @@ export function useChatSession(runtimeConfig = {}) {
   const hydratedRef = useRef(false);
   const lastPersistedSignatureRef = useRef("");
   const selectedSkillsRef = useRef([]);
+  const selectedPluginsRef = useRef([]);
   const messagesRef = useRef([]);
   const activeConversationIdRef = useRef("");
   const queuedUserMessagesRef = useRef([]);
@@ -1303,6 +1346,10 @@ export function useChatSession(runtimeConfig = {}) {
 
   const activeConversationSkills = useMemo(() => {
     return resolveConversationSkills(activeConversationId, conversationList, draftConversation);
+  }, [conversationList, activeConversationId, draftConversation]);
+
+  const activeConversationPlugins = useMemo(() => {
+    return resolveConversationPlugins(activeConversationId, conversationList, draftConversation);
   }, [conversationList, activeConversationId, draftConversation]);
 
   const activeConversationDisabledTools = useMemo(() => {
@@ -1549,6 +1596,7 @@ export function useChatSession(runtimeConfig = {}) {
           }
 
           selectedSkillsRef.current = [];
+          selectedPluginsRef.current = [];
           updateCompressionState(EMPTY_COMPRESSION_STATE);
           setConversationList([]);
           setActiveConversationId(draftConversationId);
@@ -1563,7 +1611,8 @@ export function useChatSession(runtimeConfig = {}) {
             developerPrompt: "",
             goal: "",
             planState: null,
-            skills: []
+            skills: [],
+            plugins: []
           });
           setMessages([]);
           setTokenUsageRecords([]);
@@ -1593,6 +1642,9 @@ export function useChatSession(runtimeConfig = {}) {
         const nextConversationList = upsertSummary(histories, loadedSummary);
         selectedSkillsRef.current = [
           ...resolveConversationSkills(initialConversationId, nextConversationList, null)
+        ];
+        selectedPluginsRef.current = [
+          ...resolveConversationPlugins(initialConversationId, nextConversationList, null)
         ];
         setConversationList(nextConversationList);
         setDraftConversation(null);
@@ -1868,6 +1920,12 @@ export function useChatSession(runtimeConfig = {}) {
       ? [...activeConversationSkills]
       : [];
   }, [activeConversationId, activeConversationSkills]);
+
+  useEffect(() => {
+    selectedPluginsRef.current = Array.isArray(activeConversationPlugins)
+      ? [...activeConversationPlugins]
+      : [];
+  }, [activeConversationId, activeConversationPlugins]);
 
   useEffect(() => {
     queuedUserMessagesRef.current = Array.isArray(queuedUserMessages)
@@ -2158,6 +2216,7 @@ export function useChatSession(runtimeConfig = {}) {
         title: String(history.title ?? "新会话"),
         messages: Array.isArray(history.messages) ? history.messages : [],
         skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
+        plugins: Array.isArray(history.plugins) ? history.plugins : [...selectedPluginsRef.current],
         workplacePath: String(history.workplacePath ?? ""),
         approvalMode: String(history.approvalMode ?? "confirm"),
         goal: normalizeGoal(history.goal),
@@ -2195,6 +2254,7 @@ export function useChatSession(runtimeConfig = {}) {
         personaId: String(draftConversationValue.personaId ?? "").trim(),
         developerPrompt: normalizeDeveloperPrompt(draftConversationValue.developerPrompt ?? ""),
         skills: Array.isArray(draftConversationValue.skills) ? draftConversationValue.skills : [],
+        plugins: Array.isArray(draftConversationValue.plugins) ? draftConversationValue.plugins : [],
         isDraft: true
       };
     }
@@ -2209,6 +2269,11 @@ export function useChatSession(runtimeConfig = {}) {
       conversationListRef.current,
       draftConversationValue
     );
+    const effectivePlugins = resolveConversationPlugins(
+      normalizedConversationId,
+      conversationListRef.current,
+      draftConversationValue
+    );
 
     return {
       workplacePath: String(summary.workplacePath ?? "").trim(),
@@ -2217,6 +2282,7 @@ export function useChatSession(runtimeConfig = {}) {
       personaId: String(summary.personaId ?? "").trim(),
       developerPrompt: normalizeDeveloperPrompt(summary.developerPrompt ?? ""),
       skills: Array.isArray(effectiveSkills) ? effectiveSkills : [],
+      plugins: Array.isArray(effectivePlugins) ? effectivePlugins : [],
       disabledTools: normalizeToolNames(summary.disabledTools),
       isDraft: false
     };
@@ -2255,6 +2321,7 @@ export function useChatSession(runtimeConfig = {}) {
       title,
       messages: payloadMessages,
       skills: [...selectedSkillsRef.current],
+      plugins: [...selectedPluginsRef.current],
       disabledTools: activeConversationDisabledTools,
       personaId: activeConversationPersonaId,
       thinkingMode,
@@ -2288,6 +2355,7 @@ export function useChatSession(runtimeConfig = {}) {
             title: String(history.title ?? title),
             messages: Array.isArray(history.messages) ? history.messages : payloadMessages,
             skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
+            plugins: Array.isArray(history.plugins) ? history.plugins : [...selectedPluginsRef.current],
             disabledTools: normalizeToolNames(history.disabledTools ?? activeConversationDisabledTools),
             workplacePath: String(history.workplacePath ?? payload.workplacePath ?? ""),
             approvalMode: String(
@@ -2417,6 +2485,7 @@ export function useChatSession(runtimeConfig = {}) {
       goal: "",
       planState: null,
       skills: [...selectedSkillsRef.current],
+      plugins: [...selectedPluginsRef.current],
       disabledTools: []
     });
     draftConversationRef.current = {
@@ -2430,6 +2499,7 @@ export function useChatSession(runtimeConfig = {}) {
       goal: "",
       planState: null,
       skills: [...selectedSkillsRef.current],
+      plugins: [...selectedPluginsRef.current],
       disabledTools: []
     };
     setActiveConversationId(conversationId);
@@ -2562,6 +2632,7 @@ export function useChatSession(runtimeConfig = {}) {
       planState: activeConversationPlanState,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
+      plugins: selectedPluginsRef.current,
       messages: toPersistableMessages(truncatedMessages)
     });
     persistPayload.replaceMessages = true;
@@ -2651,6 +2722,7 @@ export function useChatSession(runtimeConfig = {}) {
       planState: activeConversationPlanState,
       developerPrompt: "",
       skills: selectedSkillsRef.current,
+      plugins: selectedPluginsRef.current,
       messages: toPersistableMessages(truncatedMessages)
     });
     persistPayload.replaceMessages = true;
@@ -2877,6 +2949,7 @@ export function useChatSession(runtimeConfig = {}) {
         title: String(history.title ?? activeConversationTitle ?? "新会话"),
         messages: Array.isArray(history.messages) ? history.messages : [],
         skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
+        plugins: Array.isArray(history.plugins) ? history.plugins : activeConversationPlugins,
         workplacePath: String(history.workplacePath ?? activeConversationWorkplace ?? ""),
         approvalMode: String(history.approvalMode ?? activeConversationApprovalMode ?? "confirm"),
         goal: normalizeGoal(history.goal ?? activeConversationGoal),
@@ -3124,6 +3197,38 @@ export function useChatSession(runtimeConfig = {}) {
   }
 
   async function setConversationSkills(nextSkills) {
+    return updateConversationSelection({
+      nextItems: nextSkills,
+      ownerConversationId: activeConversationSkillOwnerId || activeConversationId,
+      draftField: "skills",
+      selectionRef: selectedSkillsRef,
+      updateSummaryField: "skills",
+      requestUpdate: updateHistorySkillsById,
+      errorMessage: "设置技能失败"
+    });
+  }
+
+  async function setConversationPlugins(nextPlugins) {
+    return updateConversationSelection({
+      nextItems: nextPlugins,
+      ownerConversationId: activeConversationSkillOwnerId || activeConversationId,
+      draftField: "plugins",
+      selectionRef: selectedPluginsRef,
+      updateSummaryField: "plugins",
+      requestUpdate: updateHistoryPluginsById,
+      errorMessage: "设置插件失败"
+    });
+  }
+
+  async function updateConversationSelection({
+    nextItems,
+    ownerConversationId,
+    draftField,
+    selectionRef,
+    updateSummaryField,
+    requestUpdate,
+    errorMessage
+  }) {
     if (
       !historyLoaded ||
       !activeConversationId ||
@@ -3134,17 +3239,17 @@ export function useChatSession(runtimeConfig = {}) {
       return;
     }
 
-    const normalizedSkills = Array.isArray(nextSkills)
+    const normalizedItems = Array.isArray(nextItems)
       ? Array.from(
           new Set(
-            nextSkills
+            nextItems
               .map((item) => String(item ?? "").trim())
               .filter(Boolean)
           )
         )
       : [];
-    const skillsOwnerConversationId = String(
-      activeConversationSkillOwnerId || activeConversationId
+    const normalizedOwnerConversationId = String(
+      ownerConversationId || activeConversationId
     ).trim();
 
     if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
@@ -3153,10 +3258,10 @@ export function useChatSession(runtimeConfig = {}) {
           return prev;
         }
 
-        selectedSkillsRef.current = normalizedSkills;
+        selectionRef.current = normalizedItems;
         return {
           ...prev,
-          skills: normalizedSkills
+          [draftField]: normalizedItems
         };
       });
       setError("");
@@ -3164,25 +3269,25 @@ export function useChatSession(runtimeConfig = {}) {
     }
 
     try {
-      selectedSkillsRef.current = normalizedSkills;
+      selectionRef.current = normalizedItems;
       setConversationList((prev) =>
         prev.map((item) =>
-          item.id === skillsOwnerConversationId
+          item.id === normalizedOwnerConversationId
             ? {
                 ...item,
-                skills: normalizedSkills
+                [updateSummaryField]: normalizedItems
               }
             : item
         )
       );
 
-      const response = await updateHistorySkillsById(skillsOwnerConversationId, normalizedSkills);
+      const response = await requestUpdate(normalizedOwnerConversationId, normalizedItems);
       const updatedSummary = toSummary(response?.history ?? {});
 
       setConversationList((prev) => replaceSummaryById(prev, updatedSummary));
       setError("");
-    } catch (skillsError) {
-      setError(skillsError?.message || "设置技能失败");
+    } catch (selectionError) {
+      setError(selectionError?.message || errorMessage);
     }
   }
 
@@ -3534,8 +3639,9 @@ export function useChatSession(runtimeConfig = {}) {
         lastPersistedSignatureRef.current = JSON.stringify({
           title: String(history.title ?? "新会话"),
           messages: toPersistableMessages(normalizedMessages),
-          skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
-          workplacePath: String(history.workplacePath ?? ""),
+        skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
+        plugins: Array.isArray(history.plugins) ? history.plugins : [...selectedPluginsRef.current],
+        workplacePath: String(history.workplacePath ?? ""),
           approvalMode: String(history.approvalMode ?? "confirm"),
           goal: normalizeGoal(history.goal),
           personaId: String(history.personaId ?? ""),
@@ -5046,6 +5152,7 @@ export function useChatSession(runtimeConfig = {}) {
         planState: activeConversationPlanState,
         developerPrompt: "",
         skills: selectedSkillsRef.current,
+        plugins: selectedPluginsRef.current,
         disabledTools: activeConversationDisabledTools,
         messages: toPersistableMessages(nextMessages)
       });
@@ -5289,6 +5396,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
+      activeConversationPlugins,
       activeConversationDisabledTools,
       activeConversationSource,
       activeConversationModelProfileId,
@@ -5354,6 +5462,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationModelProfile,
       setConversationThinkingMode,
       setConversationSkills,
+      setConversationPlugins,
       setConversationDisabledTools,
       setConversationDeveloperPrompt,
       compressConversation,
@@ -5379,6 +5488,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationPersonaId,
       activeConversationDeveloperPrompt,
       activeConversationSkills,
+      activeConversationPlugins,
       activeConversationDisabledTools,
       activeConversationSource,
       activeConversationModelProfileId,
@@ -5441,6 +5551,7 @@ export function useChatSession(runtimeConfig = {}) {
       setConversationModelProfile,
       setConversationThinkingMode,
       setConversationSkills,
+      setConversationPlugins,
       setConversationDisabledTools,
       setConversationDeveloperPrompt,
       compressConversation,

@@ -256,6 +256,7 @@ function ProviderConfigFields({ providerConfig, disabled, onChange }) {
 export function RemoteControlPanel() {
   const [config, setConfig] = useState(() => normalizeConfig());
   const [providerConfig, setProviderConfig] = useState(() => ({}));
+  const [providerConfigs, setProviderConfigs] = useState(() => ({}));
   const [providers, setProviders] = useState([]);
   const [histories, setHistories] = useState([]);
   const [status, setStatus] = useState({
@@ -339,8 +340,12 @@ export function RemoteControlPanel() {
       fetchHistories()
     ]);
 
-    setConfig(normalizeConfig(configResponse?.config));
-    setProviderConfig(normalizeProviderConfig(configResponse?.providerConfig));
+    const nextConfig = normalizeConfig(configResponse?.config);
+    const nextProviderConfig = normalizeProviderConfig(configResponse?.providerConfig);
+    const nextProviderConfigs = normalizeProviderConfig(configResponse?.providerConfigs);
+    setConfig(nextConfig);
+    setProviderConfig(nextProviderConfig);
+    setProviderConfigs(nextProviderConfigs);
     setProviders(normalizeProviders(configResponse?.providers));
     setHistories(normalizeHistories(historiesResponse?.histories));
     await refreshStatus();
@@ -397,8 +402,12 @@ export function RemoteControlPanel() {
       }
 
       const response = await saveRemoteControlConfig(payload);
-      setConfig(normalizeConfig(response?.config));
-      setProviderConfig(normalizeProviderConfig(response?.providerConfig ?? providerConfig));
+      const nextConfig = normalizeConfig(response?.config);
+      const nextProviderConfig = normalizeProviderConfig(response?.providerConfig ?? providerConfig);
+      const nextProviderConfigs = normalizeProviderConfig(response?.providerConfigs);
+      setConfig(nextConfig);
+      setProviderConfig(nextProviderConfig);
+      setProviderConfigs(nextProviderConfigs);
       setProviders(normalizeProviders(response?.providers ?? providers));
       await refreshStatus();
       notify({
@@ -474,9 +483,12 @@ export function RemoteControlPanel() {
                       ? previous.targetConversationId
                       : ""
                   }));
-                  setProviderConfig((previous) =>
+                  setProviderConfig(
                     nextProviderKey
-                      ? mergeProviderConfigDefaults(nextProviderKey, previous)
+                      ? mergeProviderConfigDefaults(
+                          nextProviderKey,
+                          providerConfigs[nextProviderKey] ?? {}
+                        )
                       : {}
                   );
                 }}

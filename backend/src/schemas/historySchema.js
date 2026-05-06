@@ -59,6 +59,7 @@ export const conversationUpsertSchema = z.object({
   goal: z.string().optional(),
   planState: planStateSchema.nullable().optional(),
   skills: z.array(z.string().trim().min(1)).optional(),
+  plugins: z.array(z.string().trim().min(1)).optional(),
   disabledTools: z.array(z.string().trim().min(1)).optional(),
   personaId: z.string().trim().max(120).optional(),
   modelProfileId: z.string().trim().max(120).optional(),
@@ -74,6 +75,10 @@ export const conversationWorkplaceSchema = z.object({
 
 export const conversationSkillsSchema = z.object({
   skills: z.array(z.string().trim().min(1))
+});
+
+export const conversationPluginsSchema = z.object({
+  plugins: z.array(z.string().trim().min(1))
 });
 
 export const conversationToolsSchema = z.object({

@@ -4,7 +4,7 @@ function createValidationError(message) {
   return error;
 }
 
-export function createSkillsController({ skillCatalog, skillValidator }) {
+export function createSkillsController({ skillCatalog, skillValidator, pluginCatalog }) {
   return {
     refreshSkills: async (_req, res) => {
       if (!skillCatalog || typeof skillCatalog.refresh !== "function") {
@@ -33,8 +33,12 @@ export function createSkillsController({ skillCatalog, skillValidator }) {
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+      const selectedPluginNames = String(req.query?.selectedPluginNames ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
 
-      const skills = await skillCatalog.listSkills({
+      const nativeSkills = await skillCatalog.listSkills({
         workspacePath,
         query,
         category,
@@ -42,6 +46,53 @@ export function createSkillsController({ skillCatalog, skillValidator }) {
         includeProject,
         includeSystem,
         selectedSkillNames
+      });
+      const pluginSkills =
+        pluginCatalog && typeof pluginCatalog.collectPluginSkills === "function"
+          ? (await pluginCatalog.collectPluginSkills({
+              enabledOnly: true,
+              selectedPluginNames
+            })).map((skill) => ({
+              scope: skill.scope,
+              pluginName: skill.pluginName,
+              pluginDisplayName: skill.pluginDisplayName,
+              skillKey: skill.skillKey,
+              name: skill.name,
+              displayName: skill.displayName,
+              shortDescription: skill.shortDescription,
+              defaultPrompt: skill.defaultPrompt,
+              iconSmall: skill.iconSmall,
+              iconLarge: skill.iconLarge,
+              brandColor: skill.brandColor,
+              allowImplicitInvocation: skill.allowImplicitInvocation !== false,
+              description: skill.description,
+              version: skill.version,
+              author: skill.author,
+              license: skill.license,
+              category: skill.category,
+              relativePath: skill.relativePath,
+              isSystem: false,
+              enabled: skill.hermes.enabled !== false,
+              hidden: Boolean(skill.hermes.hidden),
+              selected: false,
+              selectable: false
+            }))
+          : [];
+      const skills = [...nativeSkills, ...pluginSkills].filter((skill) => {
+        if (!query) {
+          return true;
+        }
+        return [
+          skill.name,
+          skill.displayName,
+          skill.description,
+          skill.shortDescription,
+          skill.pluginName,
+          skill.relativePath
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query.toLowerCase());
       });
 
       res.json({
@@ -67,9 +118,13 @@ export function createSkillsController({ skillCatalog, skillValidator }) {
         throw createValidationError("skill catalog is not available");
       }
 
-      const result = await skillCatalog.getSkillContent(skillName, req.query?.filePath ?? "SKILL.md", {
-        workspacePath
-      });
+      const result = skillName.startsWith("plugin:")
+        && pluginCatalog
+        && typeof pluginCatalog.getPluginSkillContent === "function"
+          ? await pluginCatalog.getPluginSkillContent(skillName, req.query?.filePath ?? "SKILL.md")
+          : await skillCatalog.getSkillContent(skillName, req.query?.filePath ?? "SKILL.md", {
+              workspacePath
+            });
       if (!result) {
         const notFoundError = createValidationError("skill not found");
         notFoundError.statusCode = 404;
@@ -79,6 +134,10 @@ export function createSkillsController({ skillCatalog, skillValidator }) {
       res.json({
         skill: {
           name: result.skill.name,
+          scope: result.skill.scope,
+          skillKey: result.skill.skillKey,
+          pluginName: result.skill.pluginName,
+          pluginDisplayName: result.skill.pluginDisplayName,
           displayName: result.skill.displayName,
           shortDescription: result.skill.shortDescription,
           defaultPrompt: result.skill.defaultPrompt,
@@ -120,9 +179,13 @@ export function createSkillsController({ skillCatalog, skillValidator }) {
         throw createValidationError("skill catalog is not available");
       }
 
-      const result = await skillCatalog.getSkillAsset(skillName, filePath, {
-        workspacePath
-      });
+      const result = skillName.startsWith("plugin:")
+        && pluginCatalog
+        && typeof pluginCatalog.getPluginSkillAsset === "function"
+          ? await pluginCatalog.getPluginSkillAsset(skillName, filePath)
+          : await skillCatalog.getSkillAsset(skillName, filePath, {
+              workspacePath
+            });
       if (!result) {
         const notFoundError = createValidationError("skill not found");
         notFoundError.statusCode = 404;

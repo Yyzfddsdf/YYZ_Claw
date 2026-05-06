@@ -108,6 +108,22 @@ export function createRemoteControlController({
     return normalizeProviderConfig(result);
   }
 
+  async function readAllProviderConfigs(providers = []) {
+    const entries = await Promise.all(
+      (Array.isArray(providers) ? providers : []).map(async (provider) => {
+        const providerKey = normalizeProviderKey(provider?.key);
+        if (!providerKey) {
+          return null;
+        }
+
+        const fullProvider = remoteControlProviderRegistry.get(providerKey);
+        return [providerKey, await readProviderConfig(fullProvider)];
+      })
+    );
+
+    return Object.fromEntries(entries.filter(Boolean));
+  }
+
   async function saveProviderConfig(provider, providerConfig) {
     const adapter = provider?.adapter ?? null;
     if (!adapter || typeof adapter.saveConfig !== "function") {
@@ -137,11 +153,13 @@ export function createRemoteControlController({
     getConfig: async (_req, res) => {
       const context = await getActiveProviderContext();
       const providerConfig = context.provider ? await readProviderConfig(context.provider) : {};
+      const providerConfigs = await readAllProviderConfigs(context.providers);
 
       res.json({
         config: context.config,
         providers: context.providers,
-        providerConfig
+        providerConfig,
+        providerConfigs
       });
     },
 
@@ -196,10 +214,14 @@ export function createRemoteControlController({
         forceRefresh: validation.data.providerConfig !== undefined
       });
 
+      const providers = remoteControlProviderRegistry.list();
+      const providerConfigs = await readAllProviderConfigs(providers);
+
       res.json({
         config: savedGlobalConfig,
         providerConfig,
-        providers: remoteControlProviderRegistry.list()
+        providerConfigs,
+        providers
       });
     },
 

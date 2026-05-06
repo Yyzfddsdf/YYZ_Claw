@@ -1,0 +1,9 @@
+interface:
+  display_name: "Task Memory Logger"
+  short_description: "每次完成任务后记录结构化 markdown 记忆文件，包含本次摘要、下一步计划、注意事项"
+  default_prompt: "Use $task-memory-logger to log task memory after completing a task."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#1e3a5f"
+policy:
+  allow_implicit_invocation: true

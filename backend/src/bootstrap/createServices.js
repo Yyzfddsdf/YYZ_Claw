@@ -9,6 +9,8 @@ import {
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
   MCP_CONFIG_FILE,
+  PLUGIN_SETTINGS_FILE,
+  PLUGINS_DIR,
   REMOTE_CONTROL_CONFIG_FILE,
   MEMORY_SUMMARY_FILE,
   MEMORY_SUMMARY_DIR,
@@ -34,6 +36,9 @@ import { ApprovalRulesStore } from "../services/config/ApprovalRulesStore.js";
 import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
 import { MemorySummaryStore } from "../services/config/MemorySummaryStore.js";
 import { PersonaStore } from "../services/personas/PersonaStore.js";
+import { PluginCatalog } from "../services/plugins/PluginCatalog.js";
+import { PluginPromptBuilder } from "../services/plugins/PluginPromptBuilder.js";
+import { PluginSettingsStore } from "../services/plugins/PluginSettingsStore.js";
 import { McpConfigStore } from "../services/config/McpConfigStore.js";
 import { ConversationCompressionService } from "../services/context/ConversationCompressionService.js";
 import { AttachmentParserService } from "../services/files/AttachmentParserService.js";
@@ -101,6 +106,14 @@ export async function createServices() {
   await feishuConfigStore.ensureFile();
   const remoteControlConfigStore = new RemoteControlConfigStore(REMOTE_CONTROL_CONFIG_FILE);
   await remoteControlConfigStore.ensureFile();
+  const pluginSettingsStore = new PluginSettingsStore(PLUGIN_SETTINGS_FILE);
+  await pluginSettingsStore.ensureFile();
+  const pluginCatalog = new PluginCatalog({
+    rootDir: PLUGINS_DIR,
+    settingsStore: pluginSettingsStore
+  });
+  await pluginCatalog.ensureDirectory();
+  await pluginCatalog.read();
   const backgroundStore = new BackgroundStore({
     rootDir: BACKGROUNDS_DIR
   });
@@ -133,7 +146,8 @@ export async function createServices() {
   await skillCatalog.ensureSeedSkills();
   await skillCatalog.read();
 
-  const skillPromptBuilder = new SkillPromptBuilder({ skillCatalog });
+  const skillPromptBuilder = new SkillPromptBuilder({ skillCatalog, pluginCatalog });
+  const pluginPromptBuilder = new PluginPromptBuilder({ pluginCatalog });
   const skillValidator = new SkillValidator({ skillCatalog });
   const personaStore = new PersonaStore({
     rootDir: PERSONAS_DIR
@@ -304,8 +318,10 @@ export async function createServices() {
     agentsPromptStore,
     memorySummaryStore,
     skillCatalog,
+    pluginCatalog,
     skillValidator,
     skillPromptBuilder,
+    pluginPromptBuilder,
     personaStore,
     memorySummaryService,
     orchestratorSchedulerService,
@@ -386,12 +402,15 @@ export async function createServices() {
     remoteControlProviderRegistry,
     feishuConfigStore,
     mcpConfigStore,
+    pluginCatalog,
+    pluginSettingsStore,
     approvalRulesStore,
     agentsPromptStore,
     memorySummaryStore,
     memorySummaryService,
     skillCatalog,
     skillPromptBuilder,
+    pluginPromptBuilder,
     skillValidator,
     personaStore,
     mcpManager,

@@ -1,7 +1,7 @@
 export default {
   name: "skill_view",
   description:
-    "View the full content of an enabled skill. Global skills default to user-home .yyz/skills; project skills are resolved from the current workspace .yyz/skills.",
+    "View the full content of an enabled skill. Global skills default to user-home .yyz/skills; project skills are resolved from the current workspace .yyz/skills. Plugin skills are resolved from enabled plugins and must use the exact plugin skillKey shown in the skills prompt, for example plugin:presentations/presentations.",
   parameters: {
     type: "object",
     properties: {
@@ -13,7 +13,7 @@ export default {
       skillName: {
         type: "string",
         description:
-          "Skill identifier. Prefer the exact skillKey shown in the skills prompt, such as global:session-memory or project:my-skill. Bare skill names are accepted only as a fallback and may be ambiguous."
+          "Skill identifier. Prefer the exact skillKey shown in the skills prompt, such as global:session-memory, project:my-skill, or plugin:presentations/presentations. Plugin skills should always use plugin:<pluginName>/<skillPath>; bare skill names are accepted only as a fallback and may be ambiguous."
       },
       filePath: {
         type: "string",
@@ -25,6 +25,7 @@ export default {
   },
   async execute(args = {}, executionContext = {}) {
     const skillCatalog = executionContext.skillCatalog;
+    const pluginCatalog = executionContext.pluginCatalog;
 
     if (!skillCatalog || typeof skillCatalog.getSkillContent !== "function") {
       throw new Error("skill catalog is not available");
@@ -36,9 +37,19 @@ export default {
       executionContext.workplacePath ??
       executionContext.workingDirectory;
 
-    const result = await skillCatalog.getSkillContent(args.skillName, args.filePath, {
-      workspacePath
-    });
+    const normalizedSkillName = String(args.skillName ?? "").trim();
+    const activePluginNames = Array.isArray(executionContext.activePluginNames)
+      ? executionContext.activePluginNames.map((item) => String(item ?? "").trim()).filter(Boolean)
+      : [];
+    const result = normalizedSkillName.startsWith("plugin:")
+      && pluginCatalog
+      && typeof pluginCatalog.getPluginSkillContent === "function"
+        ? await pluginCatalog.getPluginSkillContent(normalizedSkillName, args.filePath, {
+            selectedPluginNames: activePluginNames
+          })
+        : await skillCatalog.getSkillContent(normalizedSkillName, args.filePath, {
+            workspacePath
+          });
     if (!result) {
       throw new Error(`skill not found: ${String(args.skillName ?? "").trim()}`);
     }
@@ -46,6 +57,10 @@ export default {
     return {
       skill: {
         name: result.skill.name,
+        scope: result.skill.scope,
+        skillKey: result.skill.skillKey,
+        pluginName: result.skill.pluginName,
+        pluginDisplayName: result.skill.pluginDisplayName,
         displayName: result.skill.displayName,
         shortDescription: result.skill.shortDescription,
         defaultPrompt: result.skill.defaultPrompt,

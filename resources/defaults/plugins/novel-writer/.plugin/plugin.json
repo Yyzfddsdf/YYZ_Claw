@@ -1,0 +1,42 @@
+{
+  "name": "novel-writer",
+  "version": "1.0.0",
+  "description": "Write, outline, edit, and manage novel-length fiction with structured chapter-by-chapter support.",
+  "keywords": [
+    "novel",
+    "fiction",
+    "writing",
+    "storytelling",
+    "chapter"
+  ],
+  "author": {
+    "name": "YYZ_Claw",
+    "email": "",
+    "url": ""
+  },
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "rules": "./rules.md",
+  "interface": {
+    "displayName": "Novel Writer",
+    "shortDescription": "Write and manage novel-length fiction.",
+    "longDescription": "A full novel-writing toolset: brainstorm premises, outline arcs, write chapters with consistent character voices, manage plot threads, and export structured manuscripts. Supports chapter-by-chapter writing with continuity checks, style guide adherence, and revision tracking.",
+    "developerName": "YYZ_Claw",
+    "category": "Writing",
+    "capabilities": [
+      "novel outlining",
+      "chapter writing",
+      "character management",
+      "plot tracking",
+      "manuscript export"
+    ],
+    "brandColor": "#8B5CF6",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/logo.svg",
+    "screenshots": [],
+    "defaultPrompt": [
+      "Use this plugin to write, outline, or edit a novel-length fiction project."
+    ]
+  }
+}

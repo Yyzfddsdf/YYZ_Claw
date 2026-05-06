@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="Outline Novel">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="url(#bg)"/>
+  <!-- Outline board simplified -->
+  <rect x="14" y="12" width="36" height="42" rx="6" fill="#EDE9FE" opacity="0.95"/>
+  <rect x="17" y="15" width="30" height="36" rx="4" fill="#F5F3FF"/>
+  <!-- Clip -->
+  <rect x="26" y="8" width="12" height="8" rx="3" fill="#C4B5FD"/>
+  <!-- Lines -->
+  <rect x="21" y="22" width="22" height="2" rx="1" fill="#7C3AED" opacity="0.3"/>
+  <rect x="21" y="28" width="18" height="2" rx="1" fill="#7C3AED" opacity="0.3"/>
+  <rect x="21" y="34" width="20" height="2" rx="1" fill="#7C3AED" opacity="0.3"/>
+  <!-- Checkmark -->
+  <path d="M38 38 L41 42 L47 34" stroke="#34D399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

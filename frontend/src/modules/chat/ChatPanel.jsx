@@ -1137,8 +1137,16 @@ export function ChatPanel({
     const commandItems = SLASH_COMMANDS.filter((item) =>
       fuzzyMatchText(item.label.replace(/^\//, ""), slashQuery)
     );
+    const activeSkillKeys = new Set(
+      Array.isArray(chat.activeConversationSkills)
+        ? chat.activeConversationSkills.map((item) => String(item ?? "").trim())
+        : []
+    );
     const skillItems = (Array.isArray(chat.skillCatalog) ? chat.skillCatalog : [])
-      .filter((skill) => fuzzyMatchText(skill?.name, slashQuery))
+      .filter((skill) => {
+        const skillKey = String(skill?.skillKey || skill?.relativePath || skill?.name || "").trim();
+        return activeSkillKeys.has(skillKey) && fuzzyMatchText(skill?.name, slashQuery);
+      })
       .slice(0, 8)
       .map((skill) => ({
         type: "skill",
@@ -1146,6 +1154,18 @@ export function ChatPanel({
         label: `/${String(skill?.name ?? "").trim()}`,
         description: String(skill?.shortDescription || skill?.description || "提示模型使用这个 skill").trim()
       }));
+    const pluginItems = (Array.isArray(chat.activeConversationPlugins)
+      ? chat.activeConversationPlugins
+      : []
+    )
+      .filter((pluginName) => fuzzyMatchText(pluginName, slashQuery))
+      .slice(0, 8)
+      .map((pluginName) => ({
+      type: "plugin",
+      value: `/${String(pluginName ?? "").trim()}`,
+      label: `/${String(pluginName ?? "").trim()}`,
+      description: "提示模型使用当前会话已启用的 plugin"
+    }));
     const fileItems = slashFileMatches.slice(0, 8).map((file) => ({
       type: "file",
       value: `/${String(file?.path ?? "").trim()}`,
@@ -1153,8 +1173,8 @@ export function ChatPanel({
       description: "引用工作区文件路径，模型可自行用工具查看"
     }));
 
-    return [...commandItems, ...skillItems, ...fileItems].slice(0, 14);
-  }, [chat.skillCatalog, slashFileMatches, slashQuery]);
+    return [...commandItems, ...skillItems, ...pluginItems, ...fileItems].slice(0, 14);
+  }, [chat.activeConversationPlugins, chat.activeConversationSkills, chat.skillCatalog, slashFileMatches, slashQuery]);
 
   useEffect(() => {
     if (!slashQuery) {
@@ -3947,7 +3967,13 @@ export function ChatPanel({
                       role="option"
                     >
                       <span className="slash-command-type">
-                        {item.type === "command" ? "CMD" : item.type === "skill" ? "SKILL" : "FILE"}
+                        {item.type === "command"
+                          ? "CMD"
+                          : item.type === "skill"
+                            ? "SKILL"
+                            : item.type === "plugin"
+                              ? "PLUGIN"
+                              : "FILE"}
                       </span>
                       <span className="slash-command-copy">
                         <strong>{item.label}</strong>

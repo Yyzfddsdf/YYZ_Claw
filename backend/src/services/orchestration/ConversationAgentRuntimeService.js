@@ -114,8 +114,10 @@ export class ConversationAgentRuntimeService {
     this.agentsPromptStore = options.agentsPromptStore ?? null;
     this.memorySummaryStore = options.memorySummaryStore ?? null;
     this.skillCatalog = options.skillCatalog ?? null;
+    this.pluginCatalog = options.pluginCatalog ?? null;
     this.skillValidator = options.skillValidator ?? null;
     this.skillPromptBuilder = options.skillPromptBuilder ?? null;
+    this.pluginPromptBuilder = options.pluginPromptBuilder ?? null;
     this.personaStore = options.personaStore ?? null;
     this.memorySummaryService = options.memorySummaryService ?? null;
     this.orchestratorSchedulerService = options.orchestratorSchedulerService ?? null;
@@ -143,6 +145,12 @@ export class ConversationAgentRuntimeService {
         : Array.isArray(history?.skills)
           ? history.skills
           : [];
+    const activePluginNames =
+      Array.isArray(rootConversation?.plugins) && rootConversation.plugins.length > 0
+        ? rootConversation.plugins
+        : Array.isArray(history?.plugins)
+          ? history.plugins
+          : [];
 
     if (!isSubagent) {
       const personaPrompt = await this.personaStore?.resolvePrompt?.(history?.personaId);
@@ -153,6 +161,7 @@ export class ConversationAgentRuntimeService {
         agentType: "primary",
         isSubagent: false,
         activeSkillNames,
+        activePluginNames,
         developerPrompt: "",
         personaPrompt: normalizeText(personaPrompt),
         definitionPrompt: "",
@@ -174,6 +183,7 @@ export class ConversationAgentRuntimeService {
       agentType: definition.agentType,
       isSubagent: true,
       activeSkillNames,
+      activePluginNames,
       developerPrompt: "",
       personaPrompt: "",
       definitionPrompt: normalizeText(runtime?.definitionSystemPrompt),
@@ -405,11 +415,13 @@ export class ConversationAgentRuntimeService {
       agentsPromptStore: this.agentsPromptStore,
       memorySummaryStore: this.memorySummaryStore,
       skillPromptBuilder: this.skillPromptBuilder,
+      pluginPromptBuilder: this.pluginPromptBuilder,
       workspacePath: workplacePath,
       memorySummaryPrompt: pinnedMemorySummaryPrompt,
       developerPrompt: resolved.developerPrompt,
       personaPrompt: resolved.personaPrompt,
       activeSkillNames: resolved.activeSkillNames,
+      activePluginNames: resolved.activePluginNames,
       runtimeConfig,
       definitionPrompt: resolved.definitionPrompt,
       includeAgentsPrompt: !resolved.isSubagent,
@@ -476,9 +488,11 @@ export class ConversationAgentRuntimeService {
       planState: normalizePlanState(existingConversation?.planState),
       memoryStore: this.memoryStore,
       skillCatalog: this.skillCatalog,
+      pluginCatalog: this.pluginCatalog,
       skillValidator: this.skillValidator,
       skillPromptBuilder: this.skillPromptBuilder,
       activeSkillNames: resolved.activeSkillNames,
+      activePluginNames: resolved.activePluginNames,
       developerPrompt: resolved.developerPrompt,
       personaPrompt: resolved.personaPrompt,
       remoteContext:

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <!-- 深蓝色文档背景 -->
+  <rect x="18" y="8" width="92" height="112" rx="8" fill="#1e3a5f"/>
+  <!-- 文档卷角 -->
+  <path d="M84 8v24h24" fill="#152a45"/>
+  <path d="M84 8v24h24" stroke="#152a45" stroke-width="1"/>
+  <!-- 标题线 -->
+  <rect x="34" y="38" width="52" height="6" rx="3" fill="#4a90d9"/>
+  <!-- 内容横线 -->
+  <rect x="34" y="58" width="40" height="6" rx="3" fill="#4a90d9"/>
+  <rect x="34" y="74" width="48" height="6" rx="3" fill="#4a90d9"/>
+  <rect x="34" y="90" width="36" height="6" rx="3" fill="#4a90d9"/>
+  <!-- 完成对勾 - 右下角 -->
+  <circle cx="98" cy="100" r="20" fill="#22c55e"/>
+  <path d="M88 100l7 7 12-12" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,9 @@
+interface:
+  display_name: "Write Novel"
+  short_description: "Write, outline, edit, and manage novel-length fiction."
+  default_prompt: "Use plugin:novel-writer/write-novel to brainstorm, outline, draft, edit, or export a novel project."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#8B5CF6"
+policy:
+  allow_implicit_invocation: true

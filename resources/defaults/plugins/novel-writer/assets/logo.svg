@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Novel Writer">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- Feather quill -->
+  <path d="M80 176 C84 144 96 112 120 80 L132 68 L144 80 C160 100 164 124 160 144 L144 136 C140 120 132 108 120 100 L112 112 C100 136 96 156 96 176 Z" fill="#EDE9FE" opacity="0.95"/>
+  <!-- Nib tip -->
+  <path d="M120 80 L132 68 L144 80 L132 88 Z" fill="#C4B5FD"/>
+  <!-- Ink dots -->
+  <circle cx="128" cy="184" r="8" fill="#EDE9FE" opacity="0.7"/>
+  <circle cx="112" cy="192" r="5" fill="#EDE9FE" opacity="0.4"/>
+</svg>

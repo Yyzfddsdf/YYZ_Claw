@@ -318,6 +318,19 @@ export async function buildSkillsSystemPrompt({
   });
 }
 
+export async function buildPluginsSystemPrompt({
+  pluginPromptBuilder,
+  activePluginNames = []
+}) {
+  if (!pluginPromptBuilder || typeof pluginPromptBuilder.buildIndexPrompt !== "function") {
+    return "";
+  }
+
+  return pluginPromptBuilder.buildIndexPrompt({
+    selectedPluginNames: activePluginNames
+  });
+}
+
 export function createDeveloperPromptMessage(developerPrompt) {
   const normalizedPrompt = String(developerPrompt ?? "").trim();
 
@@ -615,6 +628,7 @@ export async function buildConversationPromptMessages(options = {}) {
   const includeWorkplacePrompt = options.includeWorkplacePrompt !== false;
   const includeLongTermMemoryPrompt = options.includeLongTermMemoryPrompt !== false;
   const includeSkillsPrompt = options.includeSkillsPrompt !== false;
+  const includePluginsPrompt = options.includePluginsPrompt !== false;
   const includeSubagentGuardPrompt = Boolean(options.includeSubagentGuardPrompt);
   const definitionPrompt = String(options.definitionPrompt ?? "").trim();
   const runtimeConfig =
@@ -688,6 +702,19 @@ export async function buildConversationPromptMessages(options = {}) {
       promptMessages.push({
         role: "system",
         content: skillsSystemPrompt
+      });
+    }
+  }
+
+  if (includePluginsPrompt) {
+    const pluginsSystemPrompt = await buildPluginsSystemPrompt({
+      pluginPromptBuilder: options.pluginPromptBuilder,
+      activePluginNames: Array.isArray(options.activePluginNames) ? options.activePluginNames : []
+    });
+    if (pluginsSystemPrompt) {
+      promptMessages.push({
+        role: "system",
+        content: pluginsSystemPrompt
       });
     }
   }

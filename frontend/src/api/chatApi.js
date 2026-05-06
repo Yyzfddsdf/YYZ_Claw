@@ -75,6 +75,13 @@ export function updateHistorySkillsById(conversationId, skills) {
   });
 }
 
+export function updateHistoryPluginsById(conversationId, plugins) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/plugins`, {
+    method: "PUT",
+    body: { plugins }
+  });
+}
+
 export function updateHistoryToolsById(conversationId, disabledTools) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/tools`, {
     method: "PUT",
@@ -191,6 +198,12 @@ export function fetchSkills(params = {}) {
 
   if (Array.isArray(params.selectedSkillNames) && params.selectedSkillNames.length > 0) {
     query.set("selectedSkillNames", params.selectedSkillNames.join(","));
+  }
+
+  if (Array.isArray(params.selectedPluginNames) && params.selectedPluginNames.length > 0) {
+    query.set("selectedPluginNames", params.selectedPluginNames.join(","));
+  } else if (typeof params.selectedPluginNames === "string" && params.selectedPluginNames.trim()) {
+    query.set("selectedPluginNames", params.selectedPluginNames.trim());
   }
 
   const suffix = query.toString() ? `?${query.toString()}` : "";

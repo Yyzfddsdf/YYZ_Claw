@@ -1,0 +1,9 @@
+interface:
+  display_name: "Plugin Creator"
+  short_description: "Create YYZ_Claw plugins and plugin skills"
+  default_prompt: "Use plugin_creator to scaffold a YYZ_Claw plugin or add a plugin skill."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#2563eb"
+policy:
+  allow_implicit_invocation: true

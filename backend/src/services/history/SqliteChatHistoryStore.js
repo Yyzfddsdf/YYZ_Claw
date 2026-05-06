@@ -191,6 +191,10 @@ function normalizeSkillNames(value) {
   return normalized;
 }
 
+function normalizePluginNames(value) {
+  return normalizeSkillNames(value);
+}
+
 function normalizeToolNames(value) {
   const list = Array.isArray(value) ? value : [];
   const normalized = [];
@@ -512,6 +516,7 @@ export class SqliteChatHistoryStore {
         goal_text TEXT NOT NULL DEFAULT '',
         plan_state_json TEXT NOT NULL DEFAULT '',
         skills_json TEXT NOT NULL DEFAULT '[]',
+        plugins_json TEXT NOT NULL DEFAULT '[]',
         disabled_tools_json TEXT NOT NULL DEFAULT '[]',
         persona_id TEXT NOT NULL DEFAULT '',
         developer_prompt TEXT NOT NULL DEFAULT '',
@@ -535,6 +540,7 @@ export class SqliteChatHistoryStore {
     this.ensureConversationGoalColumn();
     this.ensureConversationPlanStateColumn();
     this.ensureConversationSkillsColumn();
+    this.ensureConversationPluginsColumn();
     this.ensureConversationDisabledToolsColumn();
     this.ensureConversationPersonaColumn();
     this.ensureConversationDeveloperPromptColumn();
@@ -1025,6 +1031,7 @@ export class SqliteChatHistoryStore {
         c.goal_text,
         c.plan_state_json,
         c.skills_json,
+        c.plugins_json,
         c.disabled_tools_json,
         c.persona_id,
         c.developer_prompt,
@@ -1079,6 +1086,7 @@ export class SqliteChatHistoryStore {
       goal: normalizeGoalText(item.goal_text),
       planState: normalizePlanState(normalizeJsonText(item.plan_state_json, null)),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
+      plugins: normalizePluginNames(normalizeJsonText(item.plugins_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
       developerPrompt: String(item.developer_prompt ?? ""),
@@ -1146,6 +1154,7 @@ export class SqliteChatHistoryStore {
             c.goal_text,
             c.plan_state_json,
             c.skills_json,
+            c.plugins_json,
             c.disabled_tools_json,
             c.persona_id,
             c.developer_prompt,
@@ -1203,6 +1212,7 @@ export class SqliteChatHistoryStore {
       goal: normalizeGoalText(item.goal_text),
       planState: normalizePlanState(normalizeJsonText(item.plan_state_json, null)),
       skills: normalizeSkillNames(normalizeJsonText(item.skills_json, [])),
+      plugins: normalizePluginNames(normalizeJsonText(item.plugins_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(item.disabled_tools_json, [])),
       personaId: String(item.persona_id ?? "").trim(),
       developerPrompt: String(item.developer_prompt ?? ""),
@@ -1236,6 +1246,7 @@ export class SqliteChatHistoryStore {
             goal_text,
             plan_state_json,
             skills_json,
+            plugins_json,
             disabled_tools_json,
             persona_id,
             developer_prompt,
@@ -1303,6 +1314,7 @@ export class SqliteChatHistoryStore {
       goal: normalizeGoalText(conversation.goal_text),
       planState: normalizePlanState(normalizeJsonText(conversation.plan_state_json, null)),
       skills: normalizeSkillNames(normalizeJsonText(conversation.skills_json, [])),
+      plugins: normalizePluginNames(normalizeJsonText(conversation.plugins_json, [])),
       disabledTools: normalizeToolNames(normalizeJsonText(conversation.disabled_tools_json, [])),
       personaId: String(conversation.persona_id ?? "").trim(),
       developerPrompt: String(conversation.developer_prompt ?? ""),
@@ -1657,6 +1669,7 @@ export class SqliteChatHistoryStore {
         goal_text,
         plan_state_json,
         skills_json,
+        plugins_json,
         disabled_tools_json,
         workplace_locked,
         created_at,
@@ -1684,6 +1697,9 @@ export class SqliteChatHistoryStore {
       : String(existing?.plan_state_json ?? "").trim();
     const skills = normalizeSkillNames(
       payload.skills ?? normalizeJsonText(existing?.skills_json, [])
+    );
+    const plugins = normalizePluginNames(
+      payload.plugins ?? normalizeJsonText(existing?.plugins_json, [])
     );
     const disabledTools = normalizeToolNames(
       payload.disabledTools ?? normalizeJsonText(existing?.disabled_tools_json, [])
@@ -1754,6 +1770,7 @@ export class SqliteChatHistoryStore {
             goal_text = ?,
             plan_state_json = ?,
             skills_json = ?,
+            plugins_json = ?,
             disabled_tools_json = ?,
             persona_id = ?,
             developer_prompt = ?,
@@ -1773,6 +1790,7 @@ export class SqliteChatHistoryStore {
           goal,
           planStateJson,
           JSON.stringify(skills),
+          JSON.stringify(plugins),
           JSON.stringify(disabledTools),
           personaId,
           developerPrompt,
@@ -1797,6 +1815,7 @@ export class SqliteChatHistoryStore {
               goal_text,
               plan_state_json,
               skills_json,
+              plugins_json,
               disabled_tools_json,
               persona_id,
               developer_prompt,
@@ -1805,7 +1824,7 @@ export class SqliteChatHistoryStore {
               created_at,
               updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
           `
         ).run(
           conversationId,
@@ -1820,6 +1839,7 @@ export class SqliteChatHistoryStore {
           goal,
           planStateJson,
           JSON.stringify(skills),
+          JSON.stringify(plugins),
           JSON.stringify(disabledTools),
           personaId,
           developerPrompt,
@@ -1886,6 +1906,7 @@ export class SqliteChatHistoryStore {
         ? payload.planState
         : existing.planState,
       skills: payload.skills ?? existing.skills,
+      plugins: payload.plugins ?? existing.plugins,
       disabledTools: payload.disabledTools ?? existing.disabledTools,
       personaId: payload.personaId ?? existing.personaId,
       developerPrompt: payload.developerPrompt ?? existing.developerPrompt,
@@ -2330,6 +2351,16 @@ export class SqliteChatHistoryStore {
     return this.getConversation(conversationId);
   }
 
+  ensureConversationPluginsColumn() {
+    const db = this.ensureDb();
+    const columns = db.prepare("PRAGMA table_info(conversations)").all();
+    const columnNames = new Set(columns.map((item) => String(item.name)));
+
+    if (!columnNames.has("plugins_json")) {
+      db.exec("ALTER TABLE conversations ADD COLUMN plugins_json TEXT NOT NULL DEFAULT '[]'");
+    }
+  }
+
   updateConversationGoal(conversationId, goal) {
     const db = this.ensureDb();
     const normalizedGoal = normalizeGoalText(goal);
@@ -2413,6 +2444,35 @@ export class SqliteChatHistoryStore {
         WHERE id = ?
       `
     ).run(JSON.stringify(normalizedSkills), conversationId);
+
+    return this.getConversation(conversationId);
+  }
+
+  updateConversationPlugins(conversationId, plugins) {
+    const db = this.ensureDb();
+    const normalizedPlugins = normalizePluginNames(plugins);
+
+    const existing = db
+      .prepare(
+        `
+          SELECT id
+          FROM conversations
+          WHERE id = ?
+        `
+      )
+      .get(conversationId);
+
+    if (!existing) {
+      return null;
+    }
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET plugins_json = ?
+        WHERE id = ?
+      `
+    ).run(JSON.stringify(normalizedPlugins), conversationId);
 
     return this.getConversation(conversationId);
   }

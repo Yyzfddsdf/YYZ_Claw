@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Outline Novel">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- Clipboard/outline board -->
+  <rect x="68" y="50" width="120" height="156" rx="12" fill="#EDE9FE" opacity="0.95"/>
+  <rect x="76" y="58" width="104" height="140" rx="6" fill="#F5F3FF"/>
+  <!-- Clip top -->
+  <rect x="108" y="44" width="40" height="16" rx="6" fill="#C4B5FD"/>
+  <!-- Outline lines -->
+  <rect x="86" y="74" width="84" height="4" rx="2" fill="#7C3AED" opacity="0.3"/>
+  <rect x="86" y="86" width="72" height="4" rx="2" fill="#7C3AED" opacity="0.3"/>
+  <rect x="86" y="98" width="78" height="4" rx="2" fill="#7C3AED" opacity="0.3"/>
+  <rect x="86" y="110" width="64" height="4" rx="2" fill="#7C3AED" opacity="0.3"/>
+  <!-- Section markers (bullets) -->
+  <circle cx="96" cy="140" r="5" fill="#8B5CF6" opacity="0.5"/>
+  <rect x="108" y="137" width="60" height="4" rx="2" fill="#8B5CF6" opacity="0.6"/>
+  <circle cx="96" cy="156" r="5" fill="#8B5CF6" opacity="0.5"/>
+  <rect x="108" y="153" width="52" height="4" rx="2" fill="#8B5CF6" opacity="0.6"/>
+  <circle cx="96" cy="172" r="5" fill="#8B5CF6" opacity="0.5"/>
+  <rect x="108" y="169" width="56" height="4" rx="2" fill="#8B5CF6" opacity="0.6"/>
+  <!-- Checkmark -->
+  <path d="M152 168 L158 176 L172 158" stroke="#34D399" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

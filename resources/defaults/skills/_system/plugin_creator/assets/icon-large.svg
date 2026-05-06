@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Plugin Creator">
+  <rect width="256" height="256" rx="42" fill="#2563eb"/>
+  <path d="M100 50h56v40h36v56h-36v60h-56v-60H64V90h36V50z" fill="#fff"/>
+  <path d="M116 66v40H80v24h36v60h24v-60h36v-24h-36V66h-24z" fill="#93c5fd"/>
+</svg>

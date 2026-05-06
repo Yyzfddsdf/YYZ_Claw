@@ -10,6 +10,7 @@ import { createMemoryRoutes } from "./memoryRoutes.js";
 import { createMcpRoutes } from "./mcpRoutes.js";
 import { createPetsRoutes } from "./petsRoutes.js";
 import { createPersonasRoutes } from "./personasRoutes.js";
+import { createPluginsRoutes } from "./pluginsRoutes.js";
 import { createSkillsRoutes } from "./skillsRoutes.js";
 import { createSttRoutes } from "./sttRoutes.js";
 import { createTtsRoutes } from "./ttsRoutes.js";
@@ -24,6 +25,7 @@ export function createApiRouter(services) {
   router.use(createMemoryRoutes(services));
   router.use(createPetsRoutes(services));
   router.use(createPersonasRoutes(services));
+  router.use(createPluginsRoutes(services));
   router.use(createSkillsRoutes(services));
   router.use(createSttRoutes(services));
   router.use(createTtsRoutes(services));

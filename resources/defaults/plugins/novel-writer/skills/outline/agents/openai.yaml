@@ -1,0 +1,9 @@
+interface:
+  display_name: "Outline Novel"
+  short_description: "Brainstorm and structure novel outlines."
+  default_prompt: "Use plugin:novel-writer/outline to develop a novel premise, outline, and character plan."
+  icon_small: "assets/icon-small.svg"
+  icon_large: "assets/icon-large.svg"
+  brand_color: "#8B5CF6"
+policy:
+  allow_implicit_invocation: true

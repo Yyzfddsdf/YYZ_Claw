@@ -15,6 +15,7 @@ import { configSchema } from "../schemas/configSchema.js";
 import {
   conversationModelProfileSchema,
   conversationPersonaSchema,
+  conversationPluginsSchema,
   conversationSkillsSchema,
   conversationThinkingModeSchema,
   conversationToolsSchema,
@@ -935,7 +936,9 @@ export function createChatController({
   memorySummaryService,
   skillValidator,
   skillPromptBuilder,
+  pluginPromptBuilder,
   skillCatalog,
+  pluginCatalog,
   personaStore,
   conversationAgentRuntimeService,
   conversationEventBroadcaster,
@@ -946,6 +949,52 @@ export function createChatController({
   automationSchedulerService,
   wakeDispatcher
 }) {
+  function resolveSelectionOwnerConversationId(history, conversationId) {
+    return String(history?.source ?? "").trim().toLowerCase() === "subagent" &&
+      String(history?.parentConversationId ?? "").trim()
+      ? String(history.parentConversationId).trim()
+      : conversationId;
+  }
+
+  function updateConversationSelection({
+    conversationId,
+    body,
+    schema,
+    updateHistory,
+    responseKey,
+    responseOwnerKey
+  }) {
+    if (!conversationId) {
+      throw createValidationError("conversationId is required");
+    }
+
+    const validation = schema.safeParse(body);
+    if (!validation.success) {
+      throw createValidationError(formatZodError(validation.error));
+    }
+
+    const history = historyStore.getConversation(conversationId);
+    if (!history) {
+      const notFoundError = createValidationError("history not found");
+      notFoundError.statusCode = 404;
+      throw notFoundError;
+    }
+
+    const targetConversationId = resolveSelectionOwnerConversationId(history, conversationId);
+    const responseValue = validation.data[responseKey];
+    const updatedTarget = updateHistory(targetConversationId, responseValue);
+    const responseHistory =
+      targetConversationId === conversationId
+        ? updatedTarget
+        : historyStore.getConversation(conversationId) ?? updatedTarget;
+
+    return {
+      history: enrichHistoryDetail(responseHistory, orchestratorStore, historyStore),
+      [responseKey]: responseValue,
+      [responseOwnerKey]: targetConversationId
+    };
+  }
+
   const createForegroundQueuedInsertionFlusher = ({
     conversationId,
     sessionId,
@@ -1342,6 +1391,7 @@ export function createChatController({
         personaId: history.personaId,
         developerPrompt: history.developerPrompt,
         skills: history.skills,
+        plugins: history.plugins,
         disabledTools: history.disabledTools,
         model: history.model,
         modelProfileId: history.modelProfileId,
@@ -1492,43 +1542,30 @@ export function createChatController({
 
     updateSkillsById: async (req, res) => {
       const conversationId = String(req.params.conversationId || "").trim();
-
-      if (!conversationId) {
-        throw createValidationError("conversationId is required");
-      }
-
-      const validation = conversationSkillsSchema.safeParse(req.body);
-      if (!validation.success) {
-        throw createValidationError(formatZodError(validation.error));
-      }
-
-      const history = historyStore.getConversation(conversationId);
-      if (!history) {
-        const notFoundError = createValidationError("history not found");
-        notFoundError.statusCode = 404;
-        throw notFoundError;
-      }
-
-      const targetConversationId =
-        String(history?.source ?? "").trim().toLowerCase() === "subagent" &&
-        String(history?.parentConversationId ?? "").trim()
-          ? String(history.parentConversationId).trim()
-          : conversationId;
-
-      const updatedTarget = historyStore.updateConversationSkills(
-        targetConversationId,
-        validation.data.skills
+      res.json(
+        updateConversationSelection({
+          conversationId,
+          body: req.body,
+          schema: conversationSkillsSchema,
+          updateHistory: historyStore.updateConversationSkills.bind(historyStore),
+          responseKey: "skills",
+          responseOwnerKey: "skillOwnerConversationId"
+        })
       );
-      const responseHistory =
-        targetConversationId === conversationId
-          ? updatedTarget
-          : historyStore.getConversation(conversationId) ?? updatedTarget;
+    },
 
-      res.json({
-        history: enrichHistoryDetail(responseHistory, orchestratorStore, historyStore),
-        skills: validation.data.skills,
-        skillOwnerConversationId: targetConversationId
-      });
+    updatePluginsById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+      res.json(
+        updateConversationSelection({
+          conversationId,
+          body: req.body,
+          schema: conversationPluginsSchema,
+          updateHistory: historyStore.updateConversationPlugins.bind(historyStore),
+          responseKey: "plugins",
+          responseOwnerKey: "pluginOwnerConversationId"
+        })
+      );
     },
 
     updateToolsById: async (req, res) => {
@@ -1775,6 +1812,7 @@ export function createChatController({
         approvalMode: existing.approvalMode,
         goal: existing.goal,
         skills: existing.skills,
+        plugins: existing.plugins,
         disabledTools: existing.disabledTools,
         personaId: existing.personaId,
         developerPrompt: existing.developerPrompt,
@@ -1938,6 +1976,7 @@ export function createChatController({
           ? validation.data.planState
           : existing?.planState,
         skills: validation.data.skills,
+        plugins: validation.data.plugins,
         disabledTools: validation.data.disabledTools,
         personaId,
         developerPrompt: existing?.developerPrompt,
@@ -2244,6 +2283,9 @@ export function createChatController({
                 activeSkillNames: Array.isArray(resolvedPendingApproval.executionContext?.activeSkillNames)
                   ? resolvedPendingApproval.executionContext.activeSkillNames
                   : [],
+                activePluginNames: Array.isArray(resolvedPendingApproval.executionContext?.activePluginNames)
+                  ? resolvedPendingApproval.executionContext.activePluginNames
+                  : [],
                 developerPrompt: String(
                   resolvedPendingApproval.executionContext?.developerPrompt ?? ""
                 ).trim(),
@@ -2312,10 +2354,15 @@ export function createChatController({
             normalizePlanState(resumedHistory?.planState),
           memoryStore,
           skillCatalog,
+          pluginCatalog,
           skillValidator,
           skillPromptBuilder,
+          pluginPromptBuilder,
           activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
             ? resolvedRuntime.activeSkillNames
+            : [],
+          activePluginNames: Array.isArray(resolvedRuntime?.activePluginNames)
+            ? resolvedRuntime.activePluginNames
             : [],
           developerPrompt: String(
               resolvedRuntime?.developerPrompt ??
@@ -2381,6 +2428,7 @@ export function createChatController({
           approvalMode: resumedHistory?.approvalMode,
           goal: resumedHistory?.goal,
           skills: resumedHistory?.skills,
+          plugins: resumedHistory?.plugins,
           disabledTools: resumedHistory?.disabledTools,
           personaId: resumedHistory?.personaId,
           developerPrompt: resumedHistory?.developerPrompt,
@@ -2705,6 +2753,9 @@ export function createChatController({
                 isSubagent:
                   String(existingConversation?.source ?? "").trim().toLowerCase() === "subagent",
                 activeSkillNames: persistedSkillNames,
+                activePluginNames: Array.isArray(existingConversation?.plugins)
+                  ? existingConversation.plugins
+                  : [],
                 developerPrompt: "",
                 personaPrompt,
                 definitionPrompt: "",
@@ -2757,6 +2808,7 @@ export function createChatController({
             approvalMode,
             goal: existingConversation?.goal,
             skills: persistedSkillNames,
+            plugins: existingConversation?.plugins,
             disabledTools: existingConversation?.disabledTools,
             personaId,
             developerPrompt,
@@ -2823,6 +2875,7 @@ export function createChatController({
               approvalMode: existingConversation?.approvalMode,
               goal: existingConversation?.goal,
               skills: existingConversation?.skills,
+              plugins: existingConversation?.plugins,
               disabledTools: existingConversation?.disabledTools,
               personaId: existingConversation?.personaId,
               developerPrompt: existingConversation?.developerPrompt,
@@ -2896,12 +2949,16 @@ export function createChatController({
           agentsPromptStore,
           memorySummaryStore,
           skillPromptBuilder,
+          pluginPromptBuilder,
           workspacePath: workplacePath,
           memorySummaryPrompt: pinnedMemorySummaryPrompt,
           developerPrompt: resolvedRuntime?.developerPrompt,
           personaPrompt: resolvedRuntime?.personaPrompt,
           activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
             ? resolvedRuntime.activeSkillNames
+            : [],
+          activePluginNames: Array.isArray(resolvedRuntime?.activePluginNames)
+            ? resolvedRuntime.activePluginNames
             : [],
           runtimeConfig: runtimeExecutionConfig,
           definitionPrompt: resolvedRuntime?.definitionPrompt,
@@ -2932,10 +2989,14 @@ export function createChatController({
           planState: normalizePlanState(existingConversation?.planState),
           memoryStore,
           skillCatalog,
+          pluginCatalog,
           skillValidator,
           skillPromptBuilder,
           activeSkillNames: Array.isArray(resolvedRuntime?.activeSkillNames)
             ? resolvedRuntime.activeSkillNames
+            : [],
+          activePluginNames: Array.isArray(resolvedRuntime?.activePluginNames)
+            ? resolvedRuntime.activePluginNames
             : [],
           developerPrompt: String(resolvedRuntime?.developerPrompt ?? "").trim(),
           personaPrompt: String(resolvedRuntime?.personaPrompt ?? "").trim(),
@@ -2995,6 +3056,7 @@ export function createChatController({
           approvalMode: existingConversation?.approvalMode ?? approvalMode,
           goal: existingConversation?.goal,
           skills: existingConversation?.skills,
+          plugins: existingConversation?.plugins,
           disabledTools: existingConversation?.disabledTools,
           personaId: existingConversation?.personaId,
           developerPrompt: existingConversation?.developerPrompt,

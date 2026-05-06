@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Write Novel">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- Open book -->
+  <path d="M68 80 L128 80 L128 186 L68 186 C58 186 50 178 50 168 L50 98 C50 88 58 80 68 80 Z" fill="#EDE9FE" opacity="0.95"/>
+  <path d="M188 80 L128 80 L128 186 L188 186 C198 186 206 178 206 168 L206 98 C206 88 198 80 188 80 Z" fill="#DDD6FE" opacity="0.9"/>
+  <!-- Spine -->
+  <rect x="123" y="80" width="10" height="106" rx="2" fill="#C4B5FD"/>
+  <!-- Text lines left page -->
+  <rect x="62" y="98" width="54" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <rect x="62" y="108" width="48" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <rect x="62" y="118" width="52" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <rect x="62" y="128" width="44" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <rect x="62" y="138" width="50" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <!-- Text lines right page -->
+  <rect x="140" y="98" width="54" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <rect x="140" y="108" width="48" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <rect x="140" y="118" width="52" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <rect x="140" y="128" width="44" height="3" rx="1.5" fill="#7C3AED" opacity="0.4"/>
+  <!-- Pen on book -->
+  <path d="M128 80 L170 60 L178 68 L136 90 Z" fill="#FDE68A" opacity="0.9"/>
+  <!-- Ink line -->
+  <line x1="136" y1="90" x2="140" y2="86" stroke="#7C3AED" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+</svg>

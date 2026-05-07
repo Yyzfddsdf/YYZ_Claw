@@ -15,6 +15,14 @@ function buildWorkspaceQuery(params = {}) {
   if (searchQuery) {
     query.set("query", searchQuery);
   }
+  const branch = String(params.branch ?? "").trim();
+  if (branch) {
+    query.set("branch", branch);
+  }
+  const limit = Number(params.limit ?? 0);
+  if (Number.isFinite(limit) && limit > 0) {
+    query.set("limit", String(Math.floor(limit)));
+  }
   const suffix = query.toString();
   return suffix ? `?${suffix}` : "";
 }
@@ -56,6 +64,10 @@ export function fetchWorkspaceGitState(root = "") {
 
 export function fetchWorkspaceGitDiff(path, root = "") {
   return requestJson(`/workspace/git/diff${buildWorkspaceQuery({ root, path })}`);
+}
+
+export function fetchWorkspaceGitBranchHistory(root = "", branch = "", limit = 6) {
+  return requestJson(`/workspace/git/branch-history${buildWorkspaceQuery({ root, branch, limit })}`);
 }
 
 export function initWorkspaceGit(root = "") {

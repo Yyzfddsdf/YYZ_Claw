@@ -15,6 +15,7 @@ export function createWorkspaceRoutes(services) {
   router.put("/workspace/files", asyncHandler(controller.writeFile));
   router.get("/workspace/git/state", asyncHandler(controller.getGitState));
   router.get("/workspace/git/diff", asyncHandler(controller.getGitDiff));
+  router.get("/workspace/git/branch-history", asyncHandler(controller.getGitBranchHistory));
   router.post("/workspace/git/init", asyncHandler(controller.initGit));
   router.post("/workspace/git/stage", asyncHandler(controller.stageGitFiles));
   router.post("/workspace/git/commit", asyncHandler(controller.commitGitChanges));

@@ -1,89 +1,159 @@
+import { useState } from "react";
+
 import { WorkspaceIcon, WorkspaceIconButton } from "./workspaceIcons";
 
-function renderBranchBadges(group) {
-  const badges = [];
-  if (group.local) {
-    badges.push(
-      <span key="local" className="workspace-git-chip is-local">
-        local
-      </span>
-    );
+function getBranchLeadMeta(branch, kind) {
+  const ahead = Number(branch?.ahead ?? 0) || 0;
+  const behind = Number(branch?.behind ?? 0) || 0;
+  if (ahead > behind && ahead > 0) {
+    return kind === "local"
+      ? { label: `本地最新 ↑${ahead}`, tone: "local" }
+      : { label: `远程最新 ↓${ahead}`, tone: "remote" };
   }
-  if (group.remotes.length > 0) {
-    badges.push(
-      <span key="remote" className="workspace-git-chip is-remote">
-        remote
-      </span>
-    );
-  }
-  if (group.local?.upstream) {
-    badges.push(
-      <span key="upstream" className="workspace-git-chip is-upstream" title={group.local.upstream}>
-        {group.local.upstream}
-      </span>
-    );
-  }
-  return badges;
-}
-
-function getBranchLeadMeta(group) {
-  const ahead = Number(group?.ahead ?? 0) || 0;
-  const behind = Number(group?.behind ?? 0) || 0;
-  if (ahead > behind) {
-    return { label: `本地领先 ↑${ahead}`, tone: "local" };
-  }
-  if (behind > ahead) {
-    return { label: `远程领先 ↓${behind}`, tone: "remote" };
+  if (behind > ahead && behind > 0) {
+    return kind === "local"
+      ? { label: `本地最新 ↓${behind}`, tone: "remote" }
+      : { label: `远程最新 ↑${behind}`, tone: "local" };
   }
   return { label: "同步", tone: "sync" };
 }
 
-function renderBranchTimelineEntry({
-  branch,
-  kind,
-  leadMeta = null,
-  tracked = false
+function renderTimelineEntry({
+  commit,
+  isExpanded,
+  onToggle
 }) {
-  const label = kind === "remote" ? branch.ref : branch.name;
-  const subject = branch.subject || "没有提交描述";
-  const commit = branch.commit || "";
-  const title = [
-    label,
-    commit ? `#${commit}` : "",
-    subject
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const refs = Array.isArray(commit?.refs) ? commit.refs : [];
+  const displayChips = [];
+  const seenChipText = new Set();
+
+  for (const ref of refs) {
+    const text = String(ref?.text ?? "").trim();
+    if (!text || seenChipText.has(text)) {
+      continue;
+    }
+    seenChipText.add(text);
+    displayChips.push({
+      text,
+      tone: ref?.tone || "sync"
+    });
+  }
+
+  if (commit?.presenceLabel && !displayChips.some((chip) => chip.text === commit.presenceLabel)) {
+    displayChips.push({
+      text: commit.presenceLabel,
+      tone: commit.presenceLabel === "当前" ? "current" : commit.presenceLabel.includes("远程") ? "remote" : commit.presenceLabel.includes("本地") ? "local" : "upstream"
+    });
+  }
+
+  if (commit?.leadLabel && !displayChips.some((chip) => chip.text === commit.leadLabel)) {
+    displayChips.push({
+      text: commit.leadLabel,
+      tone: commit.leadTone || "sync"
+    });
+  }
+
+  const commitText = commit?.subject || "没有提交描述";
+  const metaText = [
+    commit?.commit ? `#${commit.commit}` : "",
+    commit?.date || "",
+    commit?.fileCount ? `${commit.fileCount} files` : ""
+  ].filter(Boolean).join(" · ");
+  const isCurrent = Boolean(commit?.isCurrentTip);
+  const isRemoteOnly = Boolean(commit?.hasRemoteRef) && !Boolean(commit?.hasLocalRef);
+  const isLocalOnly = Boolean(commit?.hasLocalRef) && !Boolean(commit?.hasRemoteRef);
 
   return (
-    <div
-      key={`${kind}:${label}:${commit}`}
-      className={`workspace-git-branch-entry is-${kind} ${branch.isCurrent ? "is-current" : ""} ${
-        tracked ? "is-tracked" : ""
-      }`}
-      title={title}
+    <section
+      key={commit?.fullCommit || commit?.commit}
+      className={`workspace-git-branch-item ${isCurrent ? "is-current" : ""} ${isExpanded ? "is-expanded" : ""}`}
     >
-      <div className="workspace-git-branch-entry-rail" aria-hidden="true">
-        <span className={`workspace-git-branch-dot is-${kind}`} />
-      </div>
-      <div className="workspace-git-branch-entry-main">
-        <div className="workspace-git-branch-entry-head">
-          <span className="workspace-git-branch-entry-name">{label}</span>
-          <div className="workspace-git-branch-entry-tags">
-            <span className={`workspace-git-chip is-${kind}`}>
-              {kind === "local" ? "local" : "remote"}
+      <button
+        type="button"
+        className={`workspace-git-branch-entry ${isRemoteOnly ? "is-remote" : "is-local"} ${isCurrent ? "is-current" : ""} ${
+          commit?.hasLocalRef || commit?.hasRemoteRef ? "is-tracked" : ""
+        }`}
+        title={[commitText, metaText].filter(Boolean).join(" · ")}
+        aria-expanded={isExpanded}
+        onClick={onToggle}
+      >
+        <div className="workspace-git-branch-entry-rail" aria-hidden="true">
+          <span
+            className={`workspace-git-branch-dot ${
+              isRemoteOnly ? "is-remote" : isLocalOnly ? "is-local" : "is-current"
+            }`}
+          />
+        </div>
+        <div className="workspace-git-branch-entry-main">
+          <div className="workspace-git-branch-entry-head">
+            <span className="workspace-git-branch-entry-name" title={commitText}>
+              {commitText}
             </span>
-            {branch.isCurrent && <span className="workspace-git-chip is-current">当前</span>}
-            {tracked && <span className="workspace-git-chip is-upstream">追踪</span>}
-            {leadMeta && <span className={`workspace-git-chip is-${leadMeta.tone}`}>{leadMeta.label}</span>}
+            <div className="workspace-git-branch-entry-tags">
+              {displayChips.map((chip) => (
+                <span
+                  key={`${commit?.fullCommit || commit?.commit}:${chip.text}`}
+                  className={`workspace-git-chip is-${chip.tone === "tag" ? "sync" : chip.tone}`}
+                >
+                  {chip.text}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="workspace-git-branch-entry-meta">
+            <span className="workspace-git-branch-commit">{commit?.commit ? `#${commit.commit}` : "—"}</span>
+            <span className="workspace-git-branch-subject">{commit?.date || "未知日期"}</span>
+            <span className="workspace-git-branch-counts">
+              +{Number(commit?.insertions ?? 0) || 0} -{Number(commit?.deletions ?? 0) || 0} · {Number(commit?.fileCount ?? 0) || 0} files
+            </span>
           </div>
         </div>
-        <div className="workspace-git-branch-entry-meta">
-          <span className="workspace-git-branch-commit">{commit ? `#${commit}` : "—"}</span>
-          <span className="workspace-git-branch-subject">{subject}</span>
+        <span className={`workspace-git-branch-entry-toggle ${isExpanded ? "is-expanded" : ""}`} aria-hidden="true">
+          <WorkspaceIcon name="chevron" />
+        </span>
+      </button>
+      {isExpanded && (
+        <div className="workspace-git-branch-history">
+          {renderBranchHistoryCommit(commit)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function renderBranchHistoryCommit(commit) {
+  const files = Array.isArray(commit?.files) ? commit.files : [];
+  const visibleFiles = files.slice(0, 4);
+  const hiddenCount = Math.max(files.length - visibleFiles.length, 0);
+
+  return (
+    <article key={commit.fullCommit || commit.commit} className="workspace-git-branch-history-commit">
+      <div className="workspace-git-branch-history-head">
+        <div className="workspace-git-branch-history-title">
+          <span className="workspace-git-branch-history-sha">#{commit.commit || "—"}</span>
+          <span className="workspace-git-branch-history-date">{commit.date || "未知日期"}</span>
+        </div>
+        <div className="workspace-git-branch-history-stats">
+          <span className="workspace-git-branch-history-plus">+{Number(commit.insertions ?? 0) || 0}</span>
+          <span className="workspace-git-branch-history-minus">-{Number(commit.deletions ?? 0) || 0}</span>
+          <span className="workspace-git-branch-history-files">{files.length} files</span>
         </div>
       </div>
-    </div>
+      <div className="workspace-git-branch-history-subject">{commit.subject || "没有提交描述"}</div>
+      {files.length > 0 && (
+        <div className="workspace-git-branch-history-file-list">
+          {visibleFiles.map((file) => (
+            <span key={`${commit.fullCommit || commit.commit}:${file.path}`} className="workspace-git-branch-history-file" title={file.path}>
+              <span className="workspace-git-branch-history-file-path">{file.path}</span>
+              <span className="workspace-git-branch-history-file-stats">
+                +{Number(file.insertions ?? 0) || 0}/-{Number(file.deletions ?? 0) || 0}
+              </span>
+            </span>
+          ))}
+          {hiddenCount > 0 && <span className="workspace-git-branch-history-file-more">+{hiddenCount}</span>}
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -123,7 +193,6 @@ export function WorkspaceGitPanel({
     gitActionBusy,
     selectedGitPath,
     selectedPathSet,
-    branchGroups,
     primaryAction,
     refreshGitState,
     selectGitPath,
@@ -135,6 +204,8 @@ export function WorkspaceGitPanel({
     revertGitPath
   } = gitSession;
 
+  const [expandedTimelineCommits, setExpandedTimelineCommits] = useState([]);
+
   const gitAvailable = Boolean(gitState?.gitAvailable);
   const isRepo = Boolean(gitState?.isRepo);
   const selectedCount = selectedPathSet.size;
@@ -142,6 +213,8 @@ export function WorkspaceGitPanel({
   const selectedFiles = allFiles.filter((entry) => selectedPathSet.has(entry.path));
   const remainingFiles = allFiles.filter((entry) => !selectedPathSet.has(entry.path));
   const remainingCount = remainingFiles.length;
+  const timelineEntries = Array.isArray(gitState?.timeline?.commits) ? gitState.timeline.commits : [];
+  const expandedTimelineSet = new Set(expandedTimelineCommits);
   const currentBranchEntry = Array.isArray(gitState?.localBranches)
     ? gitState.localBranches.find((branch) => branch?.isCurrent)
     : null;
@@ -158,6 +231,22 @@ export function WorkspaceGitPanel({
     : gitLoading
       ? "加载中"
       : branchSummary || "Git 面板";
+  const composerCountLabel = selectedCount > 0
+    ? `${selectedCount} 待提交 · ${remainingCount} 未提交`
+    : `未提交 ${remainingCount}`;
+
+  function toggleTimelineCommit(commitId) {
+    const normalizedCommit = String(commitId ?? "").trim();
+    if (!normalizedCommit) {
+      return;
+    }
+
+    setExpandedTimelineCommits((current) => (
+      current.includes(normalizedCommit)
+        ? current.filter((item) => item !== normalizedCommit)
+        : [...current, normalizedCommit]
+    ));
+  }
 
   return (
     <div className="workspace-git-panel">
@@ -166,9 +255,7 @@ export function WorkspaceGitPanel({
         <div className="workspace-git-composer-topline">
           <div className="workspace-git-composer-status">
             <span>{composerStateLabel}</span>
-            <span>
-              {selectedCount} 待提交 · {remainingCount} 未提交
-            </span>
+            <span>{composerCountLabel}</span>
           </div>
           <WorkspaceIconButton
             icon="refresh"
@@ -242,17 +329,17 @@ export function WorkspaceGitPanel({
           </div>
         ) : allFiles.length > 0 ? (
           <>
-            <section className="workspace-git-file-group is-selected">
-              <div className="workspace-git-file-group-head">
-                <div>
-                  <span>待提交</span>
-                  <small>{selectedFiles.length}</small>
+            {selectedFiles.length > 0 && (
+              <section className="workspace-git-file-group is-selected">
+                <div className="workspace-git-file-group-head">
+                  <div>
+                    <span>待提交</span>
+                    <small>{selectedFiles.length}</small>
+                  </div>
+                  <small>会进入本次 commit</small>
                 </div>
-                <small>会进入本次 commit</small>
-              </div>
-              <div className="workspace-git-file-list">
-                {selectedFiles.length > 0 ? (
-                  selectedFiles.map((entry) => renderGitFileRow({
+                <div className="workspace-git-file-list">
+                  {selectedFiles.map((entry) => renderGitFileRow({
                     entry,
                     selectedForCommit: true,
                     selectedGitPath,
@@ -261,12 +348,10 @@ export function WorkspaceGitPanel({
                     selectGitPath,
                     toggleGitSelection,
                     revertGitPath
-                  }))
-                ) : (
-                  <div className="workspace-git-empty workspace-git-empty-inline">还没有选择要提交的文件。</div>
-                )}
-              </div>
-            </section>
+                  }))}
+                </div>
+              </section>
+            )}
             <section className="workspace-git-file-group is-remaining">
               <div className="workspace-git-file-group-head">
                 <div>
@@ -300,45 +385,22 @@ export function WorkspaceGitPanel({
 
       <div className="workspace-git-branch-section">
         <div className="workspace-git-section-head is-compact">
-          <span>分支</span>
-          <small>{branchGroups.length}</small>
+          <span>图表</span>
+          <small>{timelineEntries.length}</small>
         </div>
         <div className="workspace-git-branch-list">
-          {branchGroups.length === 0 ? (
-            <div className="workspace-git-empty">没有分支信息。</div>
+          {timelineEntries.length === 0 ? (
+            <div className="workspace-git-empty">没有提交时间线。</div>
           ) : (
-            branchGroups.map((group) => (
-              <section key={group.name} className={`workspace-git-branch-card ${group.local?.isCurrent ? "is-current" : ""}`}>
-                <div className="workspace-git-branch-card-head">
-                  <div className="workspace-git-branch-card-title">
-                    <span className="workspace-git-branch-name">{group.name}</span>
-                    {renderBranchBadges(group)}
-                  </div>
-                  <div className="workspace-git-branch-counts">
-                    {group.local ? <span>↑{group.local.ahead ?? 0}</span> : null}
-                    {group.local ? <span>↓{group.local.behind ?? 0}</span> : null}
-                  </div>
-                </div>
-                <div className="workspace-git-branch-timeline">
-                  {group.local
-                    ? renderBranchTimelineEntry({
-                        branch: group.local,
-                        kind: "local",
-                        leadMeta: getBranchLeadMeta(group),
-                        tracked: Boolean(group.local.upstream)
-                      })
-                    : null}
-                  {group.remotes.map((remote) =>
-                    renderBranchTimelineEntry({
-                      branch: remote,
-                      kind: "remote",
-                      leadMeta: group.local?.upstream && remote.ref === group.local.upstream ? getBranchLeadMeta(group) : null,
-                      tracked: Boolean(group.local?.upstream && remote.ref === group.local.upstream)
-                    })
-                  )}
-                </div>
-              </section>
-            ))
+            timelineEntries.map((commit) => {
+              const commitId = commit?.fullCommit || commit?.commit || "";
+              const isExpanded = expandedTimelineSet.has(commitId);
+              return renderTimelineEntry({
+                commit,
+                isExpanded,
+                onToggle: () => toggleTimelineCommit(commitId)
+              });
+            })
           )}
         </div>
       </div>

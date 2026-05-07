@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   commitWorkspaceGitChanges,
+  fetchWorkspaceGitBranchHistory,
   fetchWorkspaceGitDiff,
   fetchWorkspaceGitState,
   initWorkspaceGit,
@@ -166,11 +167,16 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
   const [gitActionBusy, setGitActionBusy] = useState("");
   const [selectedGitPaths, setSelectedGitPaths] = useState([]);
   const [selectedGitPath, setSelectedGitPath] = useState("");
+  const [expandedBranchNames, setExpandedBranchNames] = useState([]);
+  const [branchHistories, setBranchHistories] = useState({});
+  const [branchHistoryLoading, setBranchHistoryLoading] = useState({});
   const gitStateRequestIdRef = useRef(0);
   const gitPreviewRequestIdRef = useRef(0);
   const gitMessageAbortRef = useRef(null);
+  const branchHistoryRequestIdsRef = useRef(new Map());
 
   const branchGroups = useMemo(() => groupGitBranches(gitState), [gitState]);
+  const expandedBranchSet = useMemo(() => new Set(expandedBranchNames), [expandedBranchNames]);
   const primaryAction = useMemo(
     () => derivePrimaryAction(gitState, selectedGitPaths),
     [gitState, selectedGitPaths]
@@ -300,6 +306,13 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     };
   }, []);
 
+  useEffect(() => {
+    setExpandedBranchNames([]);
+    setBranchHistories({});
+    setBranchHistoryLoading({});
+    branchHistoryRequestIdsRef.current = new Map();
+  }, [workspaceRoot]);
+
   function toggleGitSelection(path) {
     const normalizedPath = String(path ?? "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
     if (!normalizedPath) {
@@ -316,6 +329,64 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
 
   function clearGitSelection() {
     setSelectedGitPaths([]);
+  }
+
+  async function loadBranchHistory(branchName) {
+    const normalizedBranch = String(branchName ?? "").trim();
+    if (!normalizedBranch || !enabled) {
+      return null;
+    }
+
+    const requestId = (branchHistoryRequestIdsRef.current.get(normalizedBranch) ?? 0) + 1;
+    branchHistoryRequestIdsRef.current.set(normalizedBranch, requestId);
+    setBranchHistoryLoading((current) => ({
+      ...current,
+      [normalizedBranch]: true
+    }));
+
+    try {
+      const history = await fetchWorkspaceGitBranchHistory(workspaceRoot, normalizedBranch, 6);
+      if (branchHistoryRequestIdsRef.current.get(normalizedBranch) !== requestId) {
+        return history;
+      }
+
+      setBranchHistories((current) => ({
+        ...current,
+        [normalizedBranch]: history
+      }));
+      return history;
+    } catch (error) {
+      if (branchHistoryRequestIdsRef.current.get(normalizedBranch) === requestId) {
+        setGitError(error?.message || "加载分支历史失败");
+      }
+      return null;
+    } finally {
+      if (branchHistoryRequestIdsRef.current.get(normalizedBranch) === requestId) {
+        setBranchHistoryLoading((current) => ({
+          ...current,
+          [normalizedBranch]: false
+        }));
+      }
+    }
+  }
+
+  function toggleBranchExpansion(branchName) {
+    const normalizedBranch = String(branchName ?? "").trim();
+    if (!normalizedBranch) {
+      return;
+    }
+
+    setExpandedBranchNames((current) => {
+      const isExpanded = current.includes(normalizedBranch);
+      const next = isExpanded
+        ? current.filter((item) => item !== normalizedBranch)
+        : [...current, normalizedBranch];
+      return next;
+    });
+
+    if (!expandedBranchSet.has(normalizedBranch) && !branchHistories[normalizedBranch] && !branchHistoryLoading[normalizedBranch]) {
+      void loadBranchHistory(normalizedBranch);
+    }
   }
 
   async function generateCommitMessage(explicitPaths = null) {
@@ -506,12 +577,17 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     selectedGitFiles,
     selectedPathSet,
     branchGroups,
+    expandedBranchNames,
+    expandedBranchSet,
+    branchHistories,
+    branchHistoryLoading,
     primaryAction,
     candidatePaths,
     refreshGitState,
     selectGitPath: setSelectedGitPath,
     toggleGitSelection,
     clearGitSelection,
+    toggleBranchExpansion,
     generateCommitMessage,
     executePrimaryAction,
     initGit,

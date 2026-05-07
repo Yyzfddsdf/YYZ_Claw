@@ -284,6 +284,114 @@ function buildCommitUserPrompt({ rootDir, branch, stagedFiles, diffEntries }) {
   ].join("\n");
 }
 
+function parseNumStatOutput(output = "") {
+  const files = [];
+  let insertions = 0;
+  let deletions = 0;
+
+  for (const line of String(output ?? "").split(/\r?\n/)) {
+    const match = line.match(/^(\-|\d+)\t(\-|\d+)\t(.+)$/);
+    if (!match) {
+      continue;
+    }
+
+    const additions = match[1] === "-" ? 0 : Number(match[1]) || 0;
+    const removals = match[2] === "-" ? 0 : Number(match[2]) || 0;
+    const filePath = normalizeText(match[3]);
+    if (!filePath) {
+      continue;
+    }
+
+    insertions += additions;
+    deletions += removals;
+    files.push({
+      path: filePath,
+      insertions: additions,
+      deletions: removals
+    });
+  }
+
+  return {
+    insertions,
+    deletions,
+    files
+  };
+}
+
+function parseLogDecorations(decorations = "", currentBranch = "") {
+  const refs = [];
+  const seen = new Set();
+  let headBranch = "";
+
+  for (const rawToken of String(decorations ?? "").split(",")) {
+    const token = normalizeText(rawToken);
+    if (!token || token === "HEAD") {
+      continue;
+    }
+
+    let text = token;
+    let tone = token.includes("/") ? "remote" : "local";
+
+    if (token.startsWith("HEAD -> ")) {
+      text = normalizeText(token.replace(/^HEAD -> /, ""));
+      tone = "current";
+      headBranch = text;
+    } else if (token.startsWith("origin/HEAD -> ")) {
+      continue;
+    } else if (token.startsWith("tag: ")) {
+      text = normalizeText(token.replace(/^tag:\s*/, ""));
+      tone = "tag";
+    } else if (token.includes(" -> ")) {
+      const rightSide = normalizeText(token.slice(token.indexOf("->") + 2));
+      if (rightSide.endsWith("/HEAD") || rightSide === "HEAD") {
+        continue;
+      }
+      text = rightSide || token;
+      tone = text.includes("/") ? "remote" : "local";
+    }
+
+    if (!text) {
+      continue;
+    }
+
+    const key = text;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    refs.push({ text, tone });
+  }
+
+  return {
+    refs,
+    headBranch: headBranch || normalizeText(currentBranch)
+  };
+}
+
+function buildLeadMeta(ahead = 0, behind = 0) {
+  const normalizedAhead = Number(ahead) || 0;
+  const normalizedBehind = Number(behind) || 0;
+
+  if (normalizedAhead > normalizedBehind && normalizedAhead > 0) {
+    return {
+      label: `本地领先 ↑${normalizedAhead}`,
+      tone: "local"
+    };
+  }
+
+  if (normalizedBehind > normalizedAhead && normalizedBehind > 0) {
+    return {
+      label: `远程领先 ↓${normalizedBehind}`,
+      tone: "remote"
+    };
+  }
+
+  return {
+    label: "同步",
+    tone: "sync"
+  };
+}
+
 async function readTextFilePreview(filePath, maxBytes = DEFAULT_MAX_PREVIEW_BYTES) {
   const stat = await fs.stat(filePath);
   if (!stat.isFile()) {
@@ -552,11 +660,11 @@ export class WorkspaceGitService {
 
         const [ref = "", commit = "", ...subjectParts] = line.split("\t");
         const normalizedRef = normalizeText(ref);
-        if (!normalizedRef || normalizedRef.endsWith("/HEAD")) {
+        const slashIndex = normalizedRef.indexOf("/");
+        if (!normalizedRef || normalizedRef.endsWith("/HEAD") || slashIndex < 0) {
           continue;
         }
 
-        const slashIndex = normalizedRef.indexOf("/");
         remoteBranches.push({
           ref: normalizedRef,
           remote: slashIndex >= 0 ? normalizedRef.slice(0, slashIndex) : "",
@@ -598,6 +706,214 @@ export class WorkspaceGitService {
     };
   }
 
+  async readBranchHistory(rootDir, branchName, limit = 6) {
+    const available = await this.isGitAvailable();
+    if (!available) {
+      const error = new Error("git 不可用");
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const isRepo = await this.isRepository(rootDir);
+    if (!isRepo) {
+      const error = new Error("当前目录不是 Git 仓库");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const normalizedBranch = normalizeText(branchName);
+    if (!normalizedBranch) {
+      const error = new Error("缺少分支名称");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const commitLimit = Math.min(Math.max(Number(limit) || 6, 1), 20);
+    const logResult = await runCommand(
+      "git",
+      [
+        "log",
+        `--max-count=${commitLimit}`,
+        "--date=short",
+        "--pretty=format:%H%x09%h%x09%ad%x09%s",
+        normalizedBranch
+      ],
+      { cwd: rootDir, maxBuffer: 30 * 1024 * 1024 }
+    );
+
+    if (logResult.error) {
+      const stderrText = normalizeText(logResult.stderr);
+      if (/does not have any commits yet|unknown revision|bad revision/i.test(stderrText)) {
+        return { commits: [] };
+      }
+      const error = new Error(logResult.stderr || logResult.error.message || "git log failed");
+      error.statusCode = 500;
+      throw error;
+    }
+
+    const commits = [];
+    for (const line of String(logResult.stdout ?? "").split(/\r?\n/)) {
+      if (!line) {
+        continue;
+      }
+
+      const [fullCommit = "", commit = "", date = "", ...subjectParts] = line.split("\t");
+      const normalizedCommit = normalizeText(commit);
+      const normalizedFullCommit = normalizeText(fullCommit);
+      if (!normalizedCommit || !normalizedFullCommit) {
+        continue;
+      }
+
+      const numStatResult = await runCommand(
+        "git",
+        [
+          "diff-tree",
+          "--no-commit-id",
+          "--root",
+          "--numstat",
+          "--no-renames",
+          "-r",
+          normalizedFullCommit
+        ],
+        { cwd: rootDir, maxBuffer: 30 * 1024 * 1024 }
+      );
+
+      if (numStatResult.error) {
+        const error = new Error(numStatResult.stderr || numStatResult.error.message || "git diff-tree failed");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const stats = parseNumStatOutput(numStatResult.stdout);
+      commits.push({
+        commit: normalizedCommit,
+        fullCommit: normalizedFullCommit,
+        date: normalizeText(date),
+        subject: normalizeText(subjectParts.join("\t")),
+        insertions: stats.insertions,
+        deletions: stats.deletions,
+        fileCount: stats.files.length,
+        files: stats.files
+      });
+    }
+
+    return {
+      branch: normalizedBranch,
+      commits
+    };
+  }
+
+  async readTimeline(rootDir, options = {}) {
+    const available = await this.isGitAvailable();
+    if (!available) {
+      const error = new Error("git 不可用");
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const isRepo = await this.isRepository(rootDir);
+    if (!isRepo) {
+      const error = new Error("当前目录不是 Git 仓库");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const commitLimit = Math.min(Math.max(Number(options.limit) || 14, 1), 30);
+    const currentBranch = normalizeText(options.currentBranch);
+    const leadMeta = buildLeadMeta(options.ahead, options.behind);
+
+    const logResult = await runCommand(
+      "git",
+      [
+        "log",
+        "--all",
+        `--max-count=${commitLimit}`,
+        "--date=short",
+        "--decorate=short",
+        "--pretty=format:%H%x09%h%x09%ad%x09%s%x09%D"
+      ],
+      { cwd: rootDir, maxBuffer: 30 * 1024 * 1024 }
+    );
+
+    if (logResult.error) {
+      const error = new Error(logResult.stderr || logResult.error.message || "git log failed");
+      error.statusCode = 500;
+      throw error;
+    }
+
+    const commits = [];
+    for (const line of String(logResult.stdout ?? "").split(/\r?\n/)) {
+      if (!line) {
+        continue;
+      }
+
+      const [fullCommit = "", commit = "", date = "", ...rest] = line.split("\t");
+      const normalizedCommit = normalizeText(commit);
+      const normalizedFullCommit = normalizeText(fullCommit);
+      if (!normalizedCommit || !normalizedFullCommit) {
+        continue;
+      }
+
+      const [subject = "", decorations = ""] = rest;
+      const parsedDecorations = parseLogDecorations(decorations, currentBranch);
+      const numStatResult = await runCommand(
+        "git",
+        [
+          "diff-tree",
+          "--no-commit-id",
+          "--root",
+          "--numstat",
+          "--no-renames",
+          "-r",
+          normalizedFullCommit
+        ],
+        { cwd: rootDir, maxBuffer: 30 * 1024 * 1024 }
+      );
+
+      if (numStatResult.error) {
+        const error = new Error(numStatResult.stderr || numStatResult.error.message || "git diff-tree failed");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const stats = parseNumStatOutput(numStatResult.stdout);
+      const hasLocalRef = parsedDecorations.refs.some((item) => item.tone === "local" || item.tone === "current");
+      const hasRemoteRef = parsedDecorations.refs.some((item) => item.tone === "remote");
+      const isCurrentTip = parsedDecorations.headBranch === currentBranch && Boolean(currentBranch);
+
+      commits.push({
+        commit: normalizedCommit,
+        fullCommit: normalizedFullCommit,
+        date: normalizeText(date),
+        subject,
+        refs: parsedDecorations.refs,
+        headBranch: parsedDecorations.headBranch,
+        isCurrentTip,
+        hasLocalRef,
+        hasRemoteRef,
+        presenceLabel: isCurrentTip
+          ? "当前"
+          : hasRemoteRef && !hasLocalRef
+            ? "远程最新"
+            : hasLocalRef && !hasRemoteRef
+              ? "本地最新"
+              : hasLocalRef && hasRemoteRef
+                ? "追踪"
+                : "",
+        leadLabel: isCurrentTip ? leadMeta.label : "",
+        leadTone: isCurrentTip ? leadMeta.tone : "",
+        insertions: stats.insertions,
+        deletions: stats.deletions,
+        fileCount: stats.files.length,
+        files: stats.files
+      });
+    }
+
+    return {
+      commits
+    };
+  }
+
   async readState(rootDir) {
     const status = await this.readStatusState(rootDir);
     const branches = status.isRepo ? await this.readBranchState(rootDir) : {
@@ -605,6 +921,16 @@ export class WorkspaceGitService {
       remoteBranches: []
     };
     const currentBranch = normalizeText(status.currentBranch);
+    const timeline = status.isRepo
+      ? await this.readTimeline(rootDir, {
+          currentBranch,
+          ahead: status.ahead,
+          behind: status.behind,
+          limit: 14
+        })
+      : {
+          commits: []
+        };
 
     return {
       ...status,
@@ -613,7 +939,8 @@ export class WorkspaceGitService {
         isCurrent: branch.name === currentBranch
       })),
       remoteBranches: branches.remoteBranches,
-      currentBranch
+      currentBranch,
+      timeline
     };
   }
 

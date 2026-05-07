@@ -13,6 +13,9 @@ const ICONS = {
     <circle key="mid" cx="7" cy="13" r="1.5" />,
     <circle key="bottom" cx="17" cy="19" r="1.5" />
   ],
+  chevron: [
+    <path key="a" d="M7 10l5 5 5-5" />
+  ],
   close: [
     <path key="a" d="M6 6l12 12" />,
     <path key="b" d="M18 6L6 18" />

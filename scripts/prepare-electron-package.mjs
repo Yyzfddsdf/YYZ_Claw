@@ -7,6 +7,28 @@ import esbuild from "esbuild";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const backendSourceRoot = path.join(projectRoot, "backend", "src");
 const backendDistRoot = path.join(projectRoot, "backend-dist", "src");
+const backendDistContainer = path.join(projectRoot, "backend-dist");
+
+async function removeDirectoryWithRetry(targetPath, maxAttempts = 4) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await fs.rm(targetPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["ENOTEMPTY", "EPERM", "EBUSY"].includes(String(error?.code ?? "")) || attempt === maxAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+}
 
 async function pathExists(targetPath) {
   try {
@@ -50,7 +72,7 @@ async function copyPackageJson() {
 }
 
 async function prepareBackendDist() {
-  await fs.rm(path.join(projectRoot, "backend-dist"), { recursive: true, force: true });
+  await removeDirectoryWithRetry(backendDistContainer);
   await fs.mkdir(backendDistRoot, { recursive: true });
 
   const files = await listFiles(backendSourceRoot);

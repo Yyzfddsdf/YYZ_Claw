@@ -9,6 +9,7 @@ const DEFAULT_PORT = Number(process.env.PORT || 3000);
 const SERVER_URL = process.env.YYZ_CLAW_SERVER_URL || `http://127.0.0.1:${DEFAULT_PORT}`;
 const PRELOAD_FILE = path.join(__dirname, "preload.cjs");
 const APP_ICON_FILE = path.join(PROJECT_ROOT, "frontend", "src", "assets", "yyz-claw-icon.png");
+const DEV_TRAY_ICON_FILE = path.join(PROJECT_ROOT, "build", "icons", "icon.ico");
 const PET_WINDOW_WIDTH = 260;
 const PET_WINDOW_HEIGHT = 176;
 const DEFAULT_ASSET_DIR_CANDIDATES = [
@@ -106,17 +107,19 @@ function startBackendService() {
     return null;
   }
 
+  const appRoot = app.isPackaged ? app.getAppPath() : PROJECT_ROOT;
+  const serviceCwd = app.isPackaged ? path.dirname(process.execPath) : PROJECT_ROOT;
   const defaultAssetsDir =
     DEFAULT_ASSET_DIR_CANDIDATES.find((candidate) => require("node:fs").existsSync(candidate)) ||
     DEFAULT_ASSET_DIR_CANDIDATES[0];
-  const serviceEntry = path.join(PROJECT_ROOT, "service.js");
+  const serviceEntry = path.join(appRoot, "service.js");
   const logDir = path.join(app.getPath("userData"), "logs");
   fs.mkdirSync(logDir, { recursive: true });
   const stdoutLog = fs.openSync(path.join(logDir, "backend.out.log"), "a");
   const stderrLog = fs.openSync(path.join(logDir, "backend.err.log"), "a");
 
   const child = spawn(process.execPath, [serviceEntry], {
-    cwd: PROJECT_ROOT,
+    cwd: serviceCwd,
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
@@ -206,6 +209,17 @@ function buildPetWindowUrl(payload = {}) {
     nextUrl.searchParams.set("y", String(Math.round(y)));
   }
   return nextUrl.toString();
+}
+
+function resolveTrayIconFile() {
+  const packagedTrayIcon = path.join(process.resourcesPath || "", "icon.ico");
+  if (app.isPackaged && fs.existsSync(packagedTrayIcon)) {
+    return packagedTrayIcon;
+  }
+  if (fs.existsSync(DEV_TRAY_ICON_FILE)) {
+    return DEV_TRAY_ICON_FILE;
+  }
+  return APP_ICON_FILE;
 }
 
 function normalizePetPayload(payload = {}) {
@@ -394,7 +408,8 @@ function openPetConversation(conversationId = "") {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(APP_ICON_FILE);
+  const iconPath = resolveTrayIconFile();
+  const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon);
   tray.setToolTip("YYZ_CLAW");
   tray.setContextMenu(

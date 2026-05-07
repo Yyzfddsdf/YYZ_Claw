@@ -35,13 +35,20 @@
 
 - 已把子智能体定义资产迁到 `.yyz/subagents`，registry 改为读取 `definition.json + prompt.md`；共享 hooks/tools 仍留在源码目录。
 - 已新增子智能体资产管理 API 与前端面板，支持在侧边栏工作区里新建、编辑、删除子智能体类型。
+- 已修复打包版主进程启动后端时的 `spawn ...\\YYZ_CLAW.exe ENOENT`：
+  - 根因是打包态子进程沿用了 `app.asar` 路径作为 `cwd`，Windows 无法把 asar 虚拟路径当真实工作目录。
+  - [electron/main.cjs](/D:/Work/YYZ_Claw/electron/main.cjs) 现已改为：
+    - 脚本入口仍指向 `app.getAppPath()/service.js`
+    - 但打包态 `cwd` 改为 `path.dirname(process.execPath)` 这个真实磁盘目录
+  - 已重新生成 [release/win-unpacked](/D:/Work/YYZ_Claw/release/win-unpacked) 和 [YYZ_CLAW Setup 0.1.0.exe](/D:/Work/YYZ_Claw/release/YYZ_CLAW%20Setup%200.1.0.exe)
+  - 已实测直接启动 `win-unpacked\\YYZ_CLAW.exe` 能正常拉起主窗口，不再弹主进程 JavaScript 错误。
 
 ## 下一步打算做什么
-- 继续验证子智能体运行时是否按预期只保留共享私有工具 `subagent_finish_report`，并确认黑名单工具不会泄露给子智能体。
-- 如有需要，进一步清理子智能体空目录和任何依赖旧 definition 字段的前端/接口展示。
-- 继续验证分支文件点击后是否能稳定切换到 commit 级 diff 预览，并确认工作区 diff 与分支 diff 之间不会互相覆盖。
-- 需要的话再在浏览器里实测 hover 浮层的位置、白底可读性，以及文件/分支两类预览切换时的滚动条和标题显示。
+- 继续验证安装版首次启动时，`.yyz/subagents` 默认资产初始化是否正常。
+- 继续检查 Git 分支时间线与 commit 级 diff 预览的交互细节，尤其是 hover 浮层和详细 diff 切换。
+- 如有需要，补齐 `package.json` 的 `description / author`，去掉打包日志里的提醒。
 
 ## 关键约束 / 风险
 - Git 面板依赖本机 `git` 可用；无仓库时会走初始化，若外部仓库状态变化，branch / ahead / behind 需要重新拉取。
 - 目前 diff 预览按单文件前后对比渲染，后续如果要支持更复杂的多文件联动预览，还需要再拆一层状态。
+- 打包版后端仍通过 `process.execPath + ELECTRON_RUN_AS_NODE` 拉起 `service.js`；后续如果 Electron 大版本改变这条能力，需要优先回头验证打包态启动链。

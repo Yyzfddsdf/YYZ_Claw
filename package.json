@@ -80,6 +80,10 @@
       {
         "from": "resources/defaults",
         "to": "resources/defaults"
+      },
+      {
+        "from": "build/icons/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {

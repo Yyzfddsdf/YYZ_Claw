@@ -23,6 +23,7 @@ export const PLUGINS_DIR = path.join(YYZ_DIR, "plugins");
 export const PLUGIN_SETTINGS_FILE = path.join(CONFIG_DIR, "plugins.json");
 export const SKILLS_DIR = path.join(YYZ_DIR, "skills");
 export const SKILLS_SNAPSHOT_FILE = path.join(SKILLS_DIR, ".skills.snapshot.json");
+export const SUBAGENT_ASSETS_DIR = path.join(YYZ_DIR, "subagents");
 export const IM_ROOT_DIR = path.join(YYZ_DIR, "integrations");
 export const IM_FEISHU_DIR = path.join(IM_ROOT_DIR, "feishu");
 export const FEISHU_CONFIG_FILE = path.join(IM_FEISHU_DIR, "config.json");
@@ -34,7 +35,7 @@ export const DEBATE_DB_FILE = path.join(HISTORY_DIR, "ai_debates.sqlite");
 export const MEMORY_DB_FILE = path.join(YYZ_DIR, "memory.sqlite");
 export const TOOLS_DIR = path.join(BACKEND_ROOT, "src", "services", "tools");
 export const BUILTIN_TOOLS_DIR = TOOLS_DIR;
-export const SUBAGENTS_DIR = path.join(BACKEND_ROOT, "src", "subagents");
+export const SUBAGENT_RUNTIME_DIR = path.join(BACKEND_ROOT, "src", "subagents");
 export const HOOKS_DIR = path.join(BACKEND_ROOT, "src", "services", "hooks", "definitions");
 export const RUNTIME_BLOCKS_DIR = path.join(
   BACKEND_ROOT,

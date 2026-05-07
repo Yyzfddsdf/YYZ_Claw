@@ -1,0 +1,9 @@
+{
+  "agentType": "reviewer",
+  "displayName": "审查子智能体",
+  "description": "擅长发现缺陷、回归和验证缺口。",
+  "promptFile": "prompt.md",
+  "metadata": {
+    "specialty": "review"
+  }
+}

@@ -23,7 +23,8 @@ import {
   PROJECT_ROOT,
   SKILLS_DIR,
   SKILLS_SNAPSHOT_FILE,
-  SUBAGENTS_DIR,
+  SUBAGENT_ASSETS_DIR,
+  SUBAGENT_RUNTIME_DIR,
   TOOLS_DIR
 } from "../config/paths.js";
 import { ensureYyzHome } from "../config/ensureYyzHome.js";
@@ -75,6 +76,7 @@ import { SkillCatalog } from "../services/skills/SkillCatalog.js";
 import { SkillPromptBuilder } from "../services/skills/SkillPromptBuilder.js";
 import { SkillValidator } from "../services/skills/SkillValidator.js";
 import { AgentRuntimeFactory } from "../services/subagents/AgentRuntimeFactory.js";
+import { SubagentAssetStore } from "../services/subagents/SubagentAssetStore.js";
 import { SubagentDefinitionRegistry } from "../services/subagents/SubagentDefinitionRegistry.js";
 import { ConversationEventBroadcaster } from "../services/stream/ConversationEventBroadcaster.js";
 import { SpeechToTextService } from "../services/stt/SpeechToTextService.js";
@@ -153,6 +155,10 @@ export async function createServices() {
   const personaStore = new PersonaStore({
     rootDir: PERSONAS_DIR
   });
+  const subagentAssetStore = new SubagentAssetStore({
+    rootDir: SUBAGENT_ASSETS_DIR
+  });
+  await subagentAssetStore.ensureDir();
 
   const mcpManager = new McpManager({
     configStore: mcpConfigStore
@@ -250,13 +256,14 @@ export async function createServices() {
     store: orchestratorStore
   });
   const subagentDefinitionRegistry = new SubagentDefinitionRegistry({
-    rootDir: SUBAGENTS_DIR
+    rootDir: SUBAGENT_ASSETS_DIR
   });
   await subagentDefinitionRegistry.load();
   const agentRuntimeFactory = new AgentRuntimeFactory({
     baseToolRegistry: toolRegistry,
     baseHookRegistry: hookRegistry,
-    sharedSubagentToolsDir: path.join(SUBAGENTS_DIR, "tools"),
+    sharedSubagentToolsDir: path.join(SUBAGENT_RUNTIME_DIR, "tools"),
+    sharedSubagentHooksDir: path.join(SUBAGENT_RUNTIME_DIR, "hooks"),
     approvalRulesStore,
     longTermMemoryRecallService,
     runtimeBlockRegistry,
@@ -418,6 +425,7 @@ export async function createServices() {
     pluginPromptBuilder,
     skillValidator,
     personaStore,
+    subagentAssetStore,
     mcpManager,
     speechToTextService,
     edgeTextToSpeechService,

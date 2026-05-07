@@ -9,7 +9,7 @@ import {
   resolveTargetPath,
   toSafeRelative,
   walkTextFiles
-} from "../../tools/privateToolShared.js";
+} from "./privateToolShared.js";
 
 const require = createRequire(import.meta.url);
 const TreeSitter = require("@vscode/tree-sitter-wasm/wasm/tree-sitter.js");

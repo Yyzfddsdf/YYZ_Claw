@@ -6,6 +6,7 @@ import { HookRegistry } from "../hooks/HookRegistry.js";
 import { RuntimeBlockRuntime } from "../runtime/RuntimeBlockRuntime.js";
 import { ToolRegistry } from "../tools/ToolRegistry.js";
 import { ScopedToolRegistry } from "../tools/ScopedToolRegistry.js";
+import { normalizeSubagentToolBlacklist } from "./subagentToolPolicy.js";
 
 async function directoryExists(dirPath = "") {
   if (!dirPath) {
@@ -25,6 +26,7 @@ export class AgentRuntimeFactory {
     this.baseToolRegistry = options.baseToolRegistry ?? null;
     this.baseHookRegistry = options.baseHookRegistry ?? null;
     this.sharedSubagentToolsDir = options.sharedSubagentToolsDir ?? "";
+    this.sharedSubagentHooksDir = options.sharedSubagentHooksDir ?? "";
     this.approvalRulesStore = options.approvalRulesStore ?? null;
     this.longTermMemoryRecallService = options.longTermMemoryRecallService ?? null;
     this.runtimeBlockRegistry = options.runtimeBlockRegistry ?? null;
@@ -46,23 +48,16 @@ export class AgentRuntimeFactory {
     if (await directoryExists(this.sharedSubagentToolsDir)) {
       await extraToolRegistry.autoRegisterFromDir(this.sharedSubagentToolsDir);
     }
-    if (await directoryExists(definition?.toolsDir)) {
-      await extraToolRegistry.autoRegisterFromDir(definition.toolsDir);
-    }
 
     const hookRegistry = new HookRegistry();
     for (const hook of this.baseHookRegistry?.listHooks?.() ?? []) {
       const hookName = String(hook?.name ?? "").trim();
-      if (
-        hookName &&
-        Array.isArray(definition?.inheritedBaseHookNames) &&
-        definition.inheritedBaseHookNames.includes(hookName)
-      ) {
+      if (hookName) {
         hookRegistry.register(hook);
       }
     }
-    if (await directoryExists(definition?.hooksDir)) {
-      await hookRegistry.autoRegisterFromDir(definition.hooksDir);
+    if (await directoryExists(this.sharedSubagentHooksDir)) {
+      await hookRegistry.autoRegisterFromDir(this.sharedSubagentHooksDir);
     }
 
     const hookBlockBuilder = new HookBlockBuilder({
@@ -84,7 +79,8 @@ export class AgentRuntimeFactory {
     const toolRegistry = new ScopedToolRegistry({
       baseRegistry: this.baseToolRegistry,
       extraRegistry: extraToolRegistry,
-      inheritedBaseToolNames: definition?.inheritedBaseToolNames ?? []
+      inheritAllBaseTools: true,
+      blockedBaseToolNames: normalizeSubagentToolBlacklist()
     });
 
     const chatAgent = new ChatAgent({

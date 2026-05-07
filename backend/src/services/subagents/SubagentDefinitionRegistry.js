@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
+
+const DEFINITION_FILE_NAME = "definition.json";
 
 async function readOptionalText(filePath) {
   try {
@@ -12,46 +13,6 @@ async function readOptionalText(filePath) {
   } catch {
     return "";
   }
-}
-
-function normalizeToolModule(toolModule) {
-  const candidate = toolModule?.default ?? toolModule?.tool ?? toolModule;
-  const toolName = normalizeText(candidate?.name);
-  return toolName;
-}
-
-async function readToolNamesFromDir(dirPath) {
-  const normalizedDirPath = normalizeText(dirPath);
-  if (!normalizedDirPath) {
-    return [];
-  }
-
-  let entries = [];
-  try {
-    entries = await fs.readdir(normalizedDirPath, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const toolFilePaths = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".tool.js"))
-    .map((entry) => path.join(normalizedDirPath, entry.name))
-    .sort((left, right) => left.localeCompare(right));
-  const toolNames = [];
-
-  for (const toolFilePath of toolFilePaths) {
-    try {
-      const importedModule = await import(pathToFileURL(toolFilePath).href);
-      const toolName = normalizeToolModule(importedModule);
-      if (toolName) {
-        toolNames.push(toolName);
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  return Array.from(new Set(toolNames));
 }
 
 function normalizeDefinition(rawDefinition = {}, baseDir) {
@@ -70,15 +31,6 @@ function normalizeDefinition(rawDefinition = {}, baseDir) {
     displayName: normalizeText(rawDefinition.displayName) || agentType,
     description: normalizeText(rawDefinition.description),
     promptFile: resolveLocalPath(rawDefinition.promptFile || "prompt.md"),
-    toolsDir: resolveLocalPath(rawDefinition.toolsDir || "tools"),
-    hooksDir: resolveLocalPath(rawDefinition.hooksDir || "hooks"),
-    inheritedBaseToolNames: Array.isArray(rawDefinition.inheritedBaseToolNames)
-      ? rawDefinition.inheritedBaseToolNames.map((item) => normalizeText(item)).filter(Boolean)
-      : [],
-    inheritedBaseHookNames: Array.isArray(rawDefinition.inheritedBaseHookNames)
-      ? rawDefinition.inheritedBaseHookNames.map((item) => normalizeText(item)).filter(Boolean)
-      : [],
-    exclusiveToolNames: [],
     metadata:
       rawDefinition.metadata &&
       typeof rawDefinition.metadata === "object" &&
@@ -93,6 +45,28 @@ export class SubagentDefinitionRegistry {
   constructor(options = {}) {
     this.rootDir = options.rootDir;
     this.definitionMap = new Map();
+  }
+
+  async loadDefinitionFromDir(agentDir) {
+    const definitionFile = path.join(agentDir, DEFINITION_FILE_NAME);
+    let rawDefinition = null;
+
+    try {
+      const raw = await fs.readFile(definitionFile, "utf8");
+      rawDefinition = JSON.parse(raw);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    }
+
+    const definition = normalizeDefinition(rawDefinition, agentDir);
+    const prompt = await readOptionalText(definition.promptFile);
+    return {
+      ...definition,
+      prompt
+    };
   }
 
   async load() {
@@ -111,24 +85,12 @@ export class SubagentDefinitionRegistry {
       .sort((left, right) => left.localeCompare(right));
 
     for (const agentDir of agentDirs) {
-      const definitionFile = path.join(agentDir, "definition.js");
-      try {
-        await fs.access(definitionFile);
-      } catch {
+      const definition = await this.loadDefinitionFromDir(agentDir);
+      if (!definition) {
         continue;
       }
 
-      const importedModule = await import(pathToFileURL(definitionFile).href);
-      const rawDefinition = importedModule?.default ?? importedModule?.definition ?? importedModule;
-      const definition = normalizeDefinition(rawDefinition, agentDir);
-      const prompt = await readOptionalText(definition.promptFile);
-      const exclusiveToolNames = await readToolNamesFromDir(definition.toolsDir);
-
-      this.definitionMap.set(definition.agentType, {
-        ...definition,
-        prompt,
-        exclusiveToolNames
-      });
+      this.definitionMap.set(definition.agentType, definition);
     }
 
     return this.list();
@@ -147,9 +109,6 @@ export class SubagentDefinitionRegistry {
       agentType: item.agentType,
       displayName: item.displayName,
       description: item.description,
-      inheritedBaseToolNames: [...item.inheritedBaseToolNames],
-      inheritedBaseHookNames: [...item.inheritedBaseHookNames],
-      exclusiveToolNames: [...item.exclusiveToolNames],
       metadata: { ...item.metadata }
     }));
   }

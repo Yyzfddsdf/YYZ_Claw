@@ -13,6 +13,7 @@ import { createPersonasRoutes } from "./personasRoutes.js";
 import { createPluginsRoutes } from "./pluginsRoutes.js";
 import { createSkillsRoutes } from "./skillsRoutes.js";
 import { createSttRoutes } from "./sttRoutes.js";
+import { createSubagentsRoutes } from "./subagentsRoutes.js";
 import { createTtsRoutes } from "./ttsRoutes.js";
 import { createWorkspaceRoutes } from "./workspaceRoutes.js";
 
@@ -27,6 +28,7 @@ export function createApiRouter(services) {
   router.use(createPersonasRoutes(services));
   router.use(createPluginsRoutes(services));
   router.use(createSkillsRoutes(services));
+  router.use(createSubagentsRoutes(services));
   router.use(createSttRoutes(services));
   router.use(createTtsRoutes(services));
   router.use(createWorkspaceRoutes(services));

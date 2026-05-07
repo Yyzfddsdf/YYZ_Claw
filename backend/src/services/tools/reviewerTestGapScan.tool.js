@@ -8,7 +8,7 @@ import {
   resolveContextWorkingDirectory,
   resolveTargetPath,
   runShellCommand
-} from "../../tools/privateToolShared.js";
+} from "./privateToolShared.js";
 
 const SOURCE_EXTENSIONS = new Set([
   ".js",

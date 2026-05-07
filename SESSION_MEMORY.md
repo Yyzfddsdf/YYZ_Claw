@@ -1,6 +1,17 @@
 # SESSION MEMORY
 
 ## 上一步实际完成了什么
+- 已开始重构子智能体能力装配：
+  - `ScopedToolRegistry` 新增“默认继承全部主工具 + 黑名单剔除”能力。
+  - `AgentRuntimeFactory` 改为子智能体默认继承主工具池全部工具，只从 `backend/src/subagents/tools` 读取共享私有工具，只从 `backend/src/subagents/hooks` 读取共享私有 hook。
+  - 新增全局子智能体工具黑名单配置 [backend/src/services/subagents/subagentToolPolicy.js](/D:/Work/YYZ_Claw/backend/src/services/subagents/subagentToolPolicy.js)。
+  - 子智能体 definition 已去掉 `toolsDir / hooksDir / inheritedBaseToolNames / inheritedBaseHookNames`，definition 只保留角色元数据与 prompt 入口。
+  - 原本挂在 `builder / researcher / reviewer` 下的能力型私有工具已搬回 `backend/src/services/tools`，主智能体和子智能体现在共用同一套实现能力工具。
+  - 子智能体目录下只保留共享私有工具 `subagent_finish_report`。
+  - 原本每个子智能体的私有 hook 已删除，约束已迁回对应 `prompt.md`。
+  - 新增所有子智能体共享的通用 hook：`backend/src/subagents/hooks/subagentSharedDiscipline.hook.js`。
+- `npm run build` 已通过，说明这轮工具/hook 收敛没有打断基础构建。
+- 已确认子智能体的 `goal_submit` 与整组 `plan_*` 不再进入全局黑名单；子智能体现在可以维护自己的独立 `goal/plan` 状态。
 - 已在 `code mode` 内加入很细的左侧活动栏，支持 `文件树 / Git` 两种面板切换，顶部全局 `code / work` 切换按用户要求未改。
 - 已补 Git 面板：commit message 输入框、AI 流式生成、部分文件勾选提交、无选择时默认 push、单文件回退、分支列表、本地/远程分支合并显示、Git 不可用 / 初始化 Git 状态。
 - 已补后端 Git 能力：状态、diff 预览、初始化、stage、commit、push、revert、AI commit 描述流式接口。
@@ -22,7 +33,12 @@
 - 已把 Git 主按钮逻辑修正为：只要存在 diff，且没有勾选文件，就默认 commit 全部 diff；只有工作区干净时才会切成 push。
 - `npm run build` 已通过，后端新模块也已做导入检查。
 
+- 已把子智能体定义资产迁到 `.yyz/subagents`，registry 改为读取 `definition.json + prompt.md`；共享 hooks/tools 仍留在源码目录。
+- 已新增子智能体资产管理 API 与前端面板，支持在侧边栏工作区里新建、编辑、删除子智能体类型。
+
 ## 下一步打算做什么
+- 继续验证子智能体运行时是否按预期只保留共享私有工具 `subagent_finish_report`，并确认黑名单工具不会泄露给子智能体。
+- 如有需要，进一步清理子智能体空目录和任何依赖旧 definition 字段的前端/接口展示。
 - 继续验证分支文件点击后是否能稳定切换到 commit 级 diff 预览，并确认工作区 diff 与分支 diff 之间不会互相覆盖。
 - 需要的话再在浏览器里实测 hover 浮层的位置、白底可读性，以及文件/分支两类预览切换时的滚动条和标题显示。
 

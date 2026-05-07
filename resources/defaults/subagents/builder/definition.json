@@ -1,0 +1,9 @@
+{
+  "agentType": "builder",
+  "displayName": "实现子智能体",
+  "description": "擅长局部实现、修补和验证。",
+  "promptFile": "prompt.md",
+  "metadata": {
+    "specialty": "implementation"
+  }
+}

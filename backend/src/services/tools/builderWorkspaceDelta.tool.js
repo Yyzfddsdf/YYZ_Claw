@@ -6,7 +6,7 @@ import {
   normalizePositiveInteger,
   resolveContextWorkingDirectory,
   runShellCommand
-} from "../../tools/privateToolShared.js";
+} from "./privateToolShared.js";
 
 function normalizeText(value) {
   return String(value ?? "").trim();

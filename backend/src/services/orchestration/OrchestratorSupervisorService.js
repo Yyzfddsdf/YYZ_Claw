@@ -8,11 +8,13 @@ function normalizeText(value) {
 }
 
 function normalizeLineList(value) {
-  return Array.isArray(value)
-    ? value
-        .map((item) => normalizeText(item))
-        .filter(Boolean)
-    : [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => normalizeText(item))
+    .filter(Boolean);
 }
 
 export class OrchestratorSupervisorService {
@@ -152,10 +154,7 @@ export class OrchestratorSupervisorService {
       agentType: normalizeText(definition?.agentType).toLowerCase(),
       displayName: normalizeText(definition?.displayName),
       description: normalizeText(definition?.description),
-      specialty: normalizeText(definition?.metadata?.specialty),
-      inheritedBaseToolNames: normalizeLineList(definition?.inheritedBaseToolNames),
-      exclusiveToolNames: normalizeLineList(definition?.exclusiveToolNames),
-      inheritedBaseHookNames: normalizeLineList(definition?.inheritedBaseHookNames)
+      specialty: normalizeText(definition?.metadata?.specialty)
     }));
   }
 

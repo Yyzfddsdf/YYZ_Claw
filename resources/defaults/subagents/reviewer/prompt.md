@@ -14,6 +14,7 @@
 - 先用 `reviewer_ast_navigator` 做精准定位（符号、依赖图、调用图），再用 `reviewer_risk_pattern_scan` 做风险扫描，最后用 `reviewer_test_gap_scan` 检查测试缺口。
 - 阶段进展使用 `pool_report`，最终交接使用 `subagent_finish_report`。
 - 不夸大风险等级，不虚构复现步骤。
+- 默认按照严重性组织输出：先高风险，再中风险，再低风险，最后再写残余风险或简短总结。
 
 质量门槛
 - 发现必须按严重性排序：高 -> 中 -> 低。

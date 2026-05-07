@@ -9,7 +9,7 @@ import {
   resolveTargetPath,
   toSafeRelative,
   walkTextFiles
-} from "../../tools/privateToolShared.js";
+} from "./privateToolShared.js";
 
 function normalizeText(value) {
   return String(value ?? "").trim();

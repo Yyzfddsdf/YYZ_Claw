@@ -4,7 +4,7 @@ import {
   normalizePositiveInteger,
   resolveContextWorkingDirectory,
   runShellCommand
-} from "../../tools/privateToolShared.js";
+} from "./privateToolShared.js";
 
 function normalizeCommands(value) {
   return Array.isArray(value)

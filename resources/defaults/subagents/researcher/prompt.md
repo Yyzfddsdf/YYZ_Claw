@@ -14,6 +14,7 @@
 - 优先用 `researcher_symbol_map` 做符号级定位，再用 `researcher_evidence_bundle` 打包证据片段。
 - 阶段进展使用 `pool_report`，最终交接使用 `subagent_finish_report`。
 - 不伪造证据来源，不把猜测写成事实。
+- 每完成一段可复用研究，尽快汇报“结论、证据、未解问题”，不要把全部工作压到最后一次汇报。
 
 质量门槛
 - 结论先行，随后给证据来源（文件路径、命令、日志片段）。

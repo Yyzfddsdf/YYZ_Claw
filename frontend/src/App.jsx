@@ -17,6 +17,7 @@ import { DesktopPet } from "./modules/pets/DesktopPet";
 import { PetPanel } from "./modules/pets/PetPanel";
 import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
+import { SubagentPanel } from "./modules/subagents/SubagentPanel";
 import { WorkspaceDock } from "./modules/workspace/WorkspaceDock";
 import { GlobalFeedbackHost } from "./shared/GlobalFeedbackHost";
 import appIconUrl from "./assets/yyz-claw-icon.png";
@@ -607,6 +608,24 @@ function MainApp({
           <button
             type="button"
             role="tab"
+            aria-selected={activeWorkspace === "subagents"}
+            className={`nav-item ${activeWorkspace === "subagents" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("subagents")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+              <path d="M7 7h.01" />
+              <path d="M17 7h.01" />
+              <path d="M7 17h.01" />
+              <path d="M17 17h.01" />
+            </svg>
+            子智能体
+          </button>
+
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeWorkspace === "pets"}
             className={`nav-item ${activeWorkspace === "pets" ? "active" : ""}`}
             onClick={() => setActiveWorkspace("pets")}
@@ -764,6 +783,12 @@ function MainApp({
         {activeWorkspace === "personas" && (
           <section className="panel panel-personas" role="tabpanel" aria-label="persona workspace">
             <PersonaPanel chat={chat} onNavigate={(nav) => setActiveWorkspace(nav)} />
+          </section>
+        )}
+
+        {activeWorkspace === "subagents" && (
+          <section className="panel panel-subagents" role="tabpanel" aria-label="subagent workspace">
+            <SubagentPanel onNavigate={(nav) => setActiveWorkspace(nav)} />
           </section>
         )}
 

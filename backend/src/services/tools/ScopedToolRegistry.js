@@ -27,12 +27,22 @@ export class ScopedToolRegistry {
     this.baseRegistry = options.baseRegistry ?? null;
     this.extraRegistry = options.extraRegistry ?? null;
     this.inheritedBaseToolNames = normalizeNameSet(options.inheritedBaseToolNames);
+    this.blockedBaseToolNames = normalizeNameSet(options.blockedBaseToolNames);
+    this.inheritAllBaseTools = options.inheritAllBaseTools === true;
   }
 
   isBaseToolAllowed(toolName) {
     const normalizedToolName = normalizeToolName(toolName);
     if (!normalizedToolName) {
       return false;
+    }
+
+    if (this.blockedBaseToolNames.has(normalizedToolName)) {
+      return false;
+    }
+
+    if (this.inheritAllBaseTools) {
+      return true;
     }
 
     if (this.inheritedBaseToolNames.size === 0) {

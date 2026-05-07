@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { WorkspaceIcon, WorkspaceIconButton } from "./workspaceIcons";
 
@@ -21,10 +21,15 @@ function getBranchLeadMeta(branch, kind) {
 function renderTimelineEntry({
   commit,
   isExpanded,
-  onToggle
+  onToggle,
+  onSelectBranchFile,
+  selectedBranchGitPreviewKey,
+  isHovered,
+  onHoverStart,
+  onHoverEnd
 }) {
   const refs = Array.isArray(commit?.refs) ? commit.refs : [];
-  const displayChips = [];
+  const refChips = [];
   const seenChipText = new Set();
 
   for (const ref of refs) {
@@ -33,25 +38,25 @@ function renderTimelineEntry({
       continue;
     }
     seenChipText.add(text);
-    displayChips.push({
+    refChips.push({
       text,
       tone: ref?.tone || "sync"
     });
   }
 
-  if (commit?.presenceLabel && !displayChips.some((chip) => chip.text === commit.presenceLabel)) {
-    displayChips.push({
+  const statusChips = [];
+
+  if (commit?.presenceLabel && !refChips.some((chip) => chip.text === commit.presenceLabel)) {
+    statusChips.push({
       text: commit.presenceLabel,
       tone: commit.presenceLabel === "当前" ? "current" : commit.presenceLabel.includes("远程") ? "remote" : commit.presenceLabel.includes("本地") ? "local" : "upstream"
     });
   }
 
-  if (commit?.leadLabel && !displayChips.some((chip) => chip.text === commit.leadLabel)) {
-    displayChips.push({
-      text: commit.leadLabel,
-      tone: commit.leadTone || "sync"
-    });
-  }
+  const displayChips = [
+    ...refChips.slice(0, 2),
+    ...statusChips.slice(0, 1)
+  ];
 
   const commitText = commit?.subject || "没有提交描述";
   const metaText = [
@@ -66,7 +71,11 @@ function renderTimelineEntry({
   return (
     <section
       key={commit?.fullCommit || commit?.commit}
-      className={`workspace-git-branch-item ${isCurrent ? "is-current" : ""} ${isExpanded ? "is-expanded" : ""}`}
+      className={`workspace-git-branch-item ${isCurrent ? "is-current" : ""} ${isExpanded ? "is-expanded" : ""} ${
+        isHovered ? "is-hovered" : ""
+      }`}
+      onMouseEnter={(event) => onHoverStart?.(event, commit)}
+      onMouseLeave={() => onHoverEnd?.()}
     >
       <button
         type="button"
@@ -114,17 +123,18 @@ function renderTimelineEntry({
       </button>
       {isExpanded && (
         <div className="workspace-git-branch-history">
-          {renderBranchHistoryCommit(commit)}
+          {renderBranchHistoryCommit(commit, {
+            onSelectBranchFile,
+            selectedBranchGitPreviewKey
+          })}
         </div>
       )}
     </section>
   );
 }
 
-function renderBranchHistoryCommit(commit) {
+function renderBranchHistoryCommit(commit, { onSelectBranchFile, selectedBranchGitPreviewKey } = {}) {
   const files = Array.isArray(commit?.files) ? commit.files : [];
-  const visibleFiles = files.slice(0, 4);
-  const hiddenCount = Math.max(files.length - visibleFiles.length, 0);
 
   return (
     <article key={commit.fullCommit || commit.commit} className="workspace-git-branch-history-commit">
@@ -142,15 +152,24 @@ function renderBranchHistoryCommit(commit) {
       <div className="workspace-git-branch-history-subject">{commit.subject || "没有提交描述"}</div>
       {files.length > 0 && (
         <div className="workspace-git-branch-history-file-list">
-          {visibleFiles.map((file) => (
-            <span key={`${commit.fullCommit || commit.commit}:${file.path}`} className="workspace-git-branch-history-file" title={file.path}>
-              <span className="workspace-git-branch-history-file-path">{file.path}</span>
-              <span className="workspace-git-branch-history-file-stats">
-                +{Number(file.insertions ?? 0) || 0}/-{Number(file.deletions ?? 0) || 0}
-              </span>
-            </span>
-          ))}
-          {hiddenCount > 0 && <span className="workspace-git-branch-history-file-more">+{hiddenCount}</span>}
+          {files.map((file) => {
+            const fileKey = `${commit.fullCommit || commit.commit}:${file.path}`;
+            const isActive = selectedBranchGitPreviewKey === fileKey;
+            return (
+              <button
+                key={fileKey}
+                type="button"
+                className={`workspace-git-branch-history-file ${isActive ? "is-active" : ""}`}
+                title={file.path}
+                onClick={() => onSelectBranchFile?.(commit, file)}
+              >
+                <span className="workspace-git-branch-history-file-path">{file.path}</span>
+                <span className="workspace-git-branch-history-file-stats">
+                  +{Number(file.insertions ?? 0) || 0}/-{Number(file.deletions ?? 0) || 0}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </article>
@@ -192,10 +211,12 @@ export function WorkspaceGitPanel({
     gitMessageStreaming,
     gitActionBusy,
     selectedGitPath,
+    selectedBranchGitPreviewKey,
     selectedPathSet,
     primaryAction,
     refreshGitState,
     selectGitPath,
+    selectBranchGitFile,
     toggleGitSelection,
     clearGitSelection,
     generateCommitMessage,
@@ -205,6 +226,10 @@ export function WorkspaceGitPanel({
   } = gitSession;
 
   const [expandedTimelineCommits, setExpandedTimelineCommits] = useState([]);
+  const [hoveredTimelinePreview, setHoveredTimelinePreview] = useState(null);
+  const [branchSectionHeight, setBranchSectionHeight] = useState(224);
+  const panelRef = useRef(null);
+  const branchResizeDragRef = useRef(null);
 
   const gitAvailable = Boolean(gitState?.gitAvailable);
   const isRepo = Boolean(gitState?.isRepo);
@@ -235,6 +260,35 @@ export function WorkspaceGitPanel({
     ? `${selectedCount} 待提交 · ${remainingCount} 未提交`
     : `未提交 ${remainingCount}`;
 
+  function clearTimelineHover() {
+    setHoveredTimelinePreview(null);
+  }
+
+  function handleTimelineHoverStart(event, commit) {
+    const normalizedCommit = String(commit?.fullCommit || commit?.commit || "").trim();
+    if (!normalizedCommit) {
+      setHoveredTimelinePreview(null);
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || 1280;
+    const viewportHeight = window.innerHeight || 800;
+    const width = Math.min(440, Math.max(340, Math.round(viewportWidth * 0.32)));
+    const estimatedHeight = 340;
+    const maxLeft = Math.max(12, viewportWidth - width - 12);
+    const maxTop = Math.max(12, viewportHeight - estimatedHeight - 12);
+    const left = Math.min(Math.max(12, Math.round(rect.right + 14)), maxLeft);
+    const top = Math.min(Math.max(12, Math.round(rect.top)), maxTop);
+
+    setHoveredTimelinePreview({
+      commitId: normalizedCommit,
+      top,
+      left,
+      width
+    });
+  }
+
   function toggleTimelineCommit(commitId) {
     const normalizedCommit = String(commitId ?? "").trim();
     if (!normalizedCommit) {
@@ -248,8 +302,46 @@ export function WorkspaceGitPanel({
     ));
   }
 
+  function handleBranchResizePointerDown(event) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const panelNode = panelRef.current;
+    if (!panelNode) {
+      return;
+    }
+
+    event.preventDefault();
+    const panelBounds = panelNode.getBoundingClientRect();
+    const minHeight = 160;
+    const maxHeight = Math.max(260, Math.floor(panelBounds.height * 0.55));
+
+    const handleMove = (moveEvent) => {
+      const nextHeight = Math.max(
+        minHeight,
+        Math.min(maxHeight, Math.round(panelBounds.bottom - moveEvent.clientY))
+      );
+      setBranchSectionHeight(nextHeight);
+    };
+
+    const handleUp = () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      branchResizeDragRef.current = null;
+    };
+
+    branchResizeDragRef.current = {
+      handleMove,
+      handleUp
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
+  }
+
   return (
-    <div className="workspace-git-panel">
+    <div className="workspace-git-panel" ref={panelRef}>
       {gitError && <div className="workspace-git-error">{gitError}</div>}
       <div className="workspace-git-composer">
         <div className="workspace-git-composer-topline">
@@ -383,7 +475,21 @@ export function WorkspaceGitPanel({
         )}
       </div>
 
-      <div className="workspace-git-branch-section">
+      <div
+        className="workspace-git-branch-resizer"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="调整分支区域高度"
+        onPointerDown={handleBranchResizePointerDown}
+      />
+      <div
+        className="workspace-git-branch-section"
+        style={{
+          height: `${branchSectionHeight}px`,
+          minHeight: `${branchSectionHeight}px`,
+          maxHeight: `${branchSectionHeight}px`
+        }}
+      >
         <div className="workspace-git-section-head is-compact">
           <span>图表</span>
           <small>{timelineEntries.length}</small>
@@ -398,12 +504,110 @@ export function WorkspaceGitPanel({
               return renderTimelineEntry({
                 commit,
                 isExpanded,
-                onToggle: () => toggleTimelineCommit(commitId)
+                onToggle: () => toggleTimelineCommit(commitId),
+                onSelectBranchFile: selectBranchGitFile,
+                selectedBranchGitPreviewKey,
+                isHovered: hoveredTimelinePreview?.commitId === commitId,
+                onHoverStart: handleTimelineHoverStart,
+                onHoverEnd: clearTimelineHover
               });
             })
           )}
         </div>
       </div>
+      {hoveredTimelinePreview && (
+        <div
+          className="workspace-git-branch-float-preview"
+          style={{
+            top: `${hoveredTimelinePreview.top}px`,
+            left: `${hoveredTimelinePreview.left}px`,
+            width: `${hoveredTimelinePreview.width}px`
+          }}
+          aria-hidden="true"
+        >
+          {(() => {
+            const hoveredCommit = timelineEntries.find((commit) => {
+              const commitId = commit?.fullCommit || commit?.commit || "";
+              return commitId === hoveredTimelinePreview.commitId;
+            }) ?? null;
+
+            if (!hoveredCommit) {
+              return null;
+            }
+
+            const refs = Array.isArray(hoveredCommit?.refs) ? hoveredCommit.refs : [];
+            const chips = [];
+            const seenTexts = new Set();
+            for (const ref of refs) {
+              const text = String(ref?.text ?? "").trim();
+              if (!text || seenTexts.has(text)) {
+                continue;
+              }
+              seenTexts.add(text);
+              chips.push({ text, tone: ref?.tone || "sync" });
+            }
+
+            if (hoveredCommit?.presenceLabel && !chips.some((chip) => chip.text === hoveredCommit.presenceLabel)) {
+              chips.push({
+                text: hoveredCommit.presenceLabel,
+                tone: hoveredCommit.presenceLabel === "当前" ? "current" : hoveredCommit.presenceLabel.includes("远程") ? "remote" : hoveredCommit.presenceLabel.includes("本地") ? "local" : "upstream"
+              });
+            }
+
+            return (
+              <div className="workspace-git-branch-hovercard">
+                <div className="workspace-git-branch-hovercard-head">
+                  <div className="workspace-git-branch-hovercard-title" title={hoveredCommit.subject || "没有提交描述"}>
+                    {hoveredCommit.subject || "没有提交描述"}
+                  </div>
+                  <div className="workspace-git-branch-hovercard-meta">
+                    <span className="workspace-git-branch-hovercard-time">{hoveredCommit.date || "未知日期"}</span>
+                    <span className="workspace-git-branch-hovercard-sha">#{hoveredCommit.fullCommit || hoveredCommit.commit || "—"}</span>
+                  </div>
+                </div>
+                <div className="workspace-git-branch-hovercard-grid">
+                  <div className="workspace-git-branch-hovercard-field">
+                    <span>本地账号</span>
+                    <strong title={gitState?.gitUserName || ""}>{gitState?.gitUserName || "未配置"}</strong>
+                  </div>
+                  <div className="workspace-git-branch-hovercard-field">
+                    <span>本地邮箱</span>
+                    <strong title={gitState?.gitUserEmail || ""}>{gitState?.gitUserEmail || "未配置"}</strong>
+                  </div>
+                  <div className="workspace-git-branch-hovercard-field">
+                    <span>提交作者</span>
+                    <strong title={[hoveredCommit?.authorName, hoveredCommit?.authorEmail].filter(Boolean).join(" · ")}>
+                      {hoveredCommit?.authorName || hoveredCommit?.authorEmail || "未知"}
+                    </strong>
+                  </div>
+                  <div className="workspace-git-branch-hovercard-field">
+                    <span>提交邮箱</span>
+                    <strong title={hoveredCommit?.authorEmail || ""}>{hoveredCommit?.authorEmail || "未知"}</strong>
+                  </div>
+                  <div className="workspace-git-branch-hovercard-field">
+                    <span>增减行</span>
+                    <strong>+{Number(hoveredCommit?.insertions ?? 0) || 0} / -{Number(hoveredCommit?.deletions ?? 0) || 0}</strong>
+                  </div>
+                  <div className="workspace-git-branch-hovercard-field">
+                    <span>文件数</span>
+                    <strong>{Number(hoveredCommit?.fileCount ?? 0) || 0}</strong>
+                  </div>
+                </div>
+                <div className="workspace-git-branch-hovercard-tags">
+                  {chips.map((chip) => (
+                    <span
+                      key={`hover:${hoveredCommit?.fullCommit || hoveredCommit?.commit}:${chip.text}`}
+                      className={`workspace-git-chip is-${chip.tone === "tag" ? "sync" : chip.tone}`}
+                    >
+                      {chip.text}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 }

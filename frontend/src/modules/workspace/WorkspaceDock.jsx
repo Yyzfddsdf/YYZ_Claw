@@ -378,6 +378,8 @@ export function WorkspaceDock({
     enabled: isOpen && workspacePanelMode === "git"
   });
   const isGitMode = workspacePanelMode === "git";
+  const activeGitPreview = gitSession.branchGitPreview || gitSession.gitPreview;
+  const activeGitPreviewLoading = gitSession.branchGitPreviewLoading || gitSession.gitPreviewLoading;
 
   const drawerTitle = useMemo(() => {
     if (activeFilePath) {
@@ -519,8 +521,34 @@ export function WorkspaceDock({
       fontFamily: "'JetBrains Mono', 'Cascadia Mono', Consolas, monospace",
       fontSize: 13,
       minimap: { enabled: false },
+      scrollbar: {
+        verticalScrollbarSize: 7,
+        horizontalScrollbarSize: 7,
+        useShadows: false,
+        alwaysConsumeMouseWheel: false
+      },
       scrollBeyondLastLine: false,
       smoothScrolling: true
+    });
+    diffEditor.getOriginalEditor().updateOptions({
+      scrollbar: {
+        vertical: "hidden",
+        horizontal: "hidden",
+        useShadows: false,
+        alwaysConsumeMouseWheel: false
+      },
+      minimap: { enabled: false },
+      overviewRulerLanes: 0
+    });
+    diffEditor.getModifiedEditor().updateOptions({
+      scrollbar: {
+        verticalScrollbarSize: 7,
+        horizontalScrollbarSize: 7,
+        useShadows: false,
+        alwaysConsumeMouseWheel: false
+      },
+      minimap: { enabled: false },
+      overviewRulerLanes: 0
     });
     gitDiffEditorRef.current = diffEditor;
 
@@ -536,7 +564,7 @@ export function WorkspaceDock({
       return;
     }
 
-    const preview = gitSession.gitPreview;
+    const preview = activeGitPreview;
     const language = preview?.language || "plaintext";
     const originalModel = monaco.editor.createModel(preview?.beforeContent ?? "", language);
     const modifiedModel = monaco.editor.createModel(preview?.afterContent ?? "", language);
@@ -549,7 +577,7 @@ export function WorkspaceDock({
       originalModel.dispose();
       modifiedModel.dispose();
     };
-  }, [gitSession.gitPreview, workspacePanelMode]);
+  }, [activeGitPreview, workspacePanelMode]);
 
   useEffect(() => {
     window.requestAnimationFrame(() => {
@@ -564,8 +592,8 @@ export function WorkspaceDock({
     terminalHeight,
     embedded,
     workspacePanelMode,
-    gitSession.gitPreview,
-    gitSession.gitPreviewLoading
+    activeGitPreview,
+    activeGitPreviewLoading
   ]);
 
   async function handleToggleDirectory(path) {
@@ -1089,11 +1117,13 @@ export function WorkspaceDock({
                 {isGitMode ? (
                   <div className="workspace-git-toolbar">
                     <div className="workspace-git-toolbar-meta">
-                      <span className="workspace-git-toolbar-path" title={gitSession.gitPreview?.displayPath ?? gitSession.selectedGitPath ?? ""}>
-                        {gitSession.gitPreview?.displayPath || gitSession.selectedGitPath || "选择一个文件查看 diff"}
+                      <span className="workspace-git-toolbar-path" title={activeGitPreview?.displayPath ?? gitSession.selectedGitPath ?? ""}>
+                        {activeGitPreview?.displayPath || gitSession.selectedGitPath || "选择一个文件查看 diff"}
                       </span>
                       <span className="workspace-git-toolbar-state">
-                        {gitSession.gitPreview?.changeKind || (gitSession.gitLoading ? "加载中..." : "Git 预览")}
+                        {gitSession.branchGitPreviewLoading
+                          ? "读取分支 diff..."
+                          : activeGitPreview?.changeKind || (gitSession.gitLoading ? "加载中..." : "Git 预览")}
                       </span>
                     </div>
                     <div className="workspace-git-toolbar-counts">
@@ -1160,20 +1190,15 @@ export function WorkspaceDock({
               <div className="workspace-editor-panel is-active">
                 {isGitMode ? (
                   <div className="workspace-git-preview-shell">
-                    <div className="workspace-git-preview-head">
-                      <div className="workspace-git-preview-title">
-                        <span>{gitSession.gitPreview?.displayPath || gitSession.selectedGitPath || "Git diff"}</span>
-                        <small>{gitSession.gitPreview?.changeKind || "前后对比"}</small>
-                      </div>
-                      <div className="workspace-git-preview-meta">
-                        {gitSession.gitPreviewLoading ? "读取 diff…" : gitSession.gitPreview?.staged ? "staged" : gitSession.gitPreview?.untracked ? "untracked" : ""}
-                      </div>
-                    </div>
                     <div className="workspace-git-preview-editor">
                       <div ref={gitDiffHostRef} className="workspace-git-diff-host" />
-                      {(!gitSession.gitPreview || gitSession.gitPreviewLoading) && (
+                      {(!activeGitPreview || activeGitPreviewLoading) && (
                         <div className="workspace-empty-editor workspace-empty-editor-overlay">
-                          {gitSession.gitPreviewLoading ? "读取 diff…" : "选择一个文件查看 diff。"}
+                          {gitSession.branchGitPreviewLoading
+                            ? "读取分支 diff…"
+                            : gitSession.gitPreviewLoading
+                              ? "读取 diff…"
+                              : "选择一个文件查看 diff。"}
                         </div>
                       )}
                     </div>

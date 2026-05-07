@@ -197,6 +197,23 @@ export function createWorkspaceController(services = {}) {
       });
     },
 
+    async getGitCommitDiff(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
+      const commit = String(req.query.commit ?? "").trim();
+      const targetPath = String(req.query.path ?? "").trim();
+      const preview = await workspaceGitService.readCommitFilePreview(rootDir, commit, targetPath);
+      res.json({
+        ...preview,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
     async getGitBranchHistory(req, res) {
       if (!workspaceGitService) {
         const error = new Error("Git service is not available");

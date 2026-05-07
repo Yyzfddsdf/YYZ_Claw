@@ -318,6 +318,61 @@ function parseNumStatOutput(output = "") {
   };
 }
 
+function parseCommitNameStatusOutput(output = "") {
+  const files = [];
+
+  for (const line of String(output ?? "").split(/\r?\n/)) {
+    if (!line) {
+      continue;
+    }
+
+    const parts = line.split("\t");
+    const statusCode = normalizeText(parts[0]);
+    if (!statusCode) {
+      continue;
+    }
+
+    if (statusCode.startsWith("R") || statusCode.startsWith("C")) {
+      const previousPath = normalizeText(parts[1]);
+      const pathValue = normalizeText(parts[2]);
+      if (!pathValue) {
+        continue;
+      }
+
+      files.push({
+        path: pathValue,
+        previousPath,
+        statusCode,
+        changeKind: statusCode.startsWith("R") ? "renamed" : "copied"
+      });
+      continue;
+    }
+
+    const pathValue = normalizeText(parts[1]);
+    if (!pathValue) {
+      continue;
+    }
+
+    let changeKind = "modified";
+    if (statusCode === "A") {
+      changeKind = "added";
+    } else if (statusCode === "D") {
+      changeKind = "deleted";
+    } else if (statusCode === "M") {
+      changeKind = "modified";
+    }
+
+    files.push({
+      path: pathValue,
+      previousPath: "",
+      statusCode,
+      changeKind
+    });
+  }
+
+  return files;
+}
+
 function parseLogDecorations(decorations = "", currentBranch = "") {
   const refs = [];
   const seen = new Set();
@@ -364,7 +419,7 @@ function parseLogDecorations(decorations = "", currentBranch = "") {
 
   return {
     refs,
-    headBranch: headBranch || normalizeText(currentBranch)
+    headBranch
   };
 }
 
@@ -418,7 +473,7 @@ async function readTextFilePreview(filePath, maxBytes = DEFAULT_MAX_PREVIEW_BYTE
   };
 }
 
-async function readGitBlobPreview(rootDir, relativePath, maxBytes = DEFAULT_MAX_PREVIEW_BYTES) {
+async function readGitBlobPreviewAtRef(rootDir, ref, relativePath, maxBytes = DEFAULT_MAX_PREVIEW_BYTES) {
   const normalizedPath = normalizeRelativeGitPath(relativePath);
   if (!normalizedPath) {
     return {
@@ -430,7 +485,7 @@ async function readGitBlobPreview(rootDir, relativePath, maxBytes = DEFAULT_MAX_
 
   const result = await runCommand(
     "git",
-    ["show", `HEAD:${normalizedPath}`],
+    ["show", `${normalizeText(ref || "HEAD")}:${normalizedPath}`],
     {
       cwd: rootDir,
       maxBuffer: maxBytes + 512 * 1024
@@ -451,6 +506,15 @@ async function readGitBlobPreview(rootDir, relativePath, maxBytes = DEFAULT_MAX_
     size: content.length,
     truncated: content.length > maxBytes
   };
+}
+
+async function readGitBlobPreview(rootDir, relativePath, maxBytes = DEFAULT_MAX_PREVIEW_BYTES) {
+  return readGitBlobPreviewAtRef(rootDir, "HEAD", relativePath, maxBytes);
+}
+
+async function readGitConfigValue(rootDir, key) {
+  const result = await runCommand("git", ["config", "--get", key], { cwd: rootDir });
+  return result.error ? "" : normalizeText(result.stdout);
 }
 
 export class WorkspaceGitService {
@@ -504,7 +568,9 @@ export class WorkspaceGitService {
         dirtyCount: 0,
         untrackedCount: 0,
         canPush: false,
-        headCommit: ""
+        headCommit: "",
+        gitUserName: "",
+        gitUserEmail: ""
       };
     }
 
@@ -528,7 +594,9 @@ export class WorkspaceGitService {
         dirtyCount: 0,
         untrackedCount: 0,
         canPush: false,
-        headCommit: ""
+        headCommit: "",
+        gitUserName: "",
+        gitUserEmail: ""
       };
     }
 
@@ -564,7 +632,9 @@ export class WorkspaceGitService {
       dirtyCount: 0,
       untrackedCount: 0,
       canPush: false,
-      headCommit: ""
+      headCommit: "",
+      gitUserName: "",
+      gitUserEmail: ""
     };
 
     for (const line of String(statusResult.stdout ?? "").split(/\r?\n/)) {
@@ -602,6 +672,8 @@ export class WorkspaceGitService {
       cwd: rootDir
     });
     state.headCommit = headCommitResult.error ? "" : normalizeText(headCommitResult.stdout);
+    state.gitUserName = await readGitConfigValue(rootDir, "user.name");
+    state.gitUserEmail = await readGitConfigValue(rootDir, "user.email");
     state.canPush = Boolean(
       !state.detachedHead && state.ahead > 0 && state.remoteNames.length > 0
     );
@@ -735,7 +807,7 @@ export class WorkspaceGitService {
         "log",
         `--max-count=${commitLimit}`,
         "--date=short",
-        "--pretty=format:%H%x09%h%x09%ad%x09%s",
+        "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%ae%x09%s",
         normalizedBranch
       ],
       { cwd: rootDir, maxBuffer: 30 * 1024 * 1024 }
@@ -757,7 +829,7 @@ export class WorkspaceGitService {
         continue;
       }
 
-      const [fullCommit = "", commit = "", date = "", ...subjectParts] = line.split("\t");
+      const [fullCommit = "", commit = "", date = "", authorName = "", authorEmail = "", ...subjectParts] = line.split("\t");
       const normalizedCommit = normalizeText(commit);
       const normalizedFullCommit = normalizeText(fullCommit);
       if (!normalizedCommit || !normalizedFullCommit) {
@@ -789,6 +861,8 @@ export class WorkspaceGitService {
         commit: normalizedCommit,
         fullCommit: normalizedFullCommit,
         date: normalizeText(date),
+        authorName: normalizeText(authorName),
+        authorEmail: normalizeText(authorEmail),
         subject: normalizeText(subjectParts.join("\t")),
         insertions: stats.insertions,
         deletions: stats.deletions,
@@ -830,7 +904,7 @@ export class WorkspaceGitService {
         `--max-count=${commitLimit}`,
         "--date=short",
         "--decorate=short",
-        "--pretty=format:%H%x09%h%x09%ad%x09%s%x09%D"
+        "--pretty=format:%H%x09%h%x09%ad%x09%an%x09%ae%x09%s%x09%D"
       ],
       { cwd: rootDir, maxBuffer: 30 * 1024 * 1024 }
     );
@@ -847,7 +921,7 @@ export class WorkspaceGitService {
         continue;
       }
 
-      const [fullCommit = "", commit = "", date = "", ...rest] = line.split("\t");
+      const [fullCommit = "", commit = "", date = "", authorName = "", authorEmail = "", ...rest] = line.split("\t");
       const normalizedCommit = normalizeText(commit);
       const normalizedFullCommit = normalizeText(fullCommit);
       if (!normalizedCommit || !normalizedFullCommit) {
@@ -885,6 +959,8 @@ export class WorkspaceGitService {
         commit: normalizedCommit,
         fullCommit: normalizedFullCommit,
         date: normalizeText(date),
+        authorName: normalizeText(authorName),
+        authorEmail: normalizeText(authorEmail),
         subject,
         refs: parsedDecorations.refs,
         headBranch: parsedDecorations.headBranch,
@@ -934,6 +1010,8 @@ export class WorkspaceGitService {
 
     return {
       ...status,
+      gitUserName: status.gitUserName ?? "",
+      gitUserEmail: status.gitUserEmail ?? "",
       localBranches: branches.localBranches.map((branch) => ({
         ...branch,
         isCurrent: branch.name === currentBranch
@@ -979,7 +1057,7 @@ export class WorkspaceGitService {
     if (entry?.untracked) {
       beforeContent = "";
     } else {
-      const beforePreview = await readGitBlobPreview(rootDir, previousPath || filePath);
+      const beforePreview = await readGitBlobPreviewAtRef(rootDir, "HEAD", previousPath || filePath);
       beforeContent = beforePreview.content;
       beforeSize = beforePreview.size;
       beforeTruncated = beforePreview.truncated;
@@ -996,6 +1074,113 @@ export class WorkspaceGitService {
       untracked: Boolean(entry?.untracked),
       renamed: Boolean(entry?.renamed),
       copied: Boolean(entry?.copied),
+      beforeContent,
+      afterContent,
+      beforeSize,
+      afterSize,
+      beforeTruncated,
+      afterTruncated,
+      language: path.extname(filePath).replace(/^\./, "").toLowerCase() || "plaintext"
+    };
+  }
+
+  async readCommitFilePreview(rootDir, commitHash, inputPath) {
+    const normalizedCommit = normalizeText(commitHash);
+    if (!normalizedCommit) {
+      const error = new Error("缺少提交哈希");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const normalizedPath = normalizeRelativeGitPath(inputPath);
+    if (!normalizedPath) {
+      const error = new Error("缺少文件路径");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const available = await this.isGitAvailable();
+    if (!available) {
+      const error = new Error("git 不可用");
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const isRepo = await this.isRepository(rootDir);
+    if (!isRepo) {
+      const error = new Error("当前目录不是 Git 仓库");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const nameStatusResult = await runCommand(
+      "git",
+      [
+        "diff-tree",
+        "--no-commit-id",
+        "--root",
+        "--name-status",
+        "--find-renames",
+        "--find-copies-harder",
+        "-r",
+        normalizedCommit
+      ],
+      { cwd: rootDir, maxBuffer: 30 * 1024 * 1024 }
+    );
+
+    if (nameStatusResult.error) {
+      const error = new Error(nameStatusResult.stderr || nameStatusResult.error.message || "git diff-tree failed");
+      error.statusCode = 500;
+      throw error;
+    }
+
+    const files = parseCommitNameStatusOutput(nameStatusResult.stdout);
+    const entry = files.find((item) => item.path === normalizedPath || item.previousPath === normalizedPath) ?? null;
+    const filePath = entry?.path ?? normalizedPath;
+    const previousPath = entry?.previousPath ?? "";
+    const changeKind = entry?.changeKind ?? "modified";
+    const parentRef = `${normalizedCommit}^`;
+
+    let beforeContent = "";
+    let afterContent = "";
+    let beforeSize = 0;
+    let afterSize = 0;
+    let beforeTruncated = false;
+    let afterTruncated = false;
+
+    if (changeKind === "added") {
+      const afterPreview = await readGitBlobPreviewAtRef(rootDir, normalizedCommit, filePath);
+      afterContent = afterPreview.content;
+      afterSize = afterPreview.size;
+      afterTruncated = afterPreview.truncated;
+    } else if (changeKind === "deleted") {
+      const beforePreview = await readGitBlobPreviewAtRef(rootDir, parentRef, previousPath || filePath);
+      beforeContent = beforePreview.content;
+      beforeSize = beforePreview.size;
+      beforeTruncated = beforePreview.truncated;
+    } else {
+      const beforePreview = await readGitBlobPreviewAtRef(rootDir, parentRef, previousPath || filePath);
+      beforeContent = beforePreview.content;
+      beforeSize = beforePreview.size;
+      beforeTruncated = beforePreview.truncated;
+
+      const afterPreview = await readGitBlobPreviewAtRef(rootDir, normalizedCommit, filePath);
+      afterContent = afterPreview.content;
+      afterSize = afterPreview.size;
+      afterTruncated = afterPreview.truncated;
+    }
+
+    return {
+      commit: normalizedCommit,
+      path: filePath,
+      previousPath,
+      displayPath: previousPath && previousPath !== filePath ? `${previousPath} -> ${filePath}` : filePath,
+      changeKind,
+      statusCode: entry?.statusCode ?? "M",
+      staged: false,
+      untracked: false,
+      renamed: changeKind === "renamed",
+      copied: changeKind === "copied",
       beforeContent,
       afterContent,
       beforeSize,

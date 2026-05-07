@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   commitWorkspaceGitChanges,
   fetchWorkspaceGitBranchHistory,
+  fetchWorkspaceGitCommitDiff,
   fetchWorkspaceGitDiff,
   fetchWorkspaceGitState,
   initWorkspaceGit,
@@ -122,20 +123,20 @@ function derivePrimaryAction(gitState, selectedPaths) {
     };
   }
 
-  if (gitState?.canPush) {
-    return {
-      type: "push",
-      icon: "push",
-      label: "push",
-      disabled: false
-    };
-  }
-
   if (hasChanges) {
     return {
       type: "commit",
       icon: "commit",
       label: "commit",
+      disabled: false
+    };
+  }
+
+  if (gitState?.canPush) {
+    return {
+      type: "push",
+      icon: "push",
+      label: "push",
       disabled: false
     };
   }
@@ -162,16 +163,20 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
   const [gitError, setGitError] = useState("");
   const [gitPreview, setGitPreview] = useState(null);
   const [gitPreviewLoading, setGitPreviewLoading] = useState(false);
+  const [branchGitPreview, setBranchGitPreview] = useState(null);
+  const [branchGitPreviewLoading, setBranchGitPreviewLoading] = useState(false);
   const [gitMessage, setGitMessage] = useState("");
   const [gitMessageStreaming, setGitMessageStreaming] = useState(false);
   const [gitActionBusy, setGitActionBusy] = useState("");
   const [selectedGitPaths, setSelectedGitPaths] = useState([]);
   const [selectedGitPath, setSelectedGitPath] = useState("");
+  const [selectedBranchGitPreviewKey, setSelectedBranchGitPreviewKey] = useState("");
   const [expandedBranchNames, setExpandedBranchNames] = useState([]);
   const [branchHistories, setBranchHistories] = useState({});
   const [branchHistoryLoading, setBranchHistoryLoading] = useState({});
   const gitStateRequestIdRef = useRef(0);
   const gitPreviewRequestIdRef = useRef(0);
+  const branchGitPreviewRequestIdRef = useRef(0);
   const gitMessageAbortRef = useRef(null);
   const branchHistoryRequestIdsRef = useRef(new Map());
 
@@ -183,16 +188,18 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
   );
   const selectedPathSet = useMemo(() => new Set(selectedGitPaths), [selectedGitPaths]);
   const candidatePaths = useMemo(() => {
-    const stagedPaths = normalizeGitPathList(gitState?.stagedPaths ?? []);
-    const dirtyPaths = normalizeGitPathList(gitState?.dirtyPaths ?? []);
     if (selectedGitPaths.length > 0) {
       return normalizeGitPathList(selectedGitPaths);
     }
-    if (stagedPaths.length > 0) {
-      return stagedPaths;
-    }
-    return dirtyPaths;
+    return normalizeGitPathList(gitState?.dirtyPaths ?? []);
   }, [gitState, selectedGitPaths]);
+
+  function clearBranchGitPreview() {
+    branchGitPreviewRequestIdRef.current += 1;
+    setBranchGitPreview(null);
+    setBranchGitPreviewLoading(false);
+    setSelectedBranchGitPreviewKey("");
+  }
 
   async function refreshGitState() {
     if (!enabled) {
@@ -220,6 +227,7 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
 
       const nextPreviewPath = pickDefaultPreviewPath(state, selectedGitPath);
       setSelectedGitPath(nextPreviewPath);
+      clearBranchGitPreview();
       return state;
     } catch (error) {
       if (gitStateRequestIdRef.current === requestId) {
@@ -311,6 +319,7 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     setBranchHistories({});
     setBranchHistoryLoading({});
     branchHistoryRequestIdsRef.current = new Map();
+    clearBranchGitPreview();
   }, [workspaceRoot]);
 
   function toggleGitSelection(path) {
@@ -318,6 +327,8 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     if (!normalizedPath) {
       return;
     }
+
+    clearBranchGitPreview();
 
     setSelectedGitPaths((current) => {
       const next = current.includes(normalizedPath)
@@ -329,6 +340,47 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
 
   function clearGitSelection() {
     setSelectedGitPaths([]);
+  }
+
+  function selectGitPath(path) {
+    clearBranchGitPreview();
+    const normalizedPath = String(path ?? "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    setSelectedGitPath(normalizedPath);
+  }
+
+  async function selectBranchGitFile(commit, file) {
+    const normalizedCommit = String(commit?.fullCommit ?? commit?.commit ?? "").trim();
+    const normalizedPath = String(file?.path ?? "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+    if (!normalizedCommit || !normalizedPath || !enabled) {
+      return null;
+    }
+
+    const previewKey = `${normalizedCommit}:${normalizedPath}`;
+    const requestId = branchGitPreviewRequestIdRef.current + 1;
+    branchGitPreviewRequestIdRef.current = requestId;
+    setSelectedBranchGitPreviewKey(previewKey);
+    setBranchGitPreviewLoading(true);
+    setGitError("");
+
+    try {
+      const preview = await fetchWorkspaceGitCommitDiff(workspaceRoot, normalizedCommit, normalizedPath);
+      if (branchGitPreviewRequestIdRef.current !== requestId) {
+        return preview;
+      }
+      setBranchGitPreview(preview);
+      return preview;
+    } catch (error) {
+      if (branchGitPreviewRequestIdRef.current === requestId) {
+        setGitError(error?.message || "加载提交 diff 失败");
+        setBranchGitPreview(null);
+        setSelectedBranchGitPreviewKey("");
+      }
+      return null;
+    } finally {
+      if (branchGitPreviewRequestIdRef.current === requestId) {
+        setBranchGitPreviewLoading(false);
+      }
+    }
   }
 
   async function loadBranchHistory(branchName) {
@@ -459,6 +511,7 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     try {
       const state = await initWorkspaceGit(workspaceRoot);
       setGitState(state);
+      clearBranchGitPreview();
       setSelectedGitPath(pickDefaultPreviewPath(state));
       clearGitSelection();
       return state;
@@ -481,6 +534,7 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     try {
       const state = await revertWorkspaceGitFiles(workspaceRoot, [normalizedPath]);
       clearGitSelection();
+      clearBranchGitPreview();
       setGitState(state);
       setSelectedGitPath(pickDefaultPreviewPath(state, normalizedPath));
       return state;
@@ -507,12 +561,40 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     }
 
     const hasSelection = normalizeGitPathList(selectedGitPaths).length > 0;
+    const hasChanges = Number(gitState?.stagedCount ?? 0) > 0 || Number(gitState?.dirtyCount ?? 0) > 0;
+
+    if (!hasSelection && hasChanges) {
+      const pathsToCommit = normalizeGitPathList(gitState?.dirtyPaths ?? []);
+      if (pathsToCommit.length === 0) {
+        return null;
+      }
+
+      setGitActionBusy("commit");
+      try {
+        await stageWorkspaceGitFiles(workspaceRoot, pathsToCommit, true);
+        await commitWorkspaceGitChanges(
+          workspaceRoot,
+          gitMessage.trim() || (await generateCommitMessage(pathsToCommit))
+        );
+        clearGitSelection();
+        clearBranchGitPreview();
+        setGitMessage("");
+        setSelectedGitPath(pickDefaultPreviewPath(gitState, ""));
+        return await refreshGitState();
+      } catch (error) {
+        setGitError(error?.message || "commit 失败");
+        return null;
+      } finally {
+        setGitActionBusy("");
+      }
+    }
 
     if (!hasSelection && gitState.canPush) {
       setGitActionBusy("push");
       try {
         const result = await pushWorkspaceGitChanges(workspaceRoot);
         clearGitSelection();
+        clearBranchGitPreview();
         setGitState(result);
         setSelectedGitPath(pickDefaultPreviewPath(result, selectedGitPath));
         return result;
@@ -544,6 +626,7 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
         gitMessage.trim() || (await generateCommitMessage(pathsToCommit))
       );
       clearGitSelection();
+      clearBranchGitPreview();
       setGitMessage("");
       setSelectedGitPath(pickDefaultPreviewPath(gitState, ""));
       return await refreshGitState();
@@ -568,11 +651,14 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     gitError,
     gitPreview,
     gitPreviewLoading,
+    branchGitPreview,
+    branchGitPreviewLoading,
     gitMessage,
     setGitMessage,
     gitMessageStreaming,
     gitActionBusy,
     selectedGitPath,
+    selectedBranchGitPreviewKey,
     selectedGitPaths,
     selectedGitFiles,
     selectedPathSet,
@@ -584,7 +670,8 @@ export function useWorkspaceGitSession({ workspaceRoot = "", enabled = false } =
     primaryAction,
     candidatePaths,
     refreshGitState,
-    selectGitPath: setSelectedGitPath,
+    selectGitPath,
+    selectBranchGitFile,
     toggleGitSelection,
     clearGitSelection,
     toggleBranchExpansion,

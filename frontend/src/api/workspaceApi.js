@@ -19,6 +19,10 @@ function buildWorkspaceQuery(params = {}) {
   if (branch) {
     query.set("branch", branch);
   }
+  const commit = String(params.commit ?? "").trim();
+  if (commit) {
+    query.set("commit", commit);
+  }
   const limit = Number(params.limit ?? 0);
   if (Number.isFinite(limit) && limit > 0) {
     query.set("limit", String(Math.floor(limit)));
@@ -64,6 +68,10 @@ export function fetchWorkspaceGitState(root = "") {
 
 export function fetchWorkspaceGitDiff(path, root = "") {
   return requestJson(`/workspace/git/diff${buildWorkspaceQuery({ root, path })}`);
+}
+
+export function fetchWorkspaceGitCommitDiff(root = "", commit = "", path = "") {
+  return requestJson(`/workspace/git/commit-diff${buildWorkspaceQuery({ root, commit, path })}`);
 }
 
 export function fetchWorkspaceGitBranchHistory(root = "", branch = "", limit = 6) {

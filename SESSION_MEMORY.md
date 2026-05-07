@@ -1,16 +1,23 @@
 # SESSION MEMORY
 
 ## 上一步实际完成了什么
-- 已按 `find-skills` 流程用 `npx.cmd skills find/add` 搜索并下载通用技能，避开 PowerShell `npx.ps1` 执行策略问题。
-- 已把新增系统 skills 同步到默认资产 `resources/defaults/skills/_system` 和本机运行目录 `C:\Users\HUAWEI\.yyz\skills\_system`。
-- 新增范围：`find-skills`、`pdf`、`word`、`spreadsheets`、`elite-powerpoint-designer`、`csv`、`markdown-documentation`、`code-review-quality`、`best-practices`、`backend-development`、`database-design`、`llm-application-dev`。
-- `npm run build` 已通过。
+- 已在 `code mode` 内加入很细的左侧活动栏，支持 `文件树 / Git` 两种面板切换，顶部全局 `code / work` 切换按用户要求未改。
+- 已补 Git 面板：commit message 输入框、AI 流式生成、部分文件勾选提交、无选择时默认 push、单文件回退、分支列表、本地/远程分支合并显示、Git 不可用 / 初始化 Git 状态。
+- 已补后端 Git 能力：状态、diff 预览、初始化、stage、commit、push、revert、AI commit 描述流式接口。
+- 已把工作区按钮统一改成符号图标按钮，避免文字按钮。
+- 已按反馈把左侧活动条改成白底，并把两个模式按钮改成更明确的文件 / 分支图标。
+- 已把 Git 文件列表从原始 `?? / untracked / English status` 改成中文状态徽标，并去掉原始状态码显示，方便区分“未追踪 / 已修改 / 已暂存”等状态。
+- 已把 Git 列表拆成“待提交 / 未提交”两个区域，新增按钮是把文件加入待提交区而不是简单勾选。
+- 已把刷新按钮单独做成更轻的蓝色工具按钮。
+- 已把 Git composer 重排成三层结构：顶部极窄刷新条，中间大输入块，AI 生成按钮嵌在输入框右上角，底部放 commit / push 主按钮。
+- 已把主操作按钮改成扁平文字胶囊按钮，commit / push 直接可见，不再是方形图标块。
+- 已把分支区压扁成更像时间线的卡片列表，分支名、当前分支 sha、远程分支 sha、最新提交描述都会显示，领先关系用小标签标注。
+- `npm run build` 已通过，后端新模块也已做导入检查。
 
 ## 下一步打算做什么
-- 如需继续扩展，可再补浏览器自动化、部署/CI、安全审计等技能；本轮对应 GitHub 网络中断的两个下载未强行加入。
-- 如要在前端确认，重启服务后打开 Skills 列表，检查 `_system` 下新增技能是否正常显示并可 view。
+- 如需继续，我会把 Git 面板再做一轮交互打磨，比如更细的 diff 状态文案、选中文件的视觉反馈、commit/push 的失败提示细化。
+- 也可以继续在浏览器里实测 Git 面板的滚动、分组高度、时间线间距和分支领先标签是否还需要再压缩一档。
 
 ## 关键约束 / 风险
-- 第三方 `appautomaton/document-skills@xlsx` 标记为 Proprietary，未放入项目默认资产；表格场景使用已缓存的 OpenAI/Codex `spreadsheets` skill。
-- `anthropics/skills@pdf` 曾临时安装到 `~\.agents`，但随后被 `openai/skills@pdf` 覆盖；项目里放的是 OpenAI PDF skill。
-- 默认资产会随打包初始化到用户 `.yyz`；本机 `.yyz` 已手动同步一份，方便当前运行立刻使用。
+- Git 面板依赖本机 `git` 可用；无仓库时会走初始化，若外部仓库状态变化，branch / ahead / behind 需要重新拉取。
+- 目前 diff 预览按单文件前后对比渲染，后续如果要支持更复杂的多文件联动预览，还需要再拆一层状态。

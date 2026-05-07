@@ -73,7 +73,9 @@ async function searchWorkspaceFiles(rootDir, query) {
   return results;
 }
 
-export function createWorkspaceController() {
+export function createWorkspaceController(services = {}) {
+  const workspaceGitService = services.workspaceGitService ?? null;
+
   return {
     async getWorkspaceInfo(req, res) {
       const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
@@ -162,6 +164,151 @@ export function createWorkspaceController() {
         size: stat.size,
         modifiedAt: stat.mtime.toISOString()
       });
+    },
+
+    async getGitState(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
+      const state = await workspaceGitService.readState(rootDir);
+      res.json({
+        ...state,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
+    async getGitDiff(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.query.root ?? "", PROJECT_ROOT);
+      const targetPath = String(req.query.path ?? "").trim();
+      const preview = await workspaceGitService.readFilePreview(rootDir, targetPath);
+      res.json({
+        ...preview,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
+    async initGit(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.body?.root ?? "", PROJECT_ROOT);
+      const state = await workspaceGitService.initRepository(rootDir);
+      res.json({
+        ...state,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
+    async stageGitFiles(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.body?.root ?? "", PROJECT_ROOT);
+      const staged = Boolean(req.body?.staged ?? true);
+      const paths = Array.isArray(req.body?.paths) ? req.body.paths : [];
+      const state = await workspaceGitService.stageFiles(rootDir, paths, staged);
+      res.json({
+        ...state,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
+    async commitGitChanges(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.body?.root ?? "", PROJECT_ROOT);
+      const message = String(req.body?.message ?? "").trim();
+      const result = await workspaceGitService.commitChanges(rootDir, message);
+      res.json({
+        ...result,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
+    async pushGitChanges(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.body?.root ?? "", PROJECT_ROOT);
+      const result = await workspaceGitService.pushChanges(rootDir);
+      res.json({
+        ...result,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
+    async revertGitFiles(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.body?.root ?? "", PROJECT_ROOT);
+      const paths = Array.isArray(req.body?.paths) ? req.body.paths : [];
+      const state = await workspaceGitService.revertFiles(rootDir, paths);
+      res.json({
+        ...state,
+        root: toPublicWorkspaceRoot(rootDir)
+      });
+    },
+
+    async streamGitCommitMessage(req, res) {
+      if (!workspaceGitService) {
+        const error = new Error("Git service is not available");
+        error.statusCode = 500;
+        throw error;
+      }
+
+      const rootDir = await resolveWorkspaceRoot(req.body?.root ?? "", PROJECT_ROOT);
+      const paths = Array.isArray(req.body?.paths) ? req.body.paths : [];
+      const { initSse, writeSseEvent, endSse } = await import("../services/stream/SseChannel.js");
+
+      initSse(res);
+      try {
+        const commitMessage = await workspaceGitService.generateCommitMessage({
+          rootDir,
+          paths,
+          onDelta: (text, mergedText) => {
+            writeSseEvent(res, "delta", {
+              text,
+              mergedText
+            });
+          }
+        });
+        writeSseEvent(res, "final", {
+          text: commitMessage
+        });
+      } catch (error) {
+        writeSseEvent(res, "error", {
+          message: error?.message || "commit message generation failed"
+        });
+      } finally {
+        endSse(res);
+      }
     }
   };
 }

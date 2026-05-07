@@ -25,6 +25,9 @@ import {
   writeWorkspaceFile
 } from "../../api/workspaceApi";
 import { notify } from "../../shared/feedback";
+import { WorkspaceGitPanel } from "./WorkspaceGitPanel";
+import { WorkspaceIconButton } from "./workspaceIcons";
+import { useWorkspaceGitSession } from "./useWorkspaceGitSession";
 import "./workspace-dock.css";
 
 const EDITOR_THEME = "yyz-claw-workbench";
@@ -53,6 +56,7 @@ const LANGUAGE_BY_EXT = new Map([
 const IMAGE_EXTENSIONS = new Set(["apng", "avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"]);
 const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "ogg", "wav", "webm"]);
 const VIDEO_EXTENSIONS = new Set(["m4v", "mov", "mp4", "ogv", "webm"]);
+const WORKSPACE_ACTIVITY_BAR_WIDTH = 48;
 
 function getExtension(filePath) {
   return String(filePath ?? "").split(".").pop()?.toLowerCase() ?? "";
@@ -339,7 +343,9 @@ export function WorkspaceDock({
   workspaceRoot: requestedWorkspaceRoot = ""
 } = {}) {
   const editorHostRef = useRef(null);
+  const gitDiffHostRef = useRef(null);
   const editorRef = useRef(null);
+  const gitDiffEditorRef = useRef(null);
   const shellRef = useRef(null);
   const activeFilePathRef = useRef("");
   const fileStatesRef = useRef(new Map());
@@ -353,6 +359,7 @@ export function WorkspaceDock({
   const [loadingPath, setLoadingPath] = useState("");
   const [treeWidth, setTreeWidth] = useState(270);
   const [rightPaneWidth, setRightPaneWidth] = useState(420);
+  const [workspacePanelMode, setWorkspacePanelMode] = useState("tree");
   const [openTabs, setOpenTabs] = useState([]);
   const [activeFilePath, setActiveFilePath] = useState("");
   const [, setEditorRevision] = useState(0);
@@ -365,6 +372,12 @@ export function WorkspaceDock({
   const [error, setError] = useState("");
   const activeFileState = activeFilePath ? fileStatesRef.current.get(activeFilePath) : null;
   const activeFile = activeFileState?.file ?? null;
+  const effectiveWorkspaceRoot = workspaceRoot || requestedWorkspaceRoot;
+  const gitSession = useWorkspaceGitSession({
+    workspaceRoot: effectiveWorkspaceRoot,
+    enabled: isOpen && workspacePanelMode === "git"
+  });
+  const isGitMode = workspacePanelMode === "git";
 
   const drawerTitle = useMemo(() => {
     if (activeFilePath) {
@@ -384,6 +397,7 @@ export function WorkspaceDock({
     setRootEntries([]);
     setChildrenByPath(new Map());
     setExpandedPaths(new Set());
+    setWorkspacePanelMode("tree");
   }, [requestedWorkspaceRoot]);
 
   useEffect(() => {
@@ -446,7 +460,7 @@ export function WorkspaceDock({
   }, [isOpen, rootEntries.length, requestedWorkspaceRoot]);
 
   useEffect(() => {
-    if (!editorHostRef.current || editorRef.current) {
+    if (workspacePanelMode === "git" || !editorHostRef.current || editorRef.current) {
       return undefined;
     }
 
@@ -489,17 +503,70 @@ export function WorkspaceDock({
       editor.dispose();
       editorRef.current = null;
     };
-  }, [isOpen]);
+  }, [isOpen, workspacePanelMode]);
 
   useEffect(() => {
-    if (!editorRef.current) {
+    if (workspacePanelMode !== "git" || !gitDiffHostRef.current || gitDiffEditorRef.current) {
+      return undefined;
+    }
+
+    const diffEditor = monaco.editor.createDiffEditor(gitDiffHostRef.current, {
+      theme: EDITOR_THEME,
+      automaticLayout: true,
+      readOnly: true,
+      renderSideBySide: true,
+      originalEditable: false,
+      fontFamily: "'JetBrains Mono', 'Cascadia Mono', Consolas, monospace",
+      fontSize: 13,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      smoothScrolling: true
+    });
+    gitDiffEditorRef.current = diffEditor;
+
+    return () => {
+      diffEditor.setModel(null);
+      diffEditor.dispose();
+      gitDiffEditorRef.current = null;
+    };
+  }, [isOpen, workspacePanelMode]);
+
+  useEffect(() => {
+    if (workspacePanelMode !== "git" || !gitDiffEditorRef.current) {
       return;
     }
 
+    const preview = gitSession.gitPreview;
+    const language = preview?.language || "plaintext";
+    const originalModel = monaco.editor.createModel(preview?.beforeContent ?? "", language);
+    const modifiedModel = monaco.editor.createModel(preview?.afterContent ?? "", language);
+    gitDiffEditorRef.current.setModel({
+      original: originalModel,
+      modified: modifiedModel
+    });
+
+    return () => {
+      originalModel.dispose();
+      modifiedModel.dispose();
+    };
+  }, [gitSession.gitPreview, workspacePanelMode]);
+
+  useEffect(() => {
     window.requestAnimationFrame(() => {
       editorRef.current?.layout();
+      gitDiffEditorRef.current?.layout();
     });
-  }, [activeFilePath, treeWidth, rightPaneWidth, terminalVisible, terminalHeight, embedded]);
+  }, [
+    activeFilePath,
+    treeWidth,
+    rightPaneWidth,
+    terminalVisible,
+    terminalHeight,
+    embedded,
+    workspacePanelMode,
+    gitSession.gitPreview,
+    gitSession.gitPreviewLoading
+  ]);
 
   async function handleToggleDirectory(path) {
     const nextExpanded = new Set(expandedPaths);
@@ -758,13 +825,13 @@ export function WorkspaceDock({
     const reservedRightPaneWidth = rightPane ? rightPaneWidth + 10 : 0;
     const maxTreeWidth = Math.max(
       minTreeWidth,
-      Math.min(420, shellRect.width - reservedRightPaneWidth - 420 - 10)
+      Math.min(420, shellRect.width - reservedRightPaneWidth - 420 - 10 - WORKSPACE_ACTIVITY_BAR_WIDTH)
     );
 
     function handlePointerMove(event) {
       const nextWidth = Math.min(
         maxTreeWidth,
-        Math.max(minTreeWidth, event.clientX - shellRect.left)
+        Math.max(minTreeWidth, event.clientX - shellRect.left - WORKSPACE_ACTIVITY_BAR_WIDTH)
       );
       setTreeWidth(nextWidth);
     }
@@ -830,7 +897,14 @@ export function WorkspaceDock({
       const minRightPaneWidth = rightPane ? 320 : 0;
       const maxTreeWidth = Math.max(
         minTreeWidth,
-        Math.min(420, shellRect.width - minEditorWidth - minRightPaneWidth - (rightPane ? 20 : 10))
+        Math.min(
+          420,
+          shellRect.width -
+            minEditorWidth -
+            minRightPaneWidth -
+            (rightPane ? 20 : 10) -
+            WORKSPACE_ACTIVITY_BAR_WIDTH
+        )
       );
       setTreeWidth((current) => Math.min(maxTreeWidth, Math.max(minTreeWidth, current)));
       setRightPaneWidth((current) => {
@@ -838,7 +912,10 @@ export function WorkspaceDock({
           return current;
         }
         return Math.min(
-          Math.max(minRightPaneWidth, shellRect.width - minTreeWidth - minEditorWidth - 20),
+          Math.max(
+            minRightPaneWidth,
+            shellRect.width - minTreeWidth - minEditorWidth - 20 - WORKSPACE_ACTIVITY_BAR_WIDTH
+          ),
           Math.max(minRightPaneWidth, current)
         );
       });
@@ -866,7 +943,7 @@ export function WorkspaceDock({
 
       const maxRightPaneWidth = Math.max(
         minRightPaneWidth,
-        shellRect.width - treeWidth - 420 - 20
+        shellRect.width - treeWidth - 420 - 20 - WORKSPACE_ACTIVITY_BAR_WIDTH
       );
       setRightPaneWidth((current) =>
         Math.min(maxRightPaneWidth, Math.max(minRightPaneWidth, current))
@@ -888,6 +965,7 @@ export function WorkspaceDock({
           className="workspace-dock-launcher"
           onClick={() => openWorkspaceWindow(requestedWorkspaceRoot)}
           title="打开独立工作区窗口"
+          aria-label="打开独立工作区窗口"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 5h16v14H4z" />
@@ -895,7 +973,6 @@ export function WorkspaceDock({
             <path d="M16 9l3 3l-3 3" />
             <path d="M13 8l-2 8" />
           </svg>
-          工作区
         </button>
       )}
 
@@ -917,26 +994,25 @@ export function WorkspaceDock({
                 {embedded && (
                   <div className="workspace-dock-inline-actions">
                     {modeSwitch}
-                    <button
-                      type="button"
+                    <WorkspaceIconButton
+                      icon="window"
+                      label="独立窗口"
                       onClick={() => openWorkspaceWindow(requestedWorkspaceRoot)}
-                    >
-                      独立窗口
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <WorkspaceIconButton
+                      icon="terminal"
+                      label="终端"
                       onClick={openTerminalPanel}
-                    >
-                      终端
-                    </button>
+                    />
                   </div>
                 )}
               </div>
             </div>
             <div className="workspace-dock-head-actions">
               {!embedded && (
-                <button
-                  type="button"
+                <WorkspaceIconButton
+                  icon="close"
+                  label="关闭"
                   className="workspace-dock-close"
                   onClick={() => {
                     if (standalone) {
@@ -945,9 +1021,7 @@ export function WorkspaceDock({
                     }
                     setIsOpen(false);
                   }}
-                >
-                  ×
-                </button>
+                />
               )}
             </div>
           </header>
@@ -962,26 +1036,46 @@ export function WorkspaceDock({
               "--workspace-right-pane-width": `${rightPaneWidth}px`
             }}
           >
-            <aside className="workspace-tree">
-              <div className="workspace-tree-head">
-                <span>Explorer</span>
-                {loadingPath === "__root__" && <small>加载中...</small>}
-              </div>
-              <div className="workspace-tree-scroll">
-                {rootEntries.map((entry) => (
-                  <WorkspaceFileTreeNode
-                    key={entry.path}
-                    entry={entry}
-                    depth={0}
-                    activePath={activeFile?.path ?? ""}
-                    expandedPaths={expandedPaths}
-                    childrenByPath={childrenByPath}
-                    loadingPath={loadingPath}
-                    onToggleDirectory={handleToggleDirectory}
-                    onOpenFile={handleOpenFile}
-                  />
-                ))}
-              </div>
+            <nav className="workspace-activity-bar" aria-label="功能模式切换">
+              <WorkspaceIconButton
+                icon="file"
+                label="文件树"
+                active={!isGitMode}
+                onClick={() => setWorkspacePanelMode("tree")}
+              />
+              <WorkspaceIconButton
+                icon="branch"
+                label="Git"
+                active={isGitMode}
+                onClick={() => setWorkspacePanelMode("git")}
+              />
+            </nav>
+            <aside className={`workspace-tree ${isGitMode ? "is-git" : ""}`}>
+              {isGitMode ? (
+                <WorkspaceGitPanel gitSession={gitSession} />
+              ) : (
+                <>
+                  <div className="workspace-tree-head">
+                    <span>Explorer</span>
+                    {loadingPath === "__root__" && <small>加载中...</small>}
+                  </div>
+                  <div className="workspace-tree-scroll">
+                    {rootEntries.map((entry) => (
+                      <WorkspaceFileTreeNode
+                        key={entry.path}
+                        entry={entry}
+                        depth={0}
+                        activePath={activeFile?.path ?? ""}
+                        expandedPaths={expandedPaths}
+                        childrenByPath={childrenByPath}
+                        loadingPath={loadingPath}
+                        onToggleDirectory={handleToggleDirectory}
+                        onOpenFile={handleOpenFile}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </aside>
             <div
               className="workspace-tree-resizer"
@@ -991,93 +1085,135 @@ export function WorkspaceDock({
             />
 
             <section className="workspace-main-surface">
-              <div className="workspace-editor-tabs" role="tablist" aria-label="打开的文件">
-                {openTabs.length === 0 ? (
-                  <div className="workspace-editor-tab-empty">没有打开的文件</div>
+              <div className="workspace-editor-tabs" role="tablist" aria-label={isGitMode ? "Git diff" : "打开的文件"}>
+                {isGitMode ? (
+                  <div className="workspace-git-toolbar">
+                    <div className="workspace-git-toolbar-meta">
+                      <span className="workspace-git-toolbar-path" title={gitSession.gitPreview?.displayPath ?? gitSession.selectedGitPath ?? ""}>
+                        {gitSession.gitPreview?.displayPath || gitSession.selectedGitPath || "选择一个文件查看 diff"}
+                      </span>
+                      <span className="workspace-git-toolbar-state">
+                        {gitSession.gitPreview?.changeKind || (gitSession.gitLoading ? "加载中..." : "Git 预览")}
+                      </span>
+                    </div>
+                    <div className="workspace-git-toolbar-counts">
+                      <span>{gitSession.selectedPathSet.size} selected</span>
+                    </div>
+                  </div>
                 ) : (
-                  openTabs.map((tab) => {
-                    const state = fileStatesRef.current.get(tab.path);
-                    const tabDirty =
-                      Boolean(state) && state.kind === "text" && state.currentContent !== state.savedContent;
-                    const active = activeFilePath === tab.path;
+                  <>
+                    {openTabs.length === 0 ? (
+                      <div className="workspace-editor-tab-empty">没有打开的文件</div>
+                    ) : (
+                      openTabs.map((tab) => {
+                        const state = fileStatesRef.current.get(tab.path);
+                        const tabDirty =
+                          Boolean(state) && state.kind === "text" && state.currentContent !== state.savedContent;
+                        const active = activeFilePath === tab.path;
 
-                    return (
-                      <div
-                        key={tab.path}
-                        role="tab"
-                        tabIndex={0}
-                        aria-selected={active}
-                        className={`workspace-editor-tab ${active ? "is-active" : ""}`}
-                        title={tab.path}
-                        onClick={() => activateOpenFile(tab.path)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            activateOpenFile(tab.path);
-                          }
-                        }}
-                      >
-                        <span className={`workspace-tab-icon tone-${getFileIconTone({ name: tab.name })}`}>
-                          {getFileIcon({ name: tab.name })}
-                        </span>
-                        <span className="workspace-tab-name">{tab.name}</span>
-                        {tabDirty ? (
-                          <span className="workspace-tab-dirty" aria-label="未保存" />
-                        ) : (
-                          <button
-                            type="button"
-                            className="workspace-tab-close"
-                            aria-label={`关闭 ${tab.name}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleCloseTab(tab.path);
+                        return (
+                          <div
+                            key={tab.path}
+                            role="tab"
+                            tabIndex={0}
+                            aria-selected={active}
+                            className={`workspace-editor-tab ${active ? "is-active" : ""}`}
+                            title={tab.path}
+                            onClick={() => activateOpenFile(tab.path)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                activateOpenFile(tab.path);
+                              }
                             }}
                           >
-                            ×
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })
+                            <span className={`workspace-tab-icon tone-${getFileIconTone({ name: tab.name })}`}>
+                              {getFileIcon({ name: tab.name })}
+                            </span>
+                            <span className="workspace-tab-name">{tab.name}</span>
+                            {tabDirty ? (
+                              <span className="workspace-tab-dirty" aria-label="未保存" />
+                            ) : (
+                              <button
+                                type="button"
+                                className="workspace-tab-close"
+                                aria-label={`关闭 ${tab.name}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleCloseTab(tab.path);
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                    <div className="workspace-editor-shortcut">
+                      <span>Ctrl+S 保存</span>
+                    </div>
+                  </>
                 )}
-                <div className="workspace-editor-shortcut">
-                  <span>Ctrl+S 保存</span>
-                </div>
               </div>
 
               <div className="workspace-editor-panel is-active">
-                {!activeFile && (
-                  <div className="workspace-empty-editor">从左侧文件树选择一个文件开始编辑。</div>
-                )}
-                {activeFileState?.kind === "image" && (
-                  <div className="workspace-media-preview workspace-media-preview-image">
-                    <img src={activeFile.assetUrl} alt={activeFile.name ?? activeFilePath} />
-                  </div>
-                )}
-                {activeFileState?.kind === "audio" && (
-                  <div className="workspace-media-preview workspace-media-preview-audio">
-                    <div className="workspace-media-card">
-                      <span className="workspace-media-icon">♪</span>
-                      <strong>{activeFile.name ?? activeFilePath}</strong>
-                      <audio controls src={activeFile.assetUrl}>
-                        当前浏览器不支持音频播放。
-                      </audio>
+                {isGitMode ? (
+                  <div className="workspace-git-preview-shell">
+                    <div className="workspace-git-preview-head">
+                      <div className="workspace-git-preview-title">
+                        <span>{gitSession.gitPreview?.displayPath || gitSession.selectedGitPath || "Git diff"}</span>
+                        <small>{gitSession.gitPreview?.changeKind || "前后对比"}</small>
+                      </div>
+                      <div className="workspace-git-preview-meta">
+                        {gitSession.gitPreviewLoading ? "读取 diff…" : gitSession.gitPreview?.staged ? "staged" : gitSession.gitPreview?.untracked ? "untracked" : ""}
+                      </div>
+                    </div>
+                    <div className="workspace-git-preview-editor">
+                      <div ref={gitDiffHostRef} className="workspace-git-diff-host" />
+                      {(!gitSession.gitPreview || gitSession.gitPreviewLoading) && (
+                        <div className="workspace-empty-editor workspace-empty-editor-overlay">
+                          {gitSession.gitPreviewLoading ? "读取 diff…" : "选择一个文件查看 diff。"}
+                        </div>
+                      )}
                     </div>
                   </div>
+                ) : (
+                  <>
+                    {!activeFile && (
+                      <div className="workspace-empty-editor">从左侧文件树选择一个文件开始编辑。</div>
+                    )}
+                    {activeFileState?.kind === "image" && (
+                      <div className="workspace-media-preview workspace-media-preview-image">
+                        <img src={activeFile.assetUrl} alt={activeFile.name ?? activeFilePath} />
+                      </div>
+                    )}
+                    {activeFileState?.kind === "audio" && (
+                      <div className="workspace-media-preview workspace-media-preview-audio">
+                        <div className="workspace-media-card">
+                          <span className="workspace-media-icon">♪</span>
+                          <strong>{activeFile.name ?? activeFilePath}</strong>
+                          <audio controls src={activeFile.assetUrl}>
+                            当前浏览器不支持音频播放。
+                          </audio>
+                        </div>
+                      </div>
+                    )}
+                    {activeFileState?.kind === "video" && (
+                      <div className="workspace-media-preview workspace-media-preview-video">
+                        <video controls src={activeFile.assetUrl}>
+                          当前浏览器不支持视频播放。
+                        </video>
+                      </div>
+                    )}
+                    <div
+                      ref={editorHostRef}
+                      className={`workspace-editor-host ${
+                        activeFileState && activeFileState.kind !== "text" ? "is-hidden" : ""
+                      }`}
+                    />
+                  </>
                 )}
-                {activeFileState?.kind === "video" && (
-                  <div className="workspace-media-preview workspace-media-preview-video">
-                    <video controls src={activeFile.assetUrl}>
-                      当前浏览器不支持视频播放。
-                    </video>
-                  </div>
-                )}
-                <div
-                  ref={editorHostRef}
-                  className={`workspace-editor-host ${
-                    activeFileState && activeFileState.kind !== "text" ? "is-hidden" : ""
-                  }`}
-                />
               </div>
 
               <section

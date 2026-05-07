@@ -1,4 +1,5 @@
 import { requestJson } from "./httpClient";
+import { streamSseJson } from "./sseClient";
 
 function buildWorkspaceQuery(params = {}) {
   const query = new URLSearchParams();
@@ -46,5 +47,74 @@ export function writeWorkspaceFile(path, content, root = "") {
       path,
       content
     }
+  });
+}
+
+export function fetchWorkspaceGitState(root = "") {
+  return requestJson(`/workspace/git/state${buildWorkspaceQuery({ root })}`);
+}
+
+export function fetchWorkspaceGitDiff(path, root = "") {
+  return requestJson(`/workspace/git/diff${buildWorkspaceQuery({ root, path })}`);
+}
+
+export function initWorkspaceGit(root = "") {
+  return requestJson("/workspace/git/init", {
+    method: "POST",
+    body: {
+      root
+    }
+  });
+}
+
+export function stageWorkspaceGitFiles(root = "", paths = [], staged = true) {
+  return requestJson("/workspace/git/stage", {
+    method: "POST",
+    body: {
+      root,
+      paths,
+      staged
+    }
+  });
+}
+
+export function commitWorkspaceGitChanges(root = "", message = "") {
+  return requestJson("/workspace/git/commit", {
+    method: "POST",
+    body: {
+      root,
+      message
+    }
+  });
+}
+
+export function pushWorkspaceGitChanges(root = "") {
+  return requestJson("/workspace/git/push", {
+    method: "POST",
+    body: {
+      root
+    }
+  });
+}
+
+export function revertWorkspaceGitFiles(root = "", paths = []) {
+  return requestJson("/workspace/git/revert", {
+    method: "POST",
+    body: {
+      root,
+      paths
+    }
+  });
+}
+
+export async function streamWorkspaceGitCommitMessage({ root = "", paths = [], signal, onMessage } = {}) {
+  return streamSseJson({
+    url: "/api/workspace/git/commit-message",
+    body: {
+      root,
+      paths
+    },
+    signal,
+    onMessage
   });
 }

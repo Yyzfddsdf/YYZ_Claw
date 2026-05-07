@@ -81,6 +81,7 @@ import { SpeechToTextService } from "../services/stt/SpeechToTextService.js";
 import { EdgeTextToSpeechService } from "../services/tts/EdgeTextToSpeechService.js";
 import { ToolRegistry } from "../services/tools/ToolRegistry.js";
 import { UnifiedToolRegistry } from "../services/tools/UnifiedToolRegistry.js";
+import { WorkspaceGitService } from "../services/workspace/WorkspaceGitService.js";
 
 function runStartupTask(label, task) {
   Promise.resolve()
@@ -169,6 +170,10 @@ export async function createServices() {
   const toolRegistry = new UnifiedToolRegistry({
     localToolRegistry,
     mcpManager
+  });
+
+  const workspaceGitService = new WorkspaceGitService({
+    configStore
   });
 
   const historyStore = new SqliteChatHistoryStore({
@@ -430,6 +435,7 @@ export async function createServices() {
     feishuLongConnectionService,
     feishuRuntimeService,
     feishuProviderAdapter,
+    workspaceGitService,
     chatAgent
   };
 }

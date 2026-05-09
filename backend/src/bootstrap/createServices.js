@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import {
+  BACKEND_ROOT,
   APPROVAL_RULES_FILE,
   BACKGROUNDS_DIR,
   CONFIG_FILE,
@@ -25,6 +26,7 @@ import {
   SKILLS_SNAPSHOT_FILE,
   SUBAGENT_ASSETS_DIR,
   SUBAGENT_RUNTIME_DIR,
+  TASKS_DIR,
   TOOLS_DIR
 } from "../config/paths.js";
 import { ensureYyzHome } from "../config/ensureYyzHome.js";
@@ -80,6 +82,7 @@ import { SubagentAssetStore } from "../services/subagents/SubagentAssetStore.js"
 import { SubagentDefinitionRegistry } from "../services/subagents/SubagentDefinitionRegistry.js";
 import { ConversationEventBroadcaster } from "../services/stream/ConversationEventBroadcaster.js";
 import { SpeechToTextService } from "../services/stt/SpeechToTextService.js";
+import { ConversationTaskService } from "../services/tasks/ConversationTaskService.js";
 import { EdgeTextToSpeechService } from "../services/tts/EdgeTextToSpeechService.js";
 import { ToolRegistry } from "../services/tools/ToolRegistry.js";
 import { UnifiedToolRegistry } from "../services/tools/UnifiedToolRegistry.js";
@@ -165,6 +168,11 @@ export async function createServices() {
   });
   runStartupTask("mcp refresh", () => mcpManager.refresh());
   const speechToTextService = new SpeechToTextService();
+  const backgroundTaskService = new ConversationTaskService({
+    rootDir: TASKS_DIR,
+    runnerScriptPath: path.join(BACKEND_ROOT, "src", "services", "tasks", "terminalTaskRunner.cjs")
+  });
+  await backgroundTaskService.ensureDir();
   const edgeTextToSpeechService = new EdgeTextToSpeechService({
     defaultVoice: "zh-CN-XiaoxiaoNeural",
     defaultRate: "+0%",
@@ -325,6 +333,7 @@ export async function createServices() {
     configStore,
     historyStore,
     memoryStore,
+    backgroundTaskService,
     compressionService,
     approvalRulesStore,
     agentsPromptStore,
@@ -427,6 +436,7 @@ export async function createServices() {
     personaStore,
     subagentAssetStore,
     mcpManager,
+    backgroundTaskService,
     speechToTextService,
     edgeTextToSpeechService,
     historyStore,

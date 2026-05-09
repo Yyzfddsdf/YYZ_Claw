@@ -24,6 +24,7 @@ export const PLUGIN_SETTINGS_FILE = path.join(CONFIG_DIR, "plugins.json");
 export const SKILLS_DIR = path.join(YYZ_DIR, "skills");
 export const SKILLS_SNAPSHOT_FILE = path.join(SKILLS_DIR, ".skills.snapshot.json");
 export const SUBAGENT_ASSETS_DIR = path.join(YYZ_DIR, "subagents");
+export const TASKS_DIR = path.join(YYZ_DIR, "tasks");
 export const IM_ROOT_DIR = path.join(YYZ_DIR, "integrations");
 export const IM_FEISHU_DIR = path.join(IM_ROOT_DIR, "feishu");
 export const FEISHU_CONFIG_FILE = path.join(IM_FEISHU_DIR, "config.json");

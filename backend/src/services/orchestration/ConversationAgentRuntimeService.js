@@ -109,6 +109,7 @@ export class ConversationAgentRuntimeService {
     this.configStore = options.configStore ?? null;
     this.historyStore = options.historyStore ?? null;
     this.memoryStore = options.memoryStore ?? null;
+    this.backgroundTaskService = options.backgroundTaskService ?? null;
     this.compressionService = options.compressionService ?? null;
     this.approvalRulesStore = options.approvalRulesStore ?? null;
     this.agentsPromptStore = options.agentsPromptStore ?? null;
@@ -487,6 +488,7 @@ export class ConversationAgentRuntimeService {
       goalState: {},
       planState: normalizePlanState(existingConversation?.planState),
       memoryStore: this.memoryStore,
+      backgroundTaskService: this.backgroundTaskService,
       skillCatalog: this.skillCatalog,
       pluginCatalog: this.pluginCatalog,
       skillValidator: this.skillValidator,

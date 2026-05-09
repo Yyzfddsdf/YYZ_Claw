@@ -946,6 +946,7 @@ export function createChatController({
   orchestratorStore,
   orchestratorSchedulerService,
   orchestratorSupervisorService,
+  backgroundTaskService,
   automationSchedulerService,
   wakeDispatcher
 }) {
@@ -2353,6 +2354,7 @@ export function createChatController({
             normalizePlanState(resolvedPendingApproval.executionContext?.planState) ??
             normalizePlanState(resumedHistory?.planState),
           memoryStore,
+          backgroundTaskService,
           skillCatalog,
           pluginCatalog,
           skillValidator,
@@ -2988,6 +2990,7 @@ export function createChatController({
           goalState: {},
           planState: normalizePlanState(existingConversation?.planState),
           memoryStore,
+          backgroundTaskService,
           skillCatalog,
           pluginCatalog,
           skillValidator,

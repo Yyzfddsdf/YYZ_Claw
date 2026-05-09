@@ -41,14 +41,35 @@
     - 脚本入口仍指向 `app.getAppPath()/service.js`
     - 但打包态 `cwd` 改为 `path.dirname(process.execPath)` 这个真实磁盘目录
   - 已重新生成 [release/win-unpacked](/D:/Work/YYZ_Claw/release/win-unpacked) 和 [YYZ_CLAW Setup 0.1.0.exe](/D:/Work/YYZ_Claw/release/YYZ_CLAW%20Setup%200.1.0.exe)
-  - 已实测直接启动 `win-unpacked\\YYZ_CLAW.exe` 能正常拉起主窗口，不再弹主进程 JavaScript 错误。
+- 已实测直接启动 `win-unpacked\\YYZ_CLAW.exe` 能正常拉起主窗口，不再弹主进程 JavaScript 错误。
+- 已新增会话级后台终端任务能力，任务持久化目录为 `.yyz/tasks/<conversationId>/<taskId>/`：
+  - `task.json`
+  - `stdout.log`
+  - `stderr.log`
+  - `payload.json`
+- 已补 3 个工具：
+  - `terminal_task_start`
+  - `terminal_task_overview`
+  - `terminal_task_detail`
+- 实现方式不是直接把真实命令粗暴 `detached`，而是起一个独立 runner：
+  - [backend/src/services/tasks/terminalTaskRunner.cjs](/D:/Work/YYZ_Claw/backend/src/services/tasks/terminalTaskRunner.cjs)
+  - runner 负责执行终端命令、持续写 stdout/stderr、本地回写最终状态与 exitCode
+- 任务服务在：
+  - [backend/src/services/tasks/ConversationTaskService.js](/D:/Work/YYZ_Claw/backend/src/services/tasks/ConversationTaskService.js)
+- 任务服务已挂进主智能体与子智能体 executionContext，因此工具在两边都可用。
+- 已做 smoke test：
+  - 启动后台命令 `Write-Output 'alpha'; Start-Sleep -Seconds 1; Write-Output 'omega'`
+  - 确认 `stdout.log` 真正写入 `alpha / omega`
+  - 概览与详情都能读到 `exited + exitCode 0 + result`
 
 ## 下一步打算做什么
 - 继续验证安装版首次启动时，`.yyz/subagents` 默认资产初始化是否正常。
 - 继续检查 Git 分支时间线与 commit 级 diff 预览的交互细节，尤其是 hover 浮层和详细 diff 切换。
 - 如有需要，补齐 `package.json` 的 `description / author`，去掉打包日志里的提醒。
+- 如果用户后续需要，再决定是否补第 4 个工具：后台任务停止。当前按要求只做了启动 / 概览 / 详情。
 
 ## 关键约束 / 风险
 - Git 面板依赖本机 `git` 可用；无仓库时会走初始化，若外部仓库状态变化，branch / ahead / behind 需要重新拉取。
 - 目前 diff 预览按单文件前后对比渲染，后续如果要支持更复杂的多文件联动预览，还需要再拆一层状态。
 - 打包版后端仍通过 `process.execPath + ELECTRON_RUN_AS_NODE` 拉起 `service.js`；后续如果 Electron 大版本改变这条能力，需要优先回头验证打包态启动链。
+- 当前后台任务结果读取是面向模型的轻量输出，元信息压缩了，但底层日志文件会完整保存在 `.yyz/tasks/...`。

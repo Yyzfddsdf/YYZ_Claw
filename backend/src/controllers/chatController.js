@@ -950,25 +950,74 @@ export function createChatController({
   automationSchedulerService,
   wakeDispatcher
 }) {
-  async function forceFinalizeRunIfStillActive(runLike, reason = "stopped by user") {
-    const runId = String(runLike?.runId ?? "").trim();
-    if (!runId) {
-      return false;
+  function flushRecorderSnapshotToHistory({
+    conversationId,
+    recorder,
+    baseHistory,
+    runtimeConfig,
+    thinkingMode,
+    approvalMode
+  } = {}) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (
+      !normalizedConversationId ||
+      !recorder ||
+      typeof recorder.getMessages !== "function"
+    ) {
+      return baseHistory ?? null;
     }
 
-    const activeRun = conversationRunCoordinator?.getRunById?.(runId) ?? null;
+    const existingHistory =
+      baseHistory ?? historyStore.getConversation(normalizedConversationId);
+    if (!existingHistory) {
+      return null;
+    }
+
+    const nextMessages = recorder.getMessages();
+    return historyStore.mergeConversation({
+      conversationId: normalizedConversationId,
+      title: existingHistory?.title,
+      workplacePath: existingHistory?.workplacePath,
+      parentConversationId: existingHistory?.parentConversationId,
+      source: existingHistory?.source,
+      model: runtimeConfig?.model ?? existingHistory?.model,
+      modelProfileId: runtimeConfig?.modelProfileId ?? existingHistory?.modelProfileId,
+      thinkingMode: thinkingMode ?? existingHistory?.thinkingMode,
+      approvalMode: existingHistory?.approvalMode ?? approvalMode,
+      goal: existingHistory?.goal,
+      skills: existingHistory?.skills,
+      plugins: existingHistory?.plugins,
+      disabledTools: existingHistory?.disabledTools,
+      personaId: existingHistory?.personaId,
+      developerPrompt: existingHistory?.developerPrompt,
+      messages: nextMessages
+    });
+  }
+
+  async function stopAndFinalizeRun(targetRun, reason = "stopped by user") {
+    const activeRun = conversationRunCoordinator?.resolveRun?.(targetRun) ?? null;
     if (!activeRun) {
-      return false;
+      return {
+        stopped: false,
+        runId: "",
+        agentId: "",
+        sessionId: "",
+        history: null
+      };
     }
 
     const conversationId = String(activeRun.conversationId ?? "").trim();
     const sessionId = String(activeRun.sessionId ?? "").trim();
     const agentId = String(activeRun.agentId ?? "").trim();
+    const flushedHistory =
+      typeof activeRun.flushRecorderSnapshotToHistory === "function"
+        ? activeRun.flushRecorderSnapshotToHistory()
+        : (conversationId ? historyStore.getConversation(conversationId) : null);
 
     conversationRunCoordinator?.emitEvent?.(activeRun, {
       type: "session_end",
       status: "aborted",
-      history: conversationId ? historyStore.getConversation(conversationId) : null
+      history: flushedHistory
     });
     conversationRunCoordinator?.abortRun?.(activeRun, reason);
 
@@ -1003,7 +1052,13 @@ export function createChatController({
       });
     }
 
-    return true;
+    return {
+      stopped: true,
+      runId: String(activeRun.runId ?? "").trim(),
+      agentId,
+      sessionId,
+      history: flushedHistory
+    };
   }
 
   function resolveSelectionOwnerConversationId(history, conversationId) {
@@ -1234,14 +1289,13 @@ export function createChatController({
         });
       }
 
-      conversationRunCoordinator?.abortRun?.(activeRun, "stopped by user");
-      setTimeout(() => {
-        void forceFinalizeRunIfStillActive(activeRun, "stopped by user");
-      }, 1500);
+      const stopResult = await stopAndFinalizeRun(activeRun, "stopped by user");
       res.json({
         success: true,
-        stopped: true,
-        runId: String(activeRun.runId ?? "").trim()
+        stopped: Boolean(stopResult?.stopped),
+        runId: String(stopResult?.runId ?? "").trim(),
+        agentId: String(stopResult?.agentId ?? "").trim(),
+        sessionId: String(stopResult?.sessionId ?? "").trim()
       });
     },
 
@@ -2378,6 +2432,17 @@ export function createChatController({
           foregroundRun,
           conversationRunCoordinator
         );
+        if (foregroundRun) {
+          foregroundRun.flushRecorderSnapshotToHistory = () =>
+            flushRecorderSnapshotToHistory({
+              conversationId: resolvedPendingApproval.conversationId,
+              recorder,
+              baseHistory: historyStore.getConversation(resolvedPendingApproval.conversationId),
+              runtimeConfig: resolvedPendingApproval.runtimeConfig,
+              thinkingMode: resumedHistory?.thinkingMode,
+              approvalMode: resumedHistory?.approvalMode
+            });
+        }
 
         emitRunEvent(
           foregroundRun,
@@ -2999,6 +3064,17 @@ export function createChatController({
         const recorder = new AgentConversationRecorder({
           initialMessages: effectiveMessages
         });
+        if (foregroundRun) {
+          foregroundRun.flushRecorderSnapshotToHistory = () =>
+            flushRecorderSnapshotToHistory({
+              conversationId,
+              recorder,
+              baseHistory: historyStore.getConversation(conversationId),
+              runtimeConfig: runtimeExecutionConfig,
+              thinkingMode: thinkingRuntimeOptions.thinkingMode,
+              approvalMode
+            });
+        }
         const pinnedMemorySummaryPrompt = await resolvePinnedMemorySummaryPrompt({
           historyStore,
           memorySummaryStore,

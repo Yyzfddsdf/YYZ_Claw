@@ -169,7 +169,8 @@ export async function createServices() {
   await subagentAssetStore.ensureDir();
 
   const mcpManager = new McpManager({
-    configStore: mcpConfigStore
+    configStore: mcpConfigStore,
+    pluginCatalog
   });
   runStartupTask("mcp refresh", () => mcpManager.refresh());
   const speechToTextService = new SpeechToTextService();

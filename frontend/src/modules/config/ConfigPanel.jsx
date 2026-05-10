@@ -89,6 +89,35 @@ function formatStatusText(status) {
   return `已加载 ${toolCount} 个工具${errorCount > 0 ? `，${errorCount} 个失败` : ""}`;
 }
 
+function normalizeMcpStatusServers(status) {
+  return Array.isArray(status?.servers)
+    ? status.servers
+        .map((server, index) => ({
+          key: String(server?.name ?? `server_${index + 1}`).trim() || `server_${index + 1}`,
+          name: String(server?.name ?? "").trim(),
+          displayName: String(server?.displayName ?? server?.name ?? "").trim(),
+          pluginName: String(server?.pluginName ?? "").trim(),
+          sourceType: String(server?.sourceType ?? "global").trim() || "global",
+          transport: String(server?.transport ?? "").trim(),
+          command: String(server?.command ?? "").trim(),
+          url: String(server?.url ?? "").trim(),
+          status: String(server?.status ?? "").trim(),
+          error: String(server?.error ?? "").trim(),
+          toolCount: Number(server?.toolCount ?? 0)
+        }))
+        .filter((server) => server.name || server.displayName)
+    : [];
+}
+
+function formatMcpServerStatus(status) {
+  const normalized = String(status ?? "").trim();
+  if (!normalized) return "unknown";
+  if (normalized === "ready") return "ready";
+  if (normalized === "error") return "error";
+  if (normalized === "loading") return "loading";
+  return normalized;
+}
+
 function normalizeHookSettings(settings) {
   const source = settings?.events ?? {};
   return {
@@ -166,6 +195,15 @@ export function ConfigPanel({
   }, []);
 
   const mcpStatusText = useMemo(() => formatStatusText(mcpStatus), [mcpStatus]);
+  const mcpStatusServers = useMemo(() => normalizeMcpStatusServers(mcpStatus), [mcpStatus]);
+  const globalMcpStatusServers = useMemo(
+    () => mcpStatusServers.filter((server) => server.sourceType !== "plugin"),
+    [mcpStatusServers]
+  );
+  const pluginMcpStatusServers = useMemo(
+    () => mcpStatusServers.filter((server) => server.sourceType === "plugin"),
+    [mcpStatusServers]
+  );
   const transportOptions = useMemo(
     () => [
       { value: "stdio", label: "Stdio (本地进程)" },
@@ -710,6 +748,96 @@ export function ConfigPanel({
       <div className="module-title-wrap">
         <h2>MCP 服务器</h2>
         <p>扩展智能体的工具集。支持本地标准输入输出 (Stdio) 和远程 SSE (HTTP)。</p>
+      </div>
+
+      <div className="config-section">
+        <div className="config-section-header">
+          <h3>当前已加载状态</h3>
+        </div>
+        <div className="config-section-body">
+          <div className="config-item">
+            <div className="config-item-info">
+              <span className="config-item-label">运行时总览</span>
+              <span className="config-item-desc">这里显示后端当前已经加载的全局 MCP 和插件级 MCP。</span>
+            </div>
+            <div className="config-item-control">
+              <span className="status-note">{mcpStatusText}</span>
+            </div>
+          </div>
+
+          <div className="config-item">
+            <div className="config-item-info">
+              <span className="config-item-label">全局 MCP</span>
+              <span className="config-item-desc">来自 `config/mcp.json` 的服务器状态。</span>
+            </div>
+            <div className="config-item-control">
+              {globalMcpStatusServers.length === 0 ? (
+                <div className="config-empty-state config-inline-empty-state">当前没有已加载的全局 MCP。</div>
+              ) : (
+                <div className="mcp-status-list">
+                  {globalMcpStatusServers.map((server) => (
+                    <div key={`global_${server.key}`} className="mcp-status-card">
+                      <div className="mcp-status-card-head">
+                        <strong>{server.displayName || server.name}</strong>
+                        <div className="mcp-status-badges">
+                          <span className="server-type-badge">{server.transport || "stdio"}</span>
+                          <span className={`mcp-status-badge is-${formatMcpServerStatus(server.status)}`}>
+                            {formatMcpServerStatus(server.status)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mcp-status-meta">
+                        <span>name: {server.name || "-"}</span>
+                        <span>tools: {server.toolCount}</span>
+                      </div>
+                      {server.command ? <div className="mcp-status-path">command: {server.command}</div> : null}
+                      {server.url ? <div className="mcp-status-path">url: {server.url}</div> : null}
+                      {server.error ? <div className="mcp-status-error">{server.error}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="config-item">
+            <div className="config-item-info">
+              <span className="config-item-label">插件级 MCP</span>
+              <span className="config-item-desc">来自插件 `/.mcp.json` 的服务器状态；这里只读展示，不在这里编辑。</span>
+            </div>
+            <div className="config-item-control">
+              {pluginMcpStatusServers.length === 0 ? (
+                <div className="config-empty-state config-inline-empty-state">当前没有已加载的插件级 MCP。</div>
+              ) : (
+                <div className="mcp-status-list">
+                  {pluginMcpStatusServers.map((server) => (
+                    <div key={`plugin_${server.key}`} className="mcp-status-card">
+                      <div className="mcp-status-card-head">
+                        <strong>{server.displayName || server.name}</strong>
+                        <div className="mcp-status-badges">
+                          <span className="server-type-badge">{server.transport || "stdio"}</span>
+                          <span className="server-type-badge mcp-plugin-badge">
+                            plugin: {server.pluginName || "-"}
+                          </span>
+                          <span className={`mcp-status-badge is-${formatMcpServerStatus(server.status)}`}>
+                            {formatMcpServerStatus(server.status)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mcp-status-meta">
+                        <span>name: {server.name || "-"}</span>
+                        <span>tools: {server.toolCount}</span>
+                      </div>
+                      {server.command ? <div className="mcp-status-path">command: {server.command}</div> : null}
+                      {server.url ? <div className="mcp-status-path">url: {server.url}</div> : null}
+                      {server.error ? <div className="mcp-status-error">{server.error}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       <form onSubmit={handleMcpSubmit}>

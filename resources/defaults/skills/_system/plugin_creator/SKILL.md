@@ -22,6 +22,8 @@ YYZ_Claw plugins are independent from normal skills.
 - `.app.json` is not supported.
 - Hook execution is available. Global hooks and plugin hooks use the same hooks.json format.
 - When the task is specifically about authoring hook behavior, read the `_system/hooks` skill first and reuse that format instead of redefining plugin hook conventions here.
+- Plugin-level MCP is available.
+- When the task is specifically about authoring global or plugin-level MCP, read the `_system/mcp` skill first and reuse that format instead of redefining MCP conventions here.
 
 ## Standard Plugin Layout
 
@@ -70,7 +72,7 @@ Recommended:
 
 Optional placeholders:
 
-- `mcpServers`: path to `.mcp.json`. Currently initialized and detected only.
+- `mcpServers`: path to `.mcp.json`. Use the `_system/mcp` skill for the actual MCP file format and scope rules.
 - `hooks`: path to `hooks/hooks.json`. Use the `_system/hooks` skill for the actual hook file format and script patterns.
 
 ## Model Context Rules
@@ -215,6 +217,8 @@ Use the bundled scripts instead of hand-writing boilerplate:
 - `scripts/init_plugin_skill.py`: adds one plugin skill to an existing plugin.
 
 `init_plugin.py` already creates a `hooks/` directory plus `hooks/hooks.json`. When the user wants plugin hooks, scaffold the files here, then switch to the `_system/hooks` skill for the actual event definitions and scripts.
+
+`init_plugin.py` also creates `.mcp.json`. When the user wants plugin-level MCP, scaffold the file here, then switch to the `_system/mcp` skill for the actual MCP server format, `${PLUGIN_ROOT}` usage, and scope decisions.
 
 Example:
 

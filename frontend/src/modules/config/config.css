@@ -85,6 +85,10 @@
   font-size: 0.86rem;
 }
 
+.config-inline-empty-state {
+  padding: 0.75rem 0;
+}
+
 .model-profile-card {
   margin: 0.85rem 1rem;
   padding: 0.85rem;
@@ -563,5 +567,90 @@
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
+}
+
+.mcp-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.mcp-status-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-main);
+  padding: 0.8rem 0.9rem;
+}
+
+.mcp-status-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.mcp-status-card-head strong {
+  color: var(--text-main);
+  font-size: 0.9rem;
+}
+
+.mcp-status-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.mcp-status-badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+.mcp-status-badge.is-ready {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.mcp-status-badge.is-error {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.mcp-status-badge.is-loading {
+  background: var(--brand-light);
+  color: var(--brand);
+}
+
+.mcp-plugin-badge {
+  background: color-mix(in srgb, var(--brand-light) 55%, var(--bg-main));
+}
+
+.mcp-status-meta {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.mcp-status-path {
+  margin-top: 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--text-main);
+  word-break: break-all;
+}
+
+.mcp-status-error {
+  margin-top: 0.45rem;
+  color: var(--danger);
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 

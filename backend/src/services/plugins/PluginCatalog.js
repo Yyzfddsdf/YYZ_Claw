@@ -243,7 +243,7 @@ function normalizeManifest(rawManifest, fallbackName) {
     keywords: toStringArray(manifest.keywords),
     author: normalizeAuthor(manifest.author),
     skills: normalizeText(manifest.skills || "./skills"),
-    mcpServers: normalizeText(manifest.mcpServers || manifest.mcp || "./.mcp.json"),
+    mcpServers: normalizeText(manifest.mcpServers || manifest.mcp_servers || manifest.mcp || "./.mcp.json"),
     hooks: normalizeText(manifest.hooks || path.join("./hooks", "hooks.json")),
     rules: manifest.rules,
     interface: normalizeInterface(manifest.interface)

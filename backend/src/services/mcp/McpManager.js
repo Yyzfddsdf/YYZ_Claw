@@ -1,4 +1,11 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import { McpClient } from "./McpClient.js";
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 function sanitizeIdentifier(input, fallback) {
   const normalized = String(input ?? "")
@@ -10,8 +17,24 @@ function sanitizeIdentifier(input, fallback) {
   return normalized || fallback;
 }
 
+function sanitizeNamespaceSegment(input, fallback = "") {
+  const normalized = String(input ?? "")
+    .trim()
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized || fallback;
+}
+
 function buildNamespacedToolName(serverName, toolName) {
-  return `mcp__${sanitizeIdentifier(serverName, "server")}__${sanitizeIdentifier(toolName, "tool")}`;
+  const serverSegments = String(serverName ?? "")
+    .split("__")
+    .map((segment) => sanitizeNamespaceSegment(segment))
+    .filter(Boolean);
+  const normalizedServerName = serverSegments.length > 0
+    ? serverSegments.join("__")
+    : "server";
+  return `mcp__${normalizedServerName}__${sanitizeIdentifier(toolName, "tool")}`;
 }
 
 function normalizeToolInputSchema(tool) {
@@ -37,6 +60,68 @@ function normalizeToolDescription(serverDisplayName, tool) {
 
 function normalizeServerArgs(args) {
   return Array.isArray(args) ? args.map((item) => String(item ?? "")) : [];
+}
+
+function normalizeServerEnv(env) {
+  return isPlainObject(env) ? env : {};
+}
+
+function normalizeServerDefinition(rawServer = {}, fallbackName = "server") {
+  const server = isPlainObject(rawServer) ? rawServer : {};
+  return {
+    name: String(server.name ?? "").trim() || fallbackName,
+    transport: String(server.transport ?? "stdio").trim() === "http" ? "http" : "stdio",
+    command: String(server.command ?? "").trim(),
+    args: normalizeServerArgs(server.args),
+    cwd: String(server.cwd ?? "").trim(),
+    env: normalizeServerEnv(server.env),
+    url: String(server.url ?? "").trim(),
+    httpHeaders: isPlainObject(server.httpHeaders) ? server.httpHeaders : {},
+    startupTimeoutMs: server.startupTimeoutMs,
+    requestTimeoutMs: server.requestTimeoutMs,
+    enabled: server.enabled !== false
+  };
+}
+
+function expandPluginRootToken(value, pluginRootDir) {
+  return String(value ?? "").replaceAll("${PLUGIN_ROOT}", String(pluginRootDir ?? "").trim());
+}
+
+function expandPluginServerDefinition(server, pluginRootDir) {
+  return {
+    ...server,
+    command: expandPluginRootToken(server.command, pluginRootDir),
+    args: Array.isArray(server.args)
+      ? server.args.map((item) => expandPluginRootToken(item, pluginRootDir))
+      : [],
+    cwd: expandPluginRootToken(server.cwd, pluginRootDir),
+    env: Object.fromEntries(
+      Object.entries(normalizeServerEnv(server.env)).map(([key, value]) => [
+        key,
+        expandPluginRootToken(value, pluginRootDir)
+      ])
+    ),
+    url: expandPluginRootToken(server.url, pluginRootDir)
+  };
+}
+
+function normalizePluginNameSet(activePluginNames) {
+  return new Set(
+    (Array.isArray(activePluginNames) ? activePluginNames : [])
+      .map((item) => String(item ?? "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function shouldExposeToolForExecutionContext(tool, executionContext = null) {
+  if (!tool?.pluginName) {
+    return true;
+  }
+  const activePluginNames = normalizePluginNameSet(executionContext?.activePluginNames);
+  if (activePluginNames.size === 0) {
+    return false;
+  }
+  return activePluginNames.has(String(tool.pluginName ?? "").trim().toLowerCase());
 }
 
 function normalizeResultContent(result) {
@@ -86,8 +171,9 @@ function createExecutionError(message, statusCode = 500) {
 }
 
 export class McpManager {
-  constructor({ configStore }) {
+  constructor({ configStore, pluginCatalog = null }) {
     this.configStore = configStore;
+    this.pluginCatalog = pluginCatalog;
     this.clients = new Map();
     this.toolMap = new Map();
     this.serverSummaries = [];
@@ -95,9 +181,99 @@ export class McpManager {
     this.lastConfigFingerprint = "";
   }
 
+  async readPluginMcpServers() {
+    if (!this.pluginCatalog || typeof this.pluginCatalog.read !== "function") {
+      return [];
+    }
+
+    const catalog = await this.pluginCatalog.read();
+    const servers = [];
+    const errors = [];
+
+    for (const plugin of Array.isArray(catalog?.plugins) ? catalog.plugins : []) {
+      if (!plugin?.enabled || !plugin?.hasMcp || !String(plugin?.mcpPath ?? "").trim()) {
+        continue;
+      }
+
+      try {
+        const filePath = String(plugin.mcpPath).trim();
+        const pluginRootDir = String(plugin.rootDir ?? "").trim() || String(await fs.realpath(path.dirname(filePath)));
+        const rawText = await fs.readFile(filePath, "utf8");
+        const parsed = JSON.parse(rawText);
+        const serverMap = isPlainObject(parsed?.mcpServers)
+          ? parsed.mcpServers
+          : isPlainObject(parsed?.mcp_servers)
+            ? parsed.mcp_servers
+            : {};
+
+        for (const [serverKey, rawServer] of Object.entries(serverMap)) {
+          const normalizedServer = expandPluginServerDefinition(
+            normalizeServerDefinition(rawServer, serverKey),
+            pluginRootDir
+          );
+          if (!normalizedServer.enabled || !normalizedServer.command) {
+            continue;
+          }
+          servers.push({
+            ...normalizedServer,
+            sourceType: "plugin",
+            pluginName: String(plugin.name ?? "").trim(),
+            pluginDisplayName: String(plugin.displayName ?? plugin.name ?? "").trim(),
+            sourcePath: filePath,
+            rawServerKey: String(serverKey ?? "").trim() || normalizedServer.name
+          });
+        }
+      } catch (error) {
+        errors.push({
+          name: `plugin:${String(plugin.name ?? "").trim() || "plugin"}`,
+          displayName: String(plugin.displayName ?? plugin.name ?? "").trim() || String(plugin.name ?? "plugin"),
+          command: String(plugin.mcpPath ?? "").trim(),
+          message: String(error?.message ?? "Plugin MCP config failed to load")
+        });
+      }
+    }
+
+    return { servers, errors };
+  }
+
+  async resolveServerDefinitions() {
+    const globalConfig = await this.configStore.read();
+    const globalServers = (Array.isArray(globalConfig?.servers) ? globalConfig.servers : [])
+      .map((server, index) => ({
+        ...normalizeServerDefinition(server, `server_${index + 1}`),
+        sourceType: "global",
+        pluginName: "",
+        pluginDisplayName: "",
+        sourcePath: ""
+      }))
+      .filter((server) => server.enabled !== false);
+    const pluginResolution = await this.readPluginMcpServers();
+    const pluginServers = Array.isArray(pluginResolution?.servers) ? pluginResolution.servers : [];
+    return {
+      fingerprint: JSON.stringify({
+        globalConfig: globalConfig ?? {},
+        pluginServers: pluginServers.map((server) => ({
+          pluginName: server.pluginName,
+          rawServerKey: server.rawServerKey,
+          command: server.command,
+          args: server.args,
+          cwd: server.cwd,
+          env: server.env,
+          transport: server.transport,
+          url: server.url,
+          httpHeaders: server.httpHeaders,
+          startupTimeoutMs: server.startupTimeoutMs,
+          requestTimeoutMs: server.requestTimeoutMs
+        }))
+      }),
+      servers: [...globalServers, ...pluginServers],
+      preloadErrors: Array.isArray(pluginResolution?.errors) ? pluginResolution.errors : []
+    };
+  }
+
   async refresh() {
-    const config = await this.configStore.read();
-    const fingerprint = JSON.stringify(config ?? {});
+    const resolved = await this.resolveServerDefinitions();
+    const fingerprint = resolved.fingerprint;
 
     if (
       fingerprint === this.lastConfigFingerprint &&
@@ -107,17 +283,17 @@ export class McpManager {
       return this.getStatus();
     }
 
-    return this.reload(config);
+    return this.reload(resolved);
   }
 
-  async reload(config) {
+  async reload(resolved) {
     await this.closeAllClients();
 
     this.toolMap.clear();
     this.serverSummaries = [];
-    this.lastLoadErrors = [];
+    this.lastLoadErrors = Array.isArray(resolved?.preloadErrors) ? [...resolved.preloadErrors] : [];
 
-    const servers = Array.isArray(config?.servers) ? config.servers : [];
+    const servers = Array.isArray(resolved?.servers) ? resolved.servers : [];
     const seenServerNames = new Set();
 
     for (let index = 0; index < servers.length; index += 1) {
@@ -127,10 +303,19 @@ export class McpManager {
       }
 
       const displayName = String(server.name ?? "").trim() || `server_${index + 1}`;
-      let serverName = sanitizeIdentifier(displayName, `server_${index + 1}`);
+      const pluginName = String(server.pluginName ?? "").trim();
+      const rawServerKey = String(server.rawServerKey ?? displayName).trim() || `server_${index + 1}`;
+      const rawNamespaceBase = pluginName
+        ? `${sanitizeIdentifier(pluginName, "plugin")}__${sanitizeIdentifier(rawServerKey, `server_${index + 1}`)}`
+        : displayName;
+      let serverName = pluginName
+        ? rawNamespaceBase
+        : sanitizeIdentifier(rawNamespaceBase, `server_${index + 1}`);
       let suffix = 2;
       while (seenServerNames.has(serverName)) {
-        serverName = `${sanitizeIdentifier(displayName, `server_${index + 1}`)}_${suffix}`;
+        serverName = pluginName
+          ? `${rawNamespaceBase}__${suffix}`
+          : `${sanitizeIdentifier(rawNamespaceBase, `server_${index + 1}`)}_${suffix}`;
         suffix += 1;
       }
 
@@ -138,13 +323,13 @@ export class McpManager {
 
       const client = new McpClient({
         name: displayName,
-        transport: String(server.transport ?? "stdio").trim() === "http" ? "http" : "stdio",
-        command: String(server.command ?? "").trim(),
+        transport: server.transport,
+        command: server.command,
         args: normalizeServerArgs(server.args),
-        cwd: String(server.cwd ?? "").trim(),
-        env: server.env && typeof server.env === "object" ? server.env : {},
-        url: String(server.url ?? "").trim(),
-        httpHeaders: server.httpHeaders && typeof server.httpHeaders === "object" ? server.httpHeaders : {},
+        cwd: server.cwd,
+        env: normalizeServerEnv(server.env),
+        url: server.url,
+        httpHeaders: isPlainObject(server.httpHeaders) ? server.httpHeaders : {},
         startupTimeoutMs: server.startupTimeoutMs,
         requestTimeoutMs: server.requestTimeoutMs
       });
@@ -161,6 +346,10 @@ export class McpManager {
                 name: namespacedName,
                 description: normalizeToolDescription(displayName, tool),
                 parameters: normalizeToolInputSchema(tool),
+                pluginName,
+                sourceType: String(server.sourceType ?? "global").trim() || "global",
+                serverName,
+                serverDisplayName: displayName,
                 execute: async (toolArguments = {}) => {
                   const args =
                     toolArguments && typeof toolArguments === "object" && !Array.isArray(toolArguments)
@@ -188,6 +377,7 @@ export class McpManager {
         this.clients.set(serverName, {
           name: serverName,
           displayName,
+          pluginName,
           client,
           tools: normalizedTools
         });
@@ -195,9 +385,11 @@ export class McpManager {
         this.serverSummaries.push({
           name: serverName,
           displayName,
-          transport: String(server.transport ?? "stdio").trim() === "http" ? "http" : "stdio",
-          command: String(server.command ?? "").trim(),
-          url: String(server.url ?? "").trim(),
+          pluginName,
+          sourceType: String(server.sourceType ?? "global").trim() || "global",
+          transport: server.transport,
+          command: server.command,
+          url: server.url,
           enabled: true,
           toolCount: normalizedTools.length,
           status: "ready",
@@ -214,9 +406,11 @@ export class McpManager {
         this.serverSummaries.push({
           name: serverName,
           displayName,
-          transport: String(server.transport ?? "stdio").trim() === "http" ? "http" : "stdio",
-          command: String(server.command ?? "").trim(),
-          url: String(server.url ?? "").trim(),
+          pluginName,
+          sourceType: String(server.sourceType ?? "global").trim() || "global",
+          transport: server.transport,
+          command: server.command,
+          url: server.url,
           enabled: true,
           toolCount: 0,
           status: "error",
@@ -227,7 +421,7 @@ export class McpManager {
       }
     }
 
-    this.lastConfigFingerprint = JSON.stringify(config ?? {});
+    this.lastConfigFingerprint = String(resolved?.fingerprint ?? "");
     return this.getStatus();
   }
 
@@ -254,8 +448,10 @@ export class McpManager {
     return true;
   }
 
-  listTools() {
-    return Array.from(this.toolMap.values());
+  listTools(executionContext = null) {
+    return Array.from(this.toolMap.values()).filter((tool) =>
+      shouldExposeToolForExecutionContext(tool, executionContext)
+    );
   }
 
   hasTool(toolName) {
@@ -266,8 +462,8 @@ export class McpManager {
     return this.toolMap.get(String(toolName ?? "").trim()) ?? null;
   }
 
-  getOpenAITools() {
-    return this.listTools().map((tool) => ({
+  getOpenAITools(executionContext = null) {
+    return this.listTools(executionContext).map((tool) => ({
       type: "function",
       function: {
         name: tool.name,

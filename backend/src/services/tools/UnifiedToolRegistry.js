@@ -54,7 +54,7 @@ export class UnifiedToolRegistry {
       toolMap.set(tool.name, tool);
     }
 
-    for (const tool of this.mcpManager?.listTools?.() ?? []) {
+    for (const tool of this.mcpManager?.listTools?.(executionContext) ?? []) {
       if (!toolMap.has(tool.name) && (!executionContext || isToolEnabled(tool, executionContext))) {
         toolMap.set(tool.name, tool);
       }

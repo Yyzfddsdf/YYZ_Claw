@@ -84,6 +84,20 @@
 }
 ```
 
+当前实现兼容这个下划线写法：
+
+```json
+{
+  "mcp_servers": {
+    "plugin-database": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/servers/db-server.js"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}
+```
+
 ### 2.2.1 最标准示例
 ```json
 {
@@ -107,6 +121,7 @@
 
 ### 2.2.2 这个示例怎么理解
 - `mcpServers` 是插件内 MCP 的顶层集合
+- 当前实现也兼容 `mcp_servers`
 - 每个 key 是一个 server 名字，建议短、稳定、可读
 - `command` 放可执行程序，不放整串 shell 命令
 - `args` 放参数数组，逐项拆开
@@ -141,8 +156,9 @@
 
 ### 2.4 行为
 - 跟着插件一起分发
-- 插件启用时自动启动
-- 插件停用或会话结束时停止
+- 已启用插件的 MCP server 会被宿主启动
+- 会话里只有当前 `activePluginNames` 命中的插件 MCP 工具会暴露给模型
+- 插件停用或刷新后会重新加载 MCP
 - 属于插件能力的一部分
 - 工具命名也要做命名空间隔离
 
@@ -180,7 +196,16 @@
 - 全局 MCP 工具前缀：
   - `mcp__<serverName>__<toolName>`
 - 插件内 MCP 也应使用命名空间化工具名
+- 当前实现会把插件名并进 server 命名空间
+  - 形如 `mcp__<pluginName>__<serverName>__<toolName>`
 - 不允许和本地工具直接冲突
+
+例如：
+
+- 全局 MCP：
+  - `mcp__filesystem__read_file`
+- 插件级 MCP：
+  - `mcp__novel_writer__hello__say_hello`
 
 ## 6. 和 hook 的关系
 - MCP 是工具来源
@@ -190,10 +215,76 @@
 
 ## 7. 当前实现边界
 - 我们项目现在已经有全局 MCP 热加载
-- 我们项目还没有把插件内 MCP 做成完整标准化实现
-- 现在 plugin 系统里对 `.mcp.json` 主要还是存在性识别，不是完整接管
+- 我们项目现在已经支持插件级 `.mcp.json` 读取和启动
+- 当前兼容插件级 `.mcp.json` 顶层：
+  - `mcpServers`
+  - `mcp_servers`
+- 当前插件级 MCP 只支持本地进程型配置
+- 当前没有把插件级 MCP 做成单独的前端编辑器
+- 远程 `url/httpHeaders` 仍然不是插件级标准主路径
 
 ## 8. 后续实现要求
 - 全局 MCP 和插件 MCP 不要混用成同一种 JSON
-- 解析器要分别处理 `servers` 和 `mcpServers`
+- 解析器要分别处理：
+  - 全局 `servers`
+  - 插件 `mcpServers` / `mcp_servers`
 - 如果以后扩展字段，先更新本文件
+
+## 9. 插件级 MCP 使用方式
+
+### 9.1 最小可用目录
+
+```text
+my-plugin/
+  .plugin/
+    plugin.json
+  .mcp.json
+  servers/
+    my-server.js
+```
+
+### 9.2 plugin manifest
+
+manifest 里建议显式保留：
+
+```json
+{
+  "name": "my-plugin",
+  "description": "Example plugin",
+  "mcpServers": "./.mcp.json"
+}
+```
+
+当前实现也兼容：
+
+```json
+{
+  "name": "my-plugin",
+  "description": "Example plugin",
+  "mcp_servers": "./.mcp.json"
+}
+```
+
+### 9.3 `.mcp.json` 示例
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/servers/my-server.js", "--mode", "plugin"],
+      "env": {
+        "PLUGIN_MODE": "1"
+      },
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}
+```
+
+### 9.4 加载规则
+
+- 插件必须处于 enabled 状态
+- 插件根目录里必须能找到 `.mcp.json`
+- 宿主会启动该插件声明的 MCP server
+- 但只有当前会话选中了该插件，这些 MCP 工具才会真正出现在模型可用工具列表里

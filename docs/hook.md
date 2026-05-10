@@ -253,11 +253,30 @@ matcher 匹配的是 **工具名**。
 
 匹配某个 MCP 工具。
 
+对于**全局 MCP**，这表示：
+
+- server 名：`filesystem`
+- tool 名：`read_file`
+
 ```json
 "matcher": "mcp__filesystem__*"
 ```
 
-匹配某个 MCP server 下的全部工具。
+匹配某个全局 MCP server 下的全部工具。
+
+对于**插件级 MCP**，当前实现会把插件名并进 server 命名空间。
+
+例如：
+
+```json
+"matcher": "mcp__novel_writer__hello__say_hello"
+```
+
+表示：
+
+- 插件名：`novel-writer`
+- server 名：`hello`
+- tool 名：`say_hello`
 
 ### 常见写法
 
@@ -272,6 +291,52 @@ matcher 匹配的是 **工具名**。
 ```
 
 也会按匹配全部处理。
+
+### 推荐 matcher 工具名
+
+当前项目里，写 matcher 时优先使用这些内置工具名：
+
+- `Bash`
+- `PowerShell`
+- `Read`
+- `Edit`
+- `Write`
+- `Glob`
+- `Grep`
+- `NotebookEdit`
+
+常见推荐写法：
+
+- `Bash`
+  - 只匹配 shell 命令执行
+- `Bash|PowerShell`
+  - 同时匹配两类终端命令
+- `Edit|Write`
+  - 同时匹配文件修改和整文件写入
+- `Read|Glob|Grep`
+  - 同时匹配文件读取与检索类工具
+- `NotebookEdit`
+  - 只匹配 Jupyter Notebook 单元修改
+
+如果是 MCP 工具，继续用命名空间写法：
+
+- `mcp__*`
+- `mcp__filesystem__read_file`
+- `mcp__filesystem__*`
+- `mcp__novel_writer__*`
+- `mcp__novel_writer__hello__say_hello`
+- `mcp__novel_writer__hello__*`
+
+其中：
+
+- `mcp__*`
+  - 匹配全部 MCP 工具
+- `mcp__filesystem__*`
+  - 匹配全局 `filesystem` MCP 下的全部工具
+- `mcp__novel_writer__*`
+  - 匹配插件 `novel-writer` 下的全部 MCP 工具
+- `mcp__novel_writer__hello__*`
+  - 匹配插件 `novel-writer` 下 `hello` 这个 MCP server 的全部工具
 
 ---
 
@@ -547,6 +612,8 @@ matcher 匹配的是 **工具名**。
 
 - 这里真正用于拦截报错文案的是 `permissionDecisionReason`
 - 不是 `reason`
+- 当前实现里 `PreToolUse` 不支持旧格式 `decision = "block"` 加 `reason`
+- 如果你在 `PreToolUse` 里只返回 `reason`，当前代码不会识别
 
 ### PermissionRequest
 
@@ -581,6 +648,15 @@ matcher 匹配的是 **工具名**。
 - `deny`
   - 直接拒绝
   - 不进入审批弹窗
+- 不返回 `behavior`
+  - 继续走系统原本的审批流程
+
+注意：
+
+- 执行顺序永远是先 `PreToolUse`，后 `PermissionRequest`
+- 如果 `PreToolUse` 已经 `deny`
+  - 工具会直接被拒绝
+  - `PermissionRequest` 根本不会再执行
 
 ### PostToolUse
 
@@ -614,6 +690,17 @@ matcher 匹配的是 **工具名**。
   - 显示成 `hook_status`
 
 如果只是想补上下文，不想 block 工具结果，可以把 `decision` 留空字符串。
+
+注意：
+
+- `PostToolUse` 的 `decision = "block"` 要谨慎使用
+- 一旦 block，模型看到的就不再是原始 `tool_result`
+- 而是 `reason`
+- 如果你把 `reason` 写成固定废话，例如“已执行完成”
+  - 模型会丢失真正的工具输出
+  - 后续推理质量会明显下降
+- 想补充提醒、建议、约束时，优先用 `additionalContext`
+- 只有在你明确要替换原始工具结果时，才用 `decision = "block"`
 
 ### Stop
 

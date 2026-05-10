@@ -20,9 +20,19 @@
 - 已新增 hook system skill：
   - `resources/defaults/skills/_system/hooks/SKILL.md`
   - `C:\Users\HUAWEI\.yyz\skills\_system\hooks\SKILL.md`
+- 已新增 MCP system skill：
+  - `resources/defaults/skills/_system/mcp/SKILL.md`
+  - `C:\Users\HUAWEI\.yyz\skills\_system\mcp\SKILL.md`
+  - 内容详细覆盖：
+    - 全局 MCP
+    - 插件级 MCP
+    - `${PLUGIN_ROOT}`
+    - `mcpServers` / `mcp_servers`
+    - 插件 manifest 里的 MCP 路径字段
 - 已更新 plugin_creator，让它不要重复定义插件 hook 格式，而是指向新的 hooks skill：
   - `resources/defaults/skills/_system/plugin_creator/SKILL.md`
   - `C:\Users\HUAWEI\.yyz\skills\_system\plugin_creator\SKILL.md`
+  - 现在也会把 MCP 说明指向 `_system/mcp`，不再自己重复讲插件级 MCP 细节。
 - 已修正 plugin 初始化脚本：
   - `resources/defaults/skills/_system/plugin_creator/scripts/init_plugin.py`
   - `C:\Users\HUAWEI\.yyz\skills\_system\plugin_creator\scripts\init_plugin.py`
@@ -35,11 +45,40 @@
 - 已更新使用文档：
   - `docs/hook.md`
   - 说明与当前默认 hook 行为保持一致。
+- 已接入插件级 MCP 真实加载链路：
+  - `backend/src/services/mcp/McpManager.js`
+  - `backend/src/services/plugins/PluginCatalog.js`
+  - `backend/src/bootstrap/createServices.js`
+  - `backend/src/controllers/pluginsController.js`
+  - 插件根目录 `/.mcp.json` 现在会被真正读取，而不只是识别存在性。
+  - 当前兼容插件级 `.mcp.json` 顶层：
+    - `mcpServers`
+    - `mcp_servers`
+  - 插件 manifest 路径字段当前兼容：
+    - `mcpServers`
+    - `mcp_servers`
+    - `mcp`
+  - `${PLUGIN_ROOT}` 现在会在插件 MCP 配置里自动展开。
+  - 插件启用/刷新时会同步刷新 MCP。
+  - 插件 MCP 工具只会在当前会话 `activePluginNames` 命中该插件时暴露给模型。
+- 已给当前用户环境里的 `novel-writer` 插件补了一个最小测试 MCP：
+  - `C:\Users\HUAWEI\.yyz\plugins\novel-writer\.mcp.json`
+  - `C:\Users\HUAWEI\.yyz\plugins\novel-writer\servers\hello-mcp.js`
+  - 暴露工具 `say_hello`
+  - 调用结果返回 `你好`
+  - 已用 `backend/src/services/mcp/McpClient.js` 做过烟测，能正常 `initialize`、`tools/list`、`tools/call`
+- 已补 MCP 文档：
+  - `MCP_STANDARD.md`
+  - `docs/mcp.md`
 - 校验已通过：
   - 两个 `init_plugin.py` 都过了 `python -m py_compile`
   - 当前 `.yyz/hooks/hooks.json` 可正常解析
   - `pre_tool_use.ps1`、`permission_request.ps1`、`post_tool_use.ps1`、`user_prompt_submitted.ps1` 都做了实际输入输出测试
   - 当前 `plugin_creator` 脚本实际跑过一次，确认会创建 `hooks/` 和标准的 `hooks.json`
+  - 插件级 MCP 做过一次最小烟测，确认：
+    - `.mcp.json` 可读取
+    - `mcp_servers` 兼容生效
+    - `${PLUGIN_ROOT}` 展开生效
 
 ## 下一步打算做什么
 - 如果继续 hook 相关工作，优先做这几件事之一：
@@ -48,8 +87,13 @@
   - 给 hooks skill 再拆出示例 references，方便模型复用
   - 再做插件级 hook 的真实示例，而不是测试示例
 - 如果切回插件体系主线，继续按 `PLUGIN_ROADMAP.md` 推进完整 plugin / marketplace / global hook 机制剩余部分
+- 如果继续 MCP 主线，优先做这几件事之一：
+  - 做一个真实可运行的插件级 MCP 示例插件
+  - 给插件级 MCP 增加状态展示 / 调试面板
+  - 再决定要不要支持插件级远程 HTTP MCP
 
 ## 关键约束 / 风险
 - 当前全局 hook 脚本为了兼容 Windows PowerShell 5.1，尽量避免在脚本判断逻辑里使用中文 regex；优先用 ASCII 关键词和 UTF-8 输出。
 - `resources/defaults` 只会在缺失时复制到 `.yyz`，不会自动覆盖已有用户文件；这次为了立刻生效，已经同步改了当前 `.yyz` 现货。
 - 插件级 hook 这轮没有补真实业务示例，只把默认测试痕迹去掉并统一成标准空结构。
+- 插件级 MCP 当前已经能加载，但还没有单独的前端编辑器；现在主要靠文件配置。

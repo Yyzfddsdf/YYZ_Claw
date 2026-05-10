@@ -4,7 +4,7 @@ function createValidationError(message, statusCode = 400) {
   return error;
 }
 
-export function createPluginsController({ pluginCatalog, pluginSettingsStore }) {
+export function createPluginsController({ pluginCatalog, pluginSettingsStore, mcpManager }) {
   function ensurePluginCatalog() {
     if (!pluginCatalog || typeof pluginCatalog.listPlugins !== "function") {
       throw createValidationError("plugin catalog is not available", 500);
@@ -72,6 +72,9 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore }) 
     refreshPlugins: async (_req, res) => {
       ensurePluginCatalog();
       await pluginCatalog.refresh();
+      if (mcpManager && typeof mcpManager.refresh === "function") {
+        await mcpManager.refresh();
+      }
       const plugins = await pluginCatalog.listPlugins();
       res.json({
         refreshed: true,
@@ -93,6 +96,9 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore }) 
 
       await pluginSettingsStore.setPluginEnabled(pluginName, req.body?.enabled !== false);
       await pluginCatalog.refresh();
+      if (mcpManager && typeof mcpManager.refresh === "function") {
+        await mcpManager.refresh();
+      }
       const plugins = await pluginCatalog.listPlugins();
       const plugin = plugins.find((item) => item.name === pluginName);
       if (!plugin) {

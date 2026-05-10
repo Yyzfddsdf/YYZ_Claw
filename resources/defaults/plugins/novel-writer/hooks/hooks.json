@@ -4,7 +4,17 @@
     "UserPromptSubmitted": [],
     "PreToolUse": [],
     "PermissionRequest": [],
-    "PostToolUse": [],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__novel_writer__hello__say_hello",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "The plugin MCP tool {{tool_name}} already returned its greeting. Reuse that result directly unless the user explicitly asks to call it again."
+          }
+        ]
+      }
+    ],
     "Stop": []
   }
 }

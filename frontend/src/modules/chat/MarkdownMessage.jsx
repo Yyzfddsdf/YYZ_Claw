@@ -167,7 +167,7 @@ function useThrottledStreamingContent(content, streaming) {
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
       setVisibleContent(latestRef.current);
-    }, 90);
+    }, 16);
 
     return undefined;
   }, [source, streaming]);

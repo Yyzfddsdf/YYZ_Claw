@@ -1,0 +1,62 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Use hook_status as runtime diagnostics only. If a hook denies a tool or auto-approves a safe read-only command, adapt your next step instead of repeating the same blocked call."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmitted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -Command \"& { $root = if ($env:YYZ_CLAW_HOME) { $env:YYZ_CLAW_HOME } else { Join-Path $env:USERPROFILE '.yyz' }; & (Join-Path $root 'hooks\\user_prompt_submitted.ps1') }\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -Command \"& { $root = if ($env:YYZ_CLAW_HOME) { $env:YYZ_CLAW_HOME } else { Join-Path $env:USERPROFILE '.yyz' }; & (Join-Path $root 'hooks\\pre_tool_use.ps1') }\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -Command \"& { $root = if ($env:YYZ_CLAW_HOME) { $env:YYZ_CLAW_HOME } else { Join-Path $env:USERPROFILE '.yyz' }; & (Join-Path $root 'hooks\\permission_request.ps1') }\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -Command \"& { $root = if ($env:YYZ_CLAW_HOME) { $env:YYZ_CLAW_HOME } else { Join-Path $env:USERPROFILE '.yyz' }; & (Join-Path $root 'hooks\\post_tool_use.ps1') }\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": []
+  }
+}

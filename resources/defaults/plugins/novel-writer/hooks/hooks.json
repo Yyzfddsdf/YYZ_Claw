@@ -1,3 +1,10 @@
 {
-  "hooks": []
+  "hooks": {
+    "SessionStart": [],
+    "UserPromptSubmitted": [],
+    "PreToolUse": [],
+    "PermissionRequest": [],
+    "PostToolUse": [],
+    "Stop": []
+  }
 }

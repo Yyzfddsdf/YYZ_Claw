@@ -1,0 +1,22 @@
+{
+  "events": {
+    "SessionStart": {
+      "enabled": true
+    },
+    "UserPromptSubmitted": {
+      "enabled": true
+    },
+    "PreToolUse": {
+      "enabled": true
+    },
+    "PermissionRequest": {
+      "enabled": true
+    },
+    "PostToolUse": {
+      "enabled": true
+    },
+    "Stop": {
+      "enabled": true
+    }
+  }
+}

@@ -118,12 +118,26 @@ def main() -> None:
         "# Plugin Rules\n\n"
         "- Use this plugin only for its stated workflow.\n"
         "- Prefer local files and local workspace context.\n"
-        "- Do not claim MCP or hook execution is available until YYZ_Claw runtime logic is added.\n"
+        "- Plugin hooks use the same hooks.json format as global hooks.\n"
+        "- When adding plugin hooks, reuse the _system/hooks skill instead of inventing a new hook format.\n"
         "- Verify generated or modified files before reporting completion.\n",
         args.force,
     )
     write_json(plugin_root / ".mcp.json", {"mcpServers": {}}, args.force)
-    write_json(plugin_root / "hooks" / "hooks.json", {"hooks": []}, args.force)
+    write_json(
+        plugin_root / "hooks" / "hooks.json",
+        {
+            "hooks": {
+                "SessionStart": [],
+                "UserPromptSubmitted": [],
+                "PreToolUse": [],
+                "PermissionRequest": [],
+                "PostToolUse": [],
+                "Stop": []
+            }
+        },
+        args.force,
+    )
     (plugin_root / "skills").mkdir(parents=True, exist_ok=True)
 
     if args.with_skill:

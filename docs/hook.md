@@ -186,10 +186,8 @@ Hook 是一套 **事件驱动的拦截和注入机制**。
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -File \"C:\\Users\\HUAWEI\\.yyz\\hooks\\session_start.ps1\"",
-            "statusMessage": "Running SessionStart hook",
-            "timeout": 10
+            "type": "prompt",
+            "prompt": "Use hook_status as runtime diagnostics only."
           }
         ]
       }
@@ -728,27 +726,25 @@ matcher 匹配的是 **工具名**。
 当前你本机已经有一套可用的全局 hook 示例：
 
 - [hooks.json](C:/Users/HUAWEI/.yyz/hooks/hooks.json)
-- [session_start.ps1](C:/Users/HUAWEI/.yyz/hooks/session_start.ps1)
 - [user_prompt_submitted.ps1](C:/Users/HUAWEI/.yyz/hooks/user_prompt_submitted.ps1)
 - [pre_tool_use.ps1](C:/Users/HUAWEI/.yyz/hooks/pre_tool_use.ps1)
 - [permission_request.ps1](C:/Users/HUAWEI/.yyz/hooks/permission_request.ps1)
 - [post_tool_use.ps1](C:/Users/HUAWEI/.yyz/hooks/post_tool_use.ps1)
-- [stop.ps1](C:/Users/HUAWEI/.yyz/hooks/stop.ps1)
 
 它们的作用是：
 
 - `SessionStart`
-  - 注入当前 workspace 提醒
+  - 注入一条一次性运行时提醒
 - `UserPromptSubmitted`
-  - 每轮提醒先理解问题再决定是否调工具
+  - 仅在用户像是在贴错误、异常、失败信息或显式请求 review 时，补一条更有针对性的上下文
 - `PreToolUse`
-  - 拦高风险删除命令
+  - 拦高风险破坏性 shell 命令
 - `PermissionRequest`
-  - 当前示例默认 allow
+  - 自动放行安全的只读 shell 检查命令
 - `PostToolUse`
-  - 对查看型命令补充上下文
+  - 在 shell 输出看起来像环境、路径或权限错误时补上下文
 - `Stop`
-  - 默认只做状态收尾
+  - 当前默认不挂全局 Stop hook
 
 ---
 
@@ -945,12 +941,3 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 - `PostToolUse additionalContext` 是否影响了下一步推理
 
 ---
-
-## 相关文件
-
-- [HOOK_STANDARD.md](/D:/Work/YYZ_Claw/HOOK_STANDARD.md)
-- [HookExecutionService.js](/D:/Work/YYZ_Claw/backend/src/services/hooks/HookExecutionService.js)
-- [ChatAgent.js](/D:/Work/YYZ_Claw/backend/src/services/agent/ChatAgent.js)
-- [chatController.js](/D:/Work/YYZ_Claw/backend/src/controllers/chatController.js)
-- [ChatPanel.jsx](/D:/Work/YYZ_Claw/frontend/src/modules/chat/ChatPanel.jsx)
-- [chat.css](/D:/Work/YYZ_Claw/frontend/src/modules/chat/chat.css)

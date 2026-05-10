@@ -1,139 +1,55 @@
 # SESSION MEMORY
 
 ## 上一步实际完成了什么
-  - 已新增 hook 标准文件 [HOOK_STANDARD.md](/D:/Work/YYZ_Claw/HOOK_STANDARD.md)，明确当前框架支持的 5 个 hook 事件：
-  - `sessionStart`
-  - `userPromptSubmitted`
-  - `preToolUse`
-  - `postToolUse`
-  - `Stop`
-- 已记录这 5 个事件的语义：
-  - `sessionStart`：用户第一句话之前补运行时提醒
-  - `userPromptSubmitted`：每一个问题后补充上下文
-  - `preToolUse`：工具执行前检查 / 补充 / 拦截 / 改写
-  - `postToolUse`：工具执行后处理结果 / 日志 / 回写上下文
-  - `Stop`：任意主智能体或子智能体完成一次回复时触发，主智能体与子智能体都走同一个 `Stop`
-  - hook 支持 MCP 作用域，但默认只作用于本插件自身携带的 MCP，不跨插件、不跨别的 MCP 串用；`Stop` 不算 MCP 作用域，只覆盖 `preToolUse` / `postToolUse`
-  - hook 的执行方式是触发 command / script；输出结果才决定是插入上下文、控制工具、还是做收尾记录
-  - hook 配置采用 JSON，真实结构是 `hooks -> 事件名 -> matcher 组 -> hooks 数组`，使用 Claude Code 风格的 `SessionStart` / `PreToolUse` / `PermissionRequest` / `UserPromptSubmit` / `Stop`；运行时输入和输出都走 JSON / stdin / stdout
-  - `matcher` 是事件内的过滤器，决定这一组 hook 针对谁触发；`SessionStart` 里通常匹配启动方式，工具类事件里通常匹配工具名，`UserPromptSubmit` 和 `Stop` 一般不靠 matcher
-  - 在 MCP 作用域下，`matcher` 可以写 MCP 名字或 MCP 工具命名空间，但只针对本插件自己携带的 MCP
-  - 全局 hook 和插件级 hook 使用同一套 JSON 结构，区别只在于配置位置和作用范围，不是两套协议
-- 已新增路线文件 [PLUGIN_ROADMAP.md](/D:/Work/YYZ_Claw/PLUGIN_ROADMAP.md)，记录接下来要完成的三件事：
-  - 完整 plugin 功能
-  - 完整插件市场功能
-  - 全局 hook 机制
-- 已梳理当前项目自己的 plugin 实现边界，结论是“有一套插件系统，但不是 Open Plugins 的全量实现”：
-  - 已实现：`/yyz/plugins` 目录发现、`plugin.json`/`.plugin/plugin.json`/`.claude-plugin/plugin.json`/`.codex-plugin/plugin.json` 兼容读取、`skills`/`rules`/`assets` 发现与加载、插件启用/停用、插件技能注入主技能库、插件规则注入 prompt、插件资产读取、前端插件中心与技能中心展示。
-  - 未实现：插件安装/市场分发、`commands`/`agents`/`outputStyles` 的完整执行链、插件级 hooks 执行、插件级 MCP server 启动与转发、`apps` / connector 绑定。
-  - 当前 `hooks` 和 `mcp` 只做了“存在性/元数据识别”，不等于完整运行时接管。
-  - 已查清目前网上较标准的 Open Plugins 规范来源：
-  - 文档：[Open Plugins Specification v1.0.0](https://open-plugins.com/plugin-builders/specification)
-    - 标准插件根目录是一个目录包，不是单文件。
-    - 推荐的 manifest 位置是 `/.plugin/plugin.json`，并且允许工具兼容 `.<tool-name>-plugin/plugin.json`。
-    - 如果有 `plugin.json`，`name` 是唯一必填字段，且要满足小写 kebab-case / period 约束。
-    - Open Plugins 只标准化 hooks 作为插件组件的存在与发现，不把 hook 的事件 JSON 协议定死；hook 的具体配置格式仍由宿主工具定义。
-  - 已确认标准 plugin 各部分职责：
-    - `/.plugin/plugin.json`：插件元数据与可选路径配置。
-    - `commands/`：slash 命令技能。
-    - `agents/`：agent 定义，Open Plugins 路径是插件根目录 `agents/`，文件内容沿用 Claude Code 的 Markdown + YAML frontmatter 标准；当前核心标准只保留 `name` 和 `description` 两个字段。我们会通过适配层复用现有子智能体链路，不改文件格式规范。
-    - `skills/`：技能目录，每个子目录一个 `SKILL.md`。
-    - `rules/`：持续规则文件。
-  - `hooks/hooks.json`：hook 配置。
-  - `/.mcp.json`：MCP server 配置。
-  - `scripts/`：hook / 工具脚本。
-  - `assets/`：图标、logo、静态资源。
-  - `LICENSE` / `CHANGELOG.md`：许可与版本历史。
-- 已确认组件发现规则：
-  - 默认目录存在就自动加载，不存在不是错误。
-    - 自定义路径是补充默认发现，不是替代。
-    - 组件路径必须相对插件根目录，并以 `./` 开头。
-    - 插件组件会被命名空间化为 `{plugin-name}:{component-name}`。
-  - 已新增 `PLUGIN_COMMAND_STANDARD.md`，把 plugin 的 `command` 定义为我们自己的独立 `/xxx` 输入替换机制：用户输入 `/review` 后，宿主自动把它替换成定义好的提示词内容，再按普通消息发送。
-  - 已新增 `MCP_STANDARD.md`，明确全局 MCP 和插件内 MCP 的 JSON 格式不一样：全局 MCP 用 `servers`，插件内 MCP 用 `mcpServers`，但两者底层都遵守同一套 MCP 协议。
-  - Open Plugins 的插件内 `.mcp.json` 官方只明确了本地进程型配置字段：`command`、`args`、`env`、`cwd`；没有把 `url` / `httpHeaders` 写成插件标准字段，远程 MCP 不是这页里已经定死的插件格式。
-  - 已把 `app/` 目录定义为我们框架里的核心授权扩展能力：作为“需要授权的 MCP”入口，用于账号绑定、scope 管理、认证状态联动，不属于 Open Plugins 核心标准，但属于我们自己的创新点。
-  - 已新增 [PLUGIN_MARKETPLACE_STANDARD.md](/D:/Work/YYZ_Claw/PLUGIN_MARKETPLACE_STANDARD.md)，把插件市场定义为 marketplace catalog + plugin package 的分层模型，支持安装、更新、卸载、缓存和 user/project/local 作用域。
-  - 已把插件内 `.mcp.json` 的“最标准示例”写入 `MCP_STANDARD.md`：`mcpServers` 顶层、`command + args + env + cwd`、使用 `${PLUGIN_ROOT}`，并明确这是本地进程型 MCP server 的标准写法。
-  - 已给项目前端 MCP 配置面板补上 `cwd` 入口，`stdio` server 现在可直接填写工作目录并随配置保存。
-- 已确认 `GitHub` 这个 curated 插件不是走项目自定义 `.mcp.json` 的普通 MCP server，而是通过插件清单 + app 绑定 + connector 账号通道工作。
-- 已开始重构子智能体能力装配：
-  - `ScopedToolRegistry` 新增“默认继承全部主工具 + 黑名单剔除”能力。
-  - `AgentRuntimeFactory` 改为子智能体默认继承主工具池全部工具，只从 `backend/src/subagents/tools` 读取共享私有工具，只从 `backend/src/subagents/hooks` 读取共享私有 hook。
-  - 新增全局子智能体工具黑名单配置 [backend/src/services/subagents/subagentToolPolicy.js](/D:/Work/YYZ_Claw/backend/src/services/subagents/subagentToolPolicy.js)。
-  - 子智能体 definition 已去掉 `toolsDir / hooksDir / inheritedBaseToolNames / inheritedBaseHookNames`，definition 只保留角色元数据与 prompt 入口。
-  - 原本挂在 `builder / researcher / reviewer` 下的能力型私有工具已搬回 `backend/src/services/tools`，主智能体和子智能体现在共用同一套实现能力工具。
-  - 子智能体目录下只保留共享私有工具 `subagent_finish_report`。
-  - 原本每个子智能体的私有 hook 已删除，约束已迁回对应 `prompt.md`。
-  - 新增所有子智能体共享的通用 hook：`backend/src/subagents/hooks/subagentSharedDiscipline.hook.js`。
-- `npm run build` 已通过，说明这轮工具/hook 收敛没有打断基础构建。
-- 已确认子智能体的 `goal_submit` 与整组 `plan_*` 不再进入全局黑名单；子智能体现在可以维护自己的独立 `goal/plan` 状态。
-- 已在 `code mode` 内加入很细的左侧活动栏，支持 `文件树 / Git` 两种面板切换，顶部全局 `code / work` 切换按用户要求未改。
-- 已补 Git 面板：commit message 输入框、AI 流式生成、部分文件勾选提交、无选择时默认 push、单文件回退、分支列表、本地/远程分支合并显示、Git 不可用 / 初始化 Git 状态。
-- 已补后端 Git 能力：状态、diff 预览、初始化、stage、commit、push、revert、AI commit 描述流式接口。
-- 已把工作区按钮统一改成符号图标按钮，避免文字按钮。
-- 已按反馈把左侧活动条改成白底，并把两个模式按钮改成更明确的文件 / 分支图标。
-- 已把 Git 文件列表从原始 `?? / untracked / English status` 改成中文状态徽标，并去掉原始状态码显示，方便区分“未追踪 / 已修改 / 已暂存”等状态。
-- 已把 Git 列表拆成“待提交 / 未提交”两个区域，新增按钮是把文件加入待提交区而不是简单勾选。
-- 已把刷新按钮单独做成更轻的蓝色工具按钮。
-- 已把 Git composer 重排成三层结构：顶部极窄刷新条，中间大输入块，AI 生成按钮嵌在输入框右上角，底部放 commit / push 主按钮。
-- 已把主操作按钮改成扁平文字胶囊按钮，commit / push 直接可见，不再是方形图标块。
-- 已把分支区压扁成更像时间线的卡片列表，分支名、当前分支 sha、远程分支 sha、最新提交描述都会显示，领先关系用小标签标注。
-- 已开始把分支区进一步收敛成单列时间线，去掉了 local / remote 大分组和 `origin` 伪节点，分支行只保留分支名与“当前 / 追踪 / 本地最新 / 远程最新”这类小标注，不再显式展示 local / remote 字样。
-- 已把“待提交”在未选中文件时的空区域继续收紧，改成让未提交文件列表直接向下延展到分支区上方。
-- 正在继续压缩分支时间线：修正 `HEAD -> main` 兜底导致每条记录都被当成当前分支的问题，避免 `当前 / 本地领先` chip 在每个节点重复出现；同时把右侧 chip 真正贴右并提升层级，避免被提交描述挤住。
-- 已把分支时间线的展开详情改成全量文件列表，不再只显示前 4 个文件；文件行可点击，后端新增了 commit 级单文件 diff 预览接口，准备把中间编辑区切到分支文件的详细 before/after diff。
-- 已给分支时间线行加了白底 hover 详情卡，鼠标移到分支上会展示完整 commit 信息、时间、本地账号名/邮箱、提交作者/邮箱、增减行和文件数。
-- 已把分支 hover 详情改成右侧固定浮层，不再挂在分支条下面，避免挡住其他分支；浮层用更高 z-index 覆盖编辑区。
-- 已把 hover 浮层里的 commit 描述改成可完整换行展示，不再省略，浮层本身也扩大并允许内部滚动。
-- 已把 Git 主按钮逻辑修正为：只要存在 diff，且没有勾选文件，就默认 commit 全部 diff；只有工作区干净时才会切成 push。
-- `npm run build` 已通过，后端新模块也已做导入检查。
-
-- 已把子智能体定义资产迁到 `.yyz/subagents`，registry 改为读取 `definition.json + prompt.md`；共享 hooks/tools 仍留在源码目录。
-- 已新增子智能体资产管理 API 与前端面板，支持在侧边栏工作区里新建、编辑、删除子智能体类型。
-- 已修复打包版主进程启动后端时的 `spawn ...\\YYZ_CLAW.exe ENOENT`：
-  - 根因是打包态子进程沿用了 `app.asar` 路径作为 `cwd`，Windows 无法把 asar 虚拟路径当真实工作目录。
-  - [electron/main.cjs](/D:/Work/YYZ_Claw/electron/main.cjs) 现已改为：
-    - 脚本入口仍指向 `app.getAppPath()/service.js`
-    - 但打包态 `cwd` 改为 `path.dirname(process.execPath)` 这个真实磁盘目录
-  - 已重新生成 [release/win-unpacked](/D:/Work/YYZ_Claw/release/win-unpacked) 和 [YYZ_CLAW Setup 0.1.0.exe](/D:/Work/YYZ_Claw/release/YYZ_CLAW%20Setup%200.1.0.exe)
-- 已实测直接启动 `win-unpacked\\YYZ_CLAW.exe` 能正常拉起主窗口，不再弹主进程 JavaScript 错误。
-- 已新增会话级后台终端任务能力，任务持久化目录为 `.yyz/tasks/<conversationId>/<taskId>/`：
-  - `task.json`
-  - `stdout.log`
-  - `stderr.log`
-  - `payload.json`
-- 已补 3 个工具：
-  - `terminal_task_start`
-  - `terminal_task_overview`
-  - `terminal_task_detail`
-- 实现方式不是直接把真实命令粗暴 `detached`，而是起一个独立 runner：
-  - [backend/src/services/tasks/terminalTaskRunner.cjs](/D:/Work/YYZ_Claw/backend/src/services/tasks/terminalTaskRunner.cjs)
-  - runner 负责执行终端命令、持续写 stdout/stderr、本地回写最终状态与 exitCode
-- 任务服务在：
-  - [backend/src/services/tasks/ConversationTaskService.js](/D:/Work/YYZ_Claw/backend/src/services/tasks/ConversationTaskService.js)
-- 任务服务已挂进主智能体与子智能体 executionContext，因此工具在两边都可用。
-- 已做 smoke test：
-  - 启动后台命令 `Write-Output 'alpha'; Start-Sleep -Seconds 1; Write-Output 'omega'`
-  - 确认 `stdout.log` 真正写入 `alpha / omega`
-  - 概览与详情都能读到 `exited + exitCode 0 + result`
+- 已把全局测试 hook 清掉，当前实际生效的全局 hook 改成了更有用的一组：
+  - `SessionStart`：一次性 prompt 提醒，告诉模型把 `hook_status` 当运行诊断，不要重复被拒绝的工具调用。
+  - `UserPromptSubmitted`：当用户像是在贴错误信息或显式要 review 时，注入更有针对性的上下文。
+  - `PreToolUse`：拦截高风险破坏性 `Bash` / `PowerShell` 命令。
+  - `PermissionRequest`：自动放行安全的只读 shell 检查命令。
+  - `PostToolUse`：当 shell 输出像环境 / 路径 / 权限错误时，注入后续排查上下文。
+  - `Stop`：当前默认不挂全局 hook。
+- 已把当前用户目录现货一起改掉：
+  - `C:\Users\HUAWEI\.yyz\hooks\hooks.json`
+  - `C:\Users\HUAWEI\.yyz\hooks\user_prompt_submitted.ps1`
+  - `C:\Users\HUAWEI\.yyz\hooks\pre_tool_use.ps1`
+  - `C:\Users\HUAWEI\.yyz\hooks\permission_request.ps1`
+  - `C:\Users\HUAWEI\.yyz\hooks\post_tool_use.ps1`
+  - 删除了旧测试脚本 `session_start.ps1`、`stop.ps1`
+- 已把当前 hook 开关默认状态改成全开：
+  - `C:\Users\HUAWEI\.yyz\config\hook-settings.json`
+- 已新增 hook system skill：
+  - `resources/defaults/skills/_system/hooks/SKILL.md`
+  - `C:\Users\HUAWEI\.yyz\skills\_system\hooks\SKILL.md`
+- 已更新 plugin_creator，让它不要重复定义插件 hook 格式，而是指向新的 hooks skill：
+  - `resources/defaults/skills/_system/plugin_creator/SKILL.md`
+  - `C:\Users\HUAWEI\.yyz\skills\_system\plugin_creator\SKILL.md`
+- 已修正 plugin 初始化脚本：
+  - `resources/defaults/skills/_system/plugin_creator/scripts/init_plugin.py`
+  - `C:\Users\HUAWEI\.yyz\skills\_system\plugin_creator\scripts\init_plugin.py`
+  - 现在默认创建 `hooks/` 目录，并写入标准结构的 `hooks/hooks.json`，不再是错误的 `{"hooks":[]}`。
+- 已补默认资产：
+  - `resources/defaults/config/hook-settings.json`
+  - `resources/defaults/hooks/hooks.json`
+  - `resources/defaults/hooks/*.ps1`
+  - `resources/defaults/plugins/novel-writer/hooks/hooks.json` 已改回标准空结构，不再带测试 hook。
+- 已更新使用文档：
+  - `docs/hook.md`
+  - 说明与当前默认 hook 行为保持一致。
+- 校验已通过：
+  - 两个 `init_plugin.py` 都过了 `python -m py_compile`
+  - 当前 `.yyz/hooks/hooks.json` 可正常解析
+  - `pre_tool_use.ps1`、`permission_request.ps1`、`post_tool_use.ps1`、`user_prompt_submitted.ps1` 都做了实际输入输出测试
+  - 当前 `plugin_creator` 脚本实际跑过一次，确认会创建 `hooks/` 和标准的 `hooks.json`
 
 ## 下一步打算做什么
-- 后续所有 hook 实现都以 [HOOK_STANDARD.md](/D:/Work/YYZ_Claw/HOOK_STANDARD.md) 为准，不再扩展默认事件语义；`Stop` 对所有主子智能体同级、同名触发；hook 的 MCP 作用域默认只限本插件自身的 MCP，且不包含 `Stop`；hook 通过 command / script 触发，输出决定上下文或控制效果；hook JSON 标准以 `hooks -> 事件名 -> matcher 组 -> hooks 数组` 为准。
-- 如果后续要做自定义插件框架，优先按 Open Plugins 规范落盘：
-  - 根目录插件包
-  - `/.plugin/plugin.json`
-  - 默认目录组件发现
-  - 只在需要时加 `/.mcp.json` / `/.app.json`
-- 如果要把现有 plugin 系统补齐到更接近标准 Open Plugins，优先补 `commands`、`agents`、`hooks` 执行、`mcpServers` 执行和安装/市场层。
-- 继续按 [PLUGIN_ROADMAP.md](/D:/Work/YYZ_Claw/PLUGIN_ROADMAP.md) 推进三件事：完整 plugin、插件市场、全局 hook 机制。
-- 继续验证安装版首次启动时，`.yyz/subagents` 默认资产初始化是否正常。
-- 继续检查 Git 分支时间线与 commit 级 diff 预览的交互细节，尤其是 hover 浮层和详细 diff 切换。
-- 如有需要，补齐 `package.json` 的 `description / author`，去掉打包日志里的提醒。
-- 如果用户后续需要，再决定是否补第 4 个工具：后台任务停止。当前按要求只做了启动 / 概览 / 详情。
+- 如果继续 hook 相关工作，优先做这几件事之一：
+  - 给前端 hook 开关区补更清晰的说明文案 / tooltip
+  - 再补一组更偏代码编辑安全的 `Edit` / `Write` hook
+  - 给 hooks skill 再拆出示例 references，方便模型复用
+  - 再做插件级 hook 的真实示例，而不是测试示例
+- 如果切回插件体系主线，继续按 `PLUGIN_ROADMAP.md` 推进完整 plugin / marketplace / global hook 机制剩余部分
 
 ## 关键约束 / 风险
-- Git 面板依赖本机 `git` 可用；无仓库时会走初始化，若外部仓库状态变化，branch / ahead / behind 需要重新拉取。
-- 目前 diff 预览按单文件前后对比渲染，后续如果要支持更复杂的多文件联动预览，还需要再拆一层状态。
-- 打包版后端仍通过 `process.execPath + ELECTRON_RUN_AS_NODE` 拉起 `service.js`；后续如果 Electron 大版本改变这条能力，需要优先回头验证打包态启动链。
-- 当前后台任务结果读取是面向模型的轻量输出，元信息压缩了，但底层日志文件会完整保存在 `.yyz/tasks/...`。
+- 当前全局 hook 脚本为了兼容 Windows PowerShell 5.1，尽量避免在脚本判断逻辑里使用中文 regex；优先用 ASCII 关键词和 UTF-8 输出。
+- `resources/defaults` 只会在缺失时复制到 `.yyz`，不会自动覆盖已有用户文件；这次为了立刻生效，已经同步改了当前 `.yyz` 现货。
+- 插件级 hook 这轮没有补真实业务示例，只把默认测试痕迹去掉并统一成标准空结构。

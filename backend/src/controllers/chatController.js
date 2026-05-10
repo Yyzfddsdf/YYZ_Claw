@@ -1021,6 +1021,9 @@ export function createChatController({
     });
     conversationRunCoordinator?.abortRun?.(activeRun, reason);
 
+    // 等待进行中的listener完成，避免浪费token
+    await new Promise(resolve => setTimeout(resolve, 50));
+
     if (sessionId && agentId && typeof wakeDispatcher?.finishForegroundRun === "function") {
       await wakeDispatcher.finishForegroundRun({
         sessionId,

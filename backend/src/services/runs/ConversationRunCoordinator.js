@@ -186,6 +186,11 @@ export class ConversationRunCoordinator {
     const nextPayload = this.captureReplayEvent(run, buildRunPayload(run, payload));
     run.lastEventAt = Date.now();
 
+    // 如果run已经abort了，不再调用新的listeners
+    if (run.signal?.aborted) {
+      return false;
+    }
+
     for (const listener of run.listeners.values()) {
       listener(nextPayload, run);
     }

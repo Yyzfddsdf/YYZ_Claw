@@ -950,6 +950,62 @@ export function createChatController({
   automationSchedulerService,
   wakeDispatcher
 }) {
+  async function forceFinalizeRunIfStillActive(runLike, reason = "stopped by user") {
+    const runId = String(runLike?.runId ?? "").trim();
+    if (!runId) {
+      return false;
+    }
+
+    const activeRun = conversationRunCoordinator?.getRunById?.(runId) ?? null;
+    if (!activeRun) {
+      return false;
+    }
+
+    const conversationId = String(activeRun.conversationId ?? "").trim();
+    const sessionId = String(activeRun.sessionId ?? "").trim();
+    const agentId = String(activeRun.agentId ?? "").trim();
+
+    conversationRunCoordinator?.emitEvent?.(activeRun, {
+      type: "session_end",
+      status: "aborted",
+      history: conversationId ? historyStore.getConversation(conversationId) : null
+    });
+    conversationRunCoordinator?.abortRun?.(activeRun, reason);
+
+    if (sessionId && agentId && typeof wakeDispatcher?.finishForegroundRun === "function") {
+      await wakeDispatcher.finishForegroundRun({
+        sessionId,
+        agentId,
+        status: "idle"
+      });
+    } else {
+      conversationRunCoordinator?.finishRun?.(activeRun, {
+        status: "idle"
+      });
+    }
+
+    if (sessionId && agentId) {
+      const existingAgent = orchestratorStore?.getAgent?.(agentId)
+        ?? orchestratorStore?.findAgentByConversationId?.(conversationId)
+        ?? null;
+      orchestratorStore?.upsertAgent?.({
+        agentId,
+        sessionId,
+        conversationId: String(existingAgent?.conversationId ?? conversationId).trim(),
+        agentType: String(existingAgent?.agentType ?? "generic").trim() || "generic",
+        displayName: String(existingAgent?.displayName ?? "").trim(),
+        isPrimary: existingAgent?.isPrimary ?? false,
+        status: "idle",
+        atomicDepth: existingAgent?.atomicDepth,
+        openAtomicSteps: existingAgent?.openAtomicSteps ?? [],
+        metadata: existingAgent?.metadata ?? {},
+        lastActiveAt: Date.now()
+      });
+    }
+
+    return true;
+  }
+
   function resolveSelectionOwnerConversationId(history, conversationId) {
     return String(history?.source ?? "").trim().toLowerCase() === "subagent" &&
       String(history?.parentConversationId ?? "").trim()
@@ -1179,6 +1235,9 @@ export function createChatController({
       }
 
       conversationRunCoordinator?.abortRun?.(activeRun, "stopped by user");
+      setTimeout(() => {
+        void forceFinalizeRunIfStillActive(activeRun, "stopped by user");
+      }, 1500);
       res.json({
         success: true,
         stopped: true,

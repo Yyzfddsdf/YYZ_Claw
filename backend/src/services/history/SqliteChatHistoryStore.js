@@ -343,12 +343,49 @@ function buildMessageMergeKey(message, index, namespace) {
   return `${normalizedNamespace}_${index}_${String(message?.role ?? "").trim()}_${Number(message?.timestamp ?? 0)}`;
 }
 
+function filterOrphanToolMessages(messages, existingMessages = []) {
+  const normalizedExisting = Array.isArray(existingMessages)
+    ? existingMessages.map((item, index) => normalizeMessage(item, index))
+    : [];
+  const normalizedMessages = Array.isArray(messages)
+    ? messages.map((item, index) => normalizeMessage(item, index))
+    : [];
+
+  if (normalizedMessages.length === 0) {
+    return [];
+  }
+
+  const knownToolCallIds = new Set();
+  for (const message of [...normalizedExisting, ...normalizedMessages]) {
+    if (String(message?.role ?? "").trim() !== "assistant") {
+      continue;
+    }
+
+    const toolCalls = Array.isArray(message?.toolCalls) ? message.toolCalls : [];
+    for (const toolCall of toolCalls) {
+      const toolCallId = String(toolCall?.id ?? "").trim();
+      if (toolCallId) {
+        knownToolCallIds.add(toolCallId);
+      }
+    }
+  }
+
+  return normalizedMessages.filter((message) => {
+    if (String(message?.role ?? "").trim() !== "tool") {
+      return true;
+    }
+
+    const toolCallId = String(message?.toolCallId ?? "").trim();
+    return toolCallId ? knownToolCallIds.has(toolCallId) : false;
+  });
+}
+
 function mergeMessageSnapshots(baseMessages, overlayMessages) {
   const normalizedBase = Array.isArray(baseMessages)
     ? baseMessages.map((item, index) => normalizeMessage(item, index))
     : [];
   const normalizedOverlay = Array.isArray(overlayMessages)
-    ? overlayMessages.map((item, index) => normalizeMessage(item, index))
+    ? filterOrphanToolMessages(overlayMessages, normalizedBase)
     : [];
 
   if (normalizedBase.length === 0) {
@@ -1654,8 +1691,10 @@ export class SqliteChatHistoryStore {
   upsertConversation(payload) {
     const db = this.ensureDb();
     const conversationId = String(payload.conversationId);
-    const normalizedMessages = payload.messages.map((item, index) =>
-      normalizeMessage(item, index)
+    const existingConversation = this.getConversation(conversationId);
+    const normalizedMessages = filterOrphanToolMessages(
+      payload.messages,
+      existingConversation?.messages
     );
 
     const existing = db
@@ -1939,7 +1978,7 @@ export class SqliteChatHistoryStore {
 
     const normalizedConversationId = String(conversationId ?? "").trim();
     const updatedAt = Number(options.updatedAt ?? Date.now());
-    const normalizedMessages = appendedMessages.map((item, index) => normalizeMessage(item, index));
+    const normalizedMessages = filterOrphanToolMessages(appendedMessages, existing.messages);
     const maxSortRow = db
       .prepare(
         `
@@ -2067,7 +2106,12 @@ export class SqliteChatHistoryStore {
     }
 
     const normalized = normalizeMessage(message, Number(options.sortIndex ?? 0));
-    const messageId = String(normalized.id ?? "").trim();
+    const persistableMessages = filterOrphanToolMessages([normalized], existingConversation.messages);
+    if (persistableMessages.length === 0) {
+      return existingConversation;
+    }
+    const persistableMessage = persistableMessages[0];
+    const messageId = String(persistableMessage.id ?? "").trim();
     if (!messageId) {
       throw new Error("message.id is required");
     }
@@ -2104,24 +2148,24 @@ export class SqliteChatHistoryStore {
             WHERE conversation_id = ? AND id = ?
           `
         ).run(
-          normalized.role,
-          normalized.content,
-          normalized.reasoningContent,
-          normalized.toolCallId,
-          normalized.toolName,
-          normalized.toolCalls.length > 0 ? JSON.stringify(normalized.toolCalls) : "",
-          Object.keys(normalized.meta).length > 0 ? JSON.stringify(normalized.meta) : "",
-          normalized.tokenUsage ? JSON.stringify(normalized.tokenUsage) : "",
-          normalized.timestamp,
+          persistableMessage.role,
+          persistableMessage.content,
+          persistableMessage.reasoningContent,
+          persistableMessage.toolCallId,
+          persistableMessage.toolName,
+          persistableMessage.toolCalls.length > 0 ? JSON.stringify(persistableMessage.toolCalls) : "",
+          Object.keys(persistableMessage.meta).length > 0 ? JSON.stringify(persistableMessage.meta) : "",
+          persistableMessage.tokenUsage ? JSON.stringify(persistableMessage.tokenUsage) : "",
+          persistableMessage.timestamp,
           conversationId,
           messageId
         );
 
         upsertConversationMessageFtsRow(db, Number(row.seq ?? 0), {
           conversationId,
-          role: normalized.role,
-          content: normalized.content,
-          meta: normalized.meta
+          role: persistableMessage.role,
+          content: persistableMessage.content,
+          meta: persistableMessage.meta
         });
       } else {
         const maxSortRow = db
@@ -2148,27 +2192,27 @@ export class SqliteChatHistoryStore {
           .run(
             conversationId,
             messageId,
-            normalized.role,
-            normalized.content,
-            normalized.reasoningContent,
-            normalized.toolCallId,
-            normalized.toolName,
-            normalized.toolCalls.length > 0 ? JSON.stringify(normalized.toolCalls) : "",
-            Object.keys(normalized.meta).length > 0 ? JSON.stringify(normalized.meta) : "",
-            normalized.tokenUsage ? JSON.stringify(normalized.tokenUsage) : "",
-            normalized.timestamp,
+            persistableMessage.role,
+            persistableMessage.content,
+            persistableMessage.reasoningContent,
+            persistableMessage.toolCallId,
+            persistableMessage.toolName,
+            persistableMessage.toolCalls.length > 0 ? JSON.stringify(persistableMessage.toolCalls) : "",
+            Object.keys(persistableMessage.meta).length > 0 ? JSON.stringify(persistableMessage.meta) : "",
+            persistableMessage.tokenUsage ? JSON.stringify(persistableMessage.tokenUsage) : "",
+            persistableMessage.timestamp,
             nextSortIndex
           );
 
         upsertConversationMessageFtsRow(db, Number(insertResult.lastInsertRowid ?? 0), {
           conversationId,
-          role: normalized.role,
-          content: normalized.content,
-          meta: normalized.meta
+          role: persistableMessage.role,
+          content: persistableMessage.content,
+          meta: persistableMessage.meta
         });
       }
 
-      const updatedAt = Number(options.updatedAt ?? normalized.timestamp ?? now);
+      const updatedAt = Number(options.updatedAt ?? persistableMessage.timestamp ?? now);
       db.prepare(
         `
           UPDATE conversations

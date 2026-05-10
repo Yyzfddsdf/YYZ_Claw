@@ -8,12 +8,8 @@
 ## confirm_review
 
 ### file_edit
-- tool: create_file
-- tool: delete_text
-- tool: insert_text
-- tool: replace_text
-- tool: run_terminal
-- tool: execute_code
-
-### patch_edit
-- tool: apply_patch
+- tool: Write
+- tool: Edit
+- tool: NotebookEdit
+- tool: Bash
+- tool: PowerShell

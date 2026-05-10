@@ -12,20 +12,16 @@ export const APPROVAL_RULES_DEFAULT_MARKDOWN = `# Approval Rules
 ## always_review
 
 ### shell
-- tool: run_terminal
+- tool: Bash
+- tool: PowerShell
 - command: ^(?:git\\s+push\\b|rm\\s+-rf\\b|del(?:\\s+|$)|rmdir(?:\\s+|$))
 
 ## confirm_review
 
 ### file_edit
-- tool: create_file
-- tool: delete_text
-- tool: insert_text
-- tool: replace_text
-- tool: execute_code
-
-### patch_edit
-- tool: apply_patch
+- tool: Write
+- tool: Edit
+- tool: NotebookEdit
 `;
 
 function createEmptySection() {

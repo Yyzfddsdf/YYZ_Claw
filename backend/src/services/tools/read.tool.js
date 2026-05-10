@@ -194,7 +194,7 @@ function normalizeRange(args, totalLines) {
 }
 
 export default {
-  name: "read_file",
+  name: "Read",
   description:
     "Read text file content. Relative paths resolve from cwd/current workplace. Supports full content or 1-based line ranges.",
   parameters: {
@@ -286,7 +286,7 @@ export default {
             isPartial: range.isPartial,
             dedup: true,
             content:
-              "File unchanged since last read. The earlier read_file result in this conversation is still current."
+              "File unchanged since last read. The earlier Read result in this conversation is still current."
           };
 
           if (tracker.consecutive >= 3) {

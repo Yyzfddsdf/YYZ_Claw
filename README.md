@@ -5,7 +5,7 @@
 ## 关键能力
 
 - 自动注册工具：后端扫描 `backend/src/services/tools/*.tool.js`
-- 基础工具已内置：`read_file`（相对/绝对路径+行范围/全文）、`list_dir`（目录列表）、`run_terminal`（终端命令）、`apply_patch`（统一 diff 写入）
+- 基础工具已内置：`Read`（相对/绝对路径+行范围/全文）、`Glob`（目录遍历）、`Grep`（内容搜索）、`Write`（新建/覆盖）、`Edit`（补丁编辑）、`NotebookEdit`（Jupyter 单元编辑）、`Bash`（终端命令）、`PowerShell`（PowerShell 命令）
 - 智能体类自实现：`ChatAgent` 负责对话循环、工具调用、重试机制
 - 流式输出解析：SSE 推送 token/tool/retry/final 事件
 - 自动拼接工具内容：流式阶段实时构建 mergedText

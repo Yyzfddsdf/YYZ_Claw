@@ -72,13 +72,29 @@ async function getStatsOrNull(targetPath) {
   }
 }
 
+function updateReadTimestamp(filePath, taskKey) {
+  try {
+    const resolved = String(path.resolve(filePath));
+    const mtime = fs.stat(resolved).then((stats) => stats.mtimeMs).catch(() => null);
+    return mtime.then((value) => {
+      if (value === null) {
+        return;
+      }
+
+      getTracker(taskKey).readTimestamps.set(resolved, value);
+    });
+  } catch {
+    return Promise.resolve();
+  }
+}
+
 function checkFileStaleness(filePath, taskKey) {
   const tracker = getTracker(taskKey);
   const resolved = String(path.resolve(filePath));
   const readMtime = tracker.readTimestamps.get(resolved);
 
   if (readMtime === undefined) {
-    return Promise.resolve(null);
+    return null;
   }
 
   return fs.stat(resolved)
@@ -90,16 +106,6 @@ function checkFileStaleness(filePath, taskKey) {
       return null;
     })
     .catch(() => null);
-}
-
-async function updateReadTimestamp(filePath, taskKey) {
-  try {
-    const resolved = String(path.resolve(filePath));
-    const stats = await fs.stat(resolved);
-    getTracker(taskKey).readTimestamps.set(resolved, stats.mtimeMs);
-  } catch {
-    // ignore
-  }
 }
 
 function normalizeEntries(args) {
@@ -120,64 +126,21 @@ function normalizeEntry(entry, index) {
   }
 
   const filePath = typeof entry.filePath === "string" ? entry.filePath.trim() : "";
-  const anchorText = typeof entry.anchorText === "string" ? entry.anchorText : "";
-  const content = typeof entry.content === "string" ? entry.content : "";
-
   if (!filePath) {
     throw new Error(`operations[${index}].filePath is required`);
   }
 
-  if (!anchorText) {
-    throw new Error(`operations[${index}].anchorText is required`);
-  }
-
   return {
     filePath,
-    anchorText,
-    content,
+    content: typeof entry.content === "string" ? entry.content : "",
     cwd: typeof entry.cwd === "string" ? entry.cwd.trim() : "",
-    position: entry.position === "after" ? "after" : "before",
-    occurrence:
-      Number.isFinite(entry.occurrence) && entry.occurrence > 0
-        ? Math.trunc(entry.occurrence)
-        : 1
+    overwrite: Boolean(entry.overwrite),
+    append: Boolean(entry.append),
+    createDirectories: entry.createDirectories !== false
   };
 }
 
-function findNthIndex(text, needle, occurrence = 1) {
-  let fromIndex = 0;
-  let hitIndex = -1;
-
-  for (let count = 0; count < occurrence; count += 1) {
-    hitIndex = text.indexOf(needle, fromIndex);
-
-    if (hitIndex < 0) {
-      return -1;
-    }
-
-    fromIndex = hitIndex + needle.length;
-  }
-
-  return hitIndex;
-}
-
-function insertTextInContent(content, anchorText, insertText, position, occurrence = 1) {
-  const anchorIndex = findNthIndex(content, anchorText, occurrence);
-
-  if (anchorIndex < 0) {
-    throw new Error("anchorText not found");
-  }
-
-  const insertIndex = position === "after" ? anchorIndex + anchorText.length : anchorIndex;
-
-  return {
-    content: content.slice(0, insertIndex) + insertText + content.slice(insertIndex),
-    anchorIndex,
-    insertIndex
-  };
-}
-
-async function insertOne(entry, index, executionContext) {
+async function writeOne(entry, index, executionContext) {
   const cwdInput = typeof entry.cwd === "string" ? entry.cwd.trim() : "";
   const contextCwd = resolveContextWorkingDirectory(executionContext);
   const cwd = cwdInput ? path.resolve(cwdInput) : contextCwd;
@@ -190,44 +153,57 @@ async function insertOne(entry, index, executionContext) {
   await ensureDirectory(cwd);
 
   const resolvedFilePath = resolveTargetPath(entry.filePath, cwd);
+  const createDirectories = entry.createDirectories !== false;
+  const parentDir = path.dirname(resolvedFilePath);
 
-  const stats = await getStatsOrNull(resolvedFilePath);
-
-  if (!stats) {
-    throw new Error(`operations[${index}].file not found`);
+  if (createDirectories) {
+    await fs.mkdir(parentDir, { recursive: true });
+  } else {
+    await ensureDirectory(parentDir);
   }
 
-  if (stats.isDirectory()) {
+  const existingStats = await getStatsOrNull(resolvedFilePath);
+  const staleWarning = await checkFileStaleness(resolvedFilePath, taskKey);
+
+  if (existingStats?.isDirectory()) {
     throw new Error(`operations[${index}].filePath points to a directory`);
   }
 
-  const currentContent = await fs.readFile(resolvedFilePath, "utf8");
-  const staleWarning = await checkFileStaleness(resolvedFilePath, taskKey);
-  const result = insertTextInContent(
-    currentContent,
-    entry.anchorText,
-    entry.content,
-    entry.position,
-    entry.occurrence
-  );
+  if (entry.append && entry.overwrite) {
+    throw new Error(`operations[${index}].append and overwrite cannot both be true`);
+  }
 
-  await fs.writeFile(resolvedFilePath, result.content, { encoding: "utf8" });
-  await updateReadTimestamp(resolvedFilePath, taskKey);
+  if (existingStats && !entry.append && !entry.overwrite) {
+    throw new Error(`operations[${index}].file already exists; set overwrite=true to replace it`);
+  }
+
+  const content = entry.content;
+
+  if (entry.append) {
+    await fs.appendFile(resolvedFilePath, content, { encoding: "utf8" });
+  } else {
+    await fs.writeFile(resolvedFilePath, content, { encoding: "utf8" });
+  }
+
+  const finalStats = await fs.stat(resolvedFilePath);
 
   return {
     filePath: resolvedFilePath,
     cwd,
-    position: entry.position,
-    occurrence: entry.occurrence,
-    insertIndex: result.insertIndex,
+    encoding: "utf8",
+    created: !existingStats,
+    overwritten: Boolean(existingStats && !entry.append),
+    appended: entry.append,
+    bytesWritten: Buffer.byteLength(content, "utf8"),
+    totalBytes: Number(finalStats.size),
     ...(staleWarning ? { _warning: staleWarning } : {})
   };
 }
 
 export default {
-  name: "insert_text",
+  name: "Write",
   description:
-    "Insert text around an exact anchor in UTF-8 files. Supports a single insertion via top-level fields or a batch via operations array.",
+    "Create or update UTF-8 text files. Supports a single file via top-level fields or a batch via operations array.",
   parameters: {
     type: "object",
     properties: {
@@ -235,32 +211,31 @@ export default {
         type: "string",
         description: "Target file path. Supports absolute path or relative path."
       },
-      anchorText: {
-        type: "string",
-        description: "Exact anchor text to insert around."
-      },
       content: {
         type: "string",
-        description: "Text content to insert."
-      },
-      position: {
-        type: "string",
-        enum: ["before", "after"],
-        description: "Insert before or after the anchor."
-      },
-      occurrence: {
-        type: "integer",
-        description: "1-based occurrence of the anchor to target."
+        description: "Text content to write. Defaults to empty string when omitted."
       },
       cwd: {
         type: "string",
         description:
           "Optional absolute working directory for resolving relative filePath. Defaults to current conversation workplace."
       },
+      overwrite: {
+        type: "boolean",
+        description: "When true, overwrite existing file content."
+      },
+      append: {
+        type: "boolean",
+        description: "When true, append content to the file instead of replacing it."
+      },
+      createDirectories: {
+        type: "boolean",
+        description: "When true, create parent directories automatically. Defaults to true."
+      },
       operations: {
         type: "array",
         description:
-          "Optional batch of insert operations. Each item can use the same fields as the single-file form.",
+          "Optional batch of create/write operations. Each item can use the same fields as the single-file form.",
         items: {
           type: "object"
         }
@@ -279,7 +254,8 @@ export default {
     const results = [];
 
     for (let index = 0; index < normalizedEntries.length; index += 1) {
-      const result = await insertOne(normalizedEntries[index], index, executionContext);
+      const result = await writeOne(normalizedEntries[index], index, executionContext);
+      await updateReadTimestamp(result.filePath, getTaskKey(executionContext));
       results.push({
         index,
         ...result

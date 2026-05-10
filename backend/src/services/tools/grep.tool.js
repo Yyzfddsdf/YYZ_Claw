@@ -128,12 +128,6 @@ function compileFileMatcher(pattern) {
   return globToRegExp(normalized);
 }
 
-function normalizeRootPath(args, executionContext) {
-  const contextCwd = resolveContextWorkingDirectory(executionContext);
-  const root = resolveTargetPath(args.path, contextCwd);
-  return root;
-}
-
 async function walkFiles(rootPath) {
   const stats = await getStatsOrNull(rootPath);
 
@@ -176,17 +170,6 @@ async function walkFiles(rootPath) {
   }
 
   return results;
-}
-
-function buildFileResult(filePath, rootPath, stats) {
-  const relativePath = path.relative(rootPath, filePath);
-  return {
-    filePath,
-    relativePath: relativePath || path.basename(filePath),
-    fileName: path.basename(filePath),
-    size: Number(stats.size),
-    modifiedAt: Number(stats.mtimeMs)
-  };
 }
 
 function buildLineSnippets(lines, lineNumber, context) {
@@ -266,21 +249,15 @@ function matchesFilePattern(filePath, rootPath, regex) {
 }
 
 export default {
-  name: "search_files",
+  name: "Grep",
   description:
-    "Search file contents or find files by glob/regex pattern. Supports content search and file search under the current workspace.",
+    "Search patterns in file contents under the current workspace. Returns matches with line numbers and optional context.",
   parameters: {
     type: "object",
     properties: {
       pattern: {
         type: "string",
-        description: "Regex for content search, or glob/regex for file search."
-      },
-      target: {
-        type: "string",
-        enum: ["content", "files"],
-        description: "Search content inside files or find matching files.",
-        default: "content"
+        description: "Regex pattern to search for."
       },
       path: {
         type: "string",
@@ -305,12 +282,12 @@ export default {
       output_mode: {
         type: "string",
         enum: ["content", "files_only", "count"],
-        description: "How to format content search results.",
+        description: "How to format search results.",
         default: "content"
       },
       context: {
         type: "integer",
-        description: "Context lines around a match for content search.",
+        description: "Context lines around a match.",
         default: 0
       }
     },
@@ -318,45 +295,20 @@ export default {
     additionalProperties: false
   },
   async execute(args = {}, executionContext = {}) {
-    const target = String(args.target ?? "content").trim() === "files" ? "files" : "content";
-    const pattern = String(args.pattern ?? "").trim();
-    const limit = Number.isFinite(args.limit) && args.limit > 0 ? Math.trunc(args.limit) : 50;
-    const offset = Number.isFinite(args.offset) && args.offset >= 0 ? Math.trunc(args.offset) : 0;
-    const context = Number.isFinite(args.context) && args.context >= 0 ? Math.trunc(args.context) : 0;
-    const rootPath = normalizeRootPath(args, executionContext);
+    const rootPath = resolveTargetPath(args.path, resolveContextWorkingDirectory(executionContext));
     const rootStats = await getStatsOrNull(rootPath);
 
     if (!rootStats) {
       throw new Error("path not found");
     }
 
-    if (target === "files") {
-      const fileRegex = compileFileMatcher(pattern);
-      if (!fileRegex) {
-        throw new Error("pattern is required");
-      }
-
-      const files = await walkFiles(rootPath);
-      const matched = files
-        .filter((item) => matchesFilePattern(item.filePath, rootPath, fileRegex))
-        .sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs)
-        .map((item) => buildFileResult(item.filePath, rootPath, item.stats));
-
-      const sliced = matched.slice(offset, offset + limit);
-
-      return {
-        target,
-        pattern,
-        rootPath,
-        totalCount: matched.length,
-        returnedCount: sliced.length,
-        truncated: offset + sliced.length < matched.length,
-        results: sliced
-      };
-    }
-
-    const searchRegex = compileSearchRegex(pattern);
+    const searchRegex = compileSearchRegex(args.pattern);
     const fileGlobRegex = args.file_glob ? compileFileMatcher(args.file_glob) : null;
+    const context = Number.isFinite(args.context) && args.context >= 0 ? Math.trunc(args.context) : 0;
+    const limit = Number.isFinite(args.limit) && args.limit > 0 ? Math.trunc(args.limit) : 50;
+    const offset = Number.isFinite(args.offset) && args.offset >= 0 ? Math.trunc(args.offset) : 0;
+    const outputMode = String(args.output_mode ?? "content").trim();
+
     const files = await walkFiles(rootPath);
     const results = [];
 
@@ -376,12 +328,15 @@ export default {
         continue;
       }
 
-      if (String(args.output_mode ?? "content") === "count") {
+      if (outputMode === "count") {
         const countResult = collectCountMatches(item.filePath, text, searchRegex);
         if (countResult) {
           results.push({
             ...countResult,
-            ...buildFileResult(item.filePath, rootPath, item.stats)
+            relativePath: path.relative(rootPath, item.filePath).replace(/\\/g, "/"),
+            fileName: path.basename(item.filePath),
+            size: Number(item.stats.size),
+            modifiedAt: Number(item.stats.mtimeMs)
           });
         }
         continue;
@@ -391,16 +346,20 @@ export default {
       for (const match of matches) {
         results.push({
           ...match,
-          ...buildFileResult(item.filePath, rootPath, item.stats)
+          relativePath: path.relative(rootPath, item.filePath).replace(/\\/g, "/"),
+          fileName: path.basename(item.filePath),
+          size: Number(item.stats.size),
+          modifiedAt: Number(item.stats.mtimeMs)
         });
       }
     }
 
     const sliced = results.slice(offset, offset + limit);
 
-    if (String(args.output_mode ?? "content") === "files_only") {
+    if (outputMode === "files_only") {
       const uniqueFiles = [];
       const seen = new Set();
+
       for (const item of sliced) {
         if (seen.has(item.filePath)) {
           continue;
@@ -416,9 +375,8 @@ export default {
       }
 
       return {
-        target,
-        pattern,
-        rootPath,
+        pattern: String(args.pattern ?? ""),
+        path: rootPath,
         totalCount: results.length,
         returnedCount: uniqueFiles.length,
         truncated: offset + sliced.length < results.length,
@@ -427,9 +385,8 @@ export default {
     }
 
     return {
-      target,
-      pattern,
-      rootPath,
+      pattern: String(args.pattern ?? ""),
+      path: rootPath,
       totalCount: results.length,
       returnedCount: sliced.length,
       truncated: offset + sliced.length < results.length,

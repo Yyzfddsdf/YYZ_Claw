@@ -74,23 +74,14 @@ function normalizeTimeoutMs(value) {
 }
 
 function isStructuredPatch(patch) {
-  return patch.trimStart().startsWith("*** Begin Patch");
-}
-
-function stripStructuredPrefix(line) {
-  if (line.startsWith("+")) {
-    return line.slice(1);
-  }
-
-  if (line.startsWith("-")) {
-    return line.slice(1);
-  }
-
-  if (line.startsWith(" ")) {
-    return line.slice(1);
-  }
-
-  return line;
+  const trimmed = patch.trimStart();
+  return (
+    trimmed.startsWith("*** Begin Patch") ||
+    trimmed.startsWith("*** ") ||
+    trimmed.startsWith("*** Update File:") ||
+    trimmed.startsWith("*** Add File:") ||
+    trimmed.startsWith("*** Delete File:")
+  );
 }
 
 function splitPatchLines(patch) {
@@ -103,6 +94,31 @@ function finalizeStructuredBlock(current, blocks) {
   }
 
   blocks.push(current);
+}
+
+function isPatchHeaderLine(line) {
+  return (
+    line === "*** Begin Patch" ||
+    line === "*** End Patch" ||
+    line === "*** End of File" ||
+    line.startsWith("*** Update File:") ||
+    line.startsWith("*** Add File:") ||
+    line.startsWith("*** Delete File:") ||
+    line.startsWith("*** Move to:")
+  );
+}
+
+function isLooseFileHeaderLine(line) {
+  return (
+    line.startsWith("*** ") &&
+    !line.startsWith("*** Begin Patch") &&
+    !line.startsWith("*** End Patch") &&
+    !line.startsWith("*** End of File") &&
+    !line.startsWith("*** Update File:") &&
+    !line.startsWith("*** Add File:") &&
+    !line.startsWith("*** Delete File:") &&
+    !line.startsWith("*** Move to:")
+  );
 }
 
 function parseStructuredPatch(patch) {
@@ -123,38 +139,11 @@ function parseStructuredPatch(patch) {
   for (const rawLine of lines) {
     const line = rawLine;
 
-    if (
-      line === "*** Begin Patch" ||
-      line === "*** End Patch" ||
-      line === "*** End of File"
-    ) {
-      continue;
-    }
-
-    if (line.startsWith("*** Add File: ")) {
-      finalizeStructuredBlock(current, blocks);
-      current = {
-        type: "add",
-        filePath: line.slice("*** Add File: ".length).trim(),
-        contentLines: []
-      };
-      continue;
-    }
-
-    if (line.startsWith("*** Delete File: ")) {
-      finalizeStructuredBlock(current, blocks);
-      current = {
-        type: "delete",
-        filePath: line.slice("*** Delete File: ".length).trim()
-      };
-      continue;
-    }
-
-    if (line.startsWith("*** Update File: ")) {
+    if (isLooseFileHeaderLine(line)) {
       finalizeStructuredBlock(current, blocks);
       current = {
         type: "update",
-        filePath: line.slice("*** Update File: ".length).trim(),
+        filePath: line.slice(4).trim(),
         moveTo: "",
         hunks: []
       };
@@ -162,12 +151,47 @@ function parseStructuredPatch(patch) {
       continue;
     }
 
-    if (line.startsWith("*** Move to: ")) {
-      if (!current || current.type !== "update") {
-        throw new Error("Move instruction must appear inside an update block.");
+    if (isPatchHeaderLine(line)) {
+      if (line.startsWith("*** Update File:")) {
+        finalizeStructuredBlock(current, blocks);
+        current = {
+          type: "update",
+          filePath: line.slice("*** Update File: ".length).trim(),
+          moveTo: "",
+          hunks: []
+        };
+        currentHunk = [];
+        continue;
       }
 
-      current.moveTo = line.slice("*** Move to: ".length).trim();
+      if (line.startsWith("*** Add File: ")) {
+        finalizeStructuredBlock(current, blocks);
+        current = {
+          type: "add",
+          filePath: line.slice("*** Add File: ".length).trim(),
+          contentLines: []
+        };
+        continue;
+      }
+
+      if (line.startsWith("*** Delete File: ")) {
+        finalizeStructuredBlock(current, blocks);
+        current = {
+          type: "delete",
+          filePath: line.slice("*** Delete File: ".length).trim()
+        };
+        continue;
+      }
+
+      if (line.startsWith("*** Move to: ")) {
+        if (!current || current.type !== "update") {
+          throw new Error("Move instruction must appear inside an update block.");
+        }
+
+        current.moveTo = line.slice("*** Move to: ".length).trim();
+        continue;
+      }
+
       continue;
     }
 
@@ -245,7 +269,6 @@ function buildStructuredBlockReplacement(hunkLines) {
     if (line.trim().length === 0) {
       oldLines.push("");
       newLines.push("");
-      continue;
     }
   }
 
@@ -474,7 +497,7 @@ function runGitApply({ cwd, patch, checkOnly, timeoutMs }) {
   });
 }
 
-function buildGitApplyError(result, timeoutMs) {
+function buildGitApplyError(result) {
   return [
     `git apply failed with code ${result.exitCode}.`,
     result.stderr ? `STDERR:\n${result.stderr}` : "",
@@ -486,9 +509,9 @@ function buildGitApplyError(result, timeoutMs) {
 }
 
 export default {
-  name: "apply_patch",
+  name: "Edit",
   description:
-    "Apply either a structured patch block or a unified diff patch to files. Use checkOnly=true to validate without writing files.",
+    "Apply a structured patch block or a unified diff patch to modify files. Use checkOnly=true to validate without writing files.",
   parameters: {
     type: "object",
     properties: {
@@ -571,7 +594,7 @@ export default {
     }
 
     if (result.exitCode !== 0) {
-      throw new Error(buildGitApplyError(result, timeoutMs));
+      throw new Error(buildGitApplyError(result));
     }
 
     return {

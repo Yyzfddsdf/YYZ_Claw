@@ -102,6 +102,34 @@ function appendWithLimit(current, next) {
   return merged.slice(merged.length - MAX_CAPTURED_OUTPUT);
 }
 
+function normalizeTimeoutMs(value) {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 1000) {
+    return 1000;
+  }
+
+  return Math.min(normalized, MAX_TIMEOUT_MS);
+}
+
+function detectDestructiveCommand(command) {
+  const normalized = String(command ?? "").replace(/\r/g, "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  for (const rule of DESTRUCTIVE_COMMAND_RULES) {
+    if (rule.pattern.test(normalized)) {
+      return String(rule.reason ?? "").trim() || "命中系统安全拦截规则。";
+    }
+  }
+
+  return "";
+}
+
 function buildPowerShellCommand(command) {
   const normalizedCommand = encodeNestedPowerShellCommandArguments(command);
   const prelude = [
@@ -138,69 +166,34 @@ function findWindowsExecutable(commandName) {
   }
 }
 
-function resolveWindowsPowerShellFile() {
-  return findWindowsExecutable("pwsh.exe") || findWindowsExecutable("powershell.exe") || "powershell.exe";
-}
-
-function buildShellCommand(command) {
-  if (process.platform === "win32") {
-    return {
-      file: resolveWindowsPowerShellFile(),
-      args: [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        encodePowerShellCommand(command)
-      ]
-    };
-  }
-
-  return {
-    file: "/bin/bash",
-    args: ["-lc", command]
-  };
-}
-
-async function ensureDirectory(cwd) {
-  const stats = await fs.stat(cwd);
-
-  if (!stats.isDirectory()) {
-    throw new Error("cwd must be a directory");
-  }
-}
-
-function normalizeTimeoutMs(value) {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_TIMEOUT_MS;
-  }
-
-  const normalized = Math.trunc(value);
-  if (normalized < 1000) {
-    return 1000;
-  }
-
-  return Math.min(normalized, MAX_TIMEOUT_MS);
-}
-
-function detectDestructiveCommand(command) {
-  const normalized = String(command ?? "").replace(/\r/g, "").trim();
-  if (!normalized) {
+function findUnixExecutable(commandName) {
+  try {
+    const result = execFileSync("bash", ["-lc", `command -v ${commandName}`], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 1000
+    });
+    return String(result ?? "").split(/\r?\n/).map((item) => item.trim()).find(Boolean) || "";
+  } catch {
     return "";
   }
-
-  for (const rule of DESTRUCTIVE_COMMAND_RULES) {
-    if (rule.pattern.test(normalized)) {
-      return String(rule.reason ?? "").trim() || "命中系统安全拦截规则。";
-    }
-  }
-
-  return "";
 }
 
-function runCommand({ command, cwd, timeoutMs }) {
-  const shellCommand = buildShellCommand(command);
+async function resolvePowerShellExecutable() {
+  if (process.platform === "win32") {
+    return findWindowsExecutable("pwsh.exe") || findWindowsExecutable("powershell.exe") || "powershell.exe";
+  }
+
+  return findUnixExecutable("pwsh") || findUnixExecutable("powershell") || "pwsh";
+}
+
+async function runCommand({ command, cwd, timeoutMs }) {
+  const shellFile = await resolvePowerShellExecutable();
+
+  if (!shellFile) {
+    throw new Error("PowerShell executable not found. Install pwsh or powershell.");
+  }
+
   const env = {
     ...process.env,
     LC_ALL: "C.UTF-8",
@@ -208,8 +201,19 @@ function runCommand({ command, cwd, timeoutMs }) {
     PYTHONUTF8: "1"
   };
 
+  const shellArgs = process.platform === "win32"
+    ? [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encodePowerShellCommand(command)
+      ]
+    : ["-NoProfile", "-NonInteractive", "-Command", buildPowerShellCommand(command)];
+
   return new Promise((resolve, reject) => {
-    const child = spawn(shellCommand.file, shellCommand.args, {
+    const child = spawn(shellFile, shellArgs, {
       cwd,
       env,
       windowsHide: true
@@ -255,15 +259,15 @@ function runCommand({ command, cwd, timeoutMs }) {
 }
 
 export default {
-  name: "run_terminal",
+  name: "PowerShell",
   description:
-    "Run a shell command in terminal context and return stdout/stderr with exit status. UTF-8 is forced for shell I/O.",
+    "Run a PowerShell command in a shell context and return stdout/stderr with exit status. UTF-8 is forced for shell I/O.",
   parameters: {
     type: "object",
     properties: {
       command: {
         type: "string",
-        description: "Shell command to execute."
+        description: "PowerShell command to execute."
       },
       cwd: {
         type: "string",
@@ -297,7 +301,10 @@ export default {
       throw new Error("cwd must be an absolute path");
     }
 
-    await ensureDirectory(cwd);
+    const stats = await fs.stat(cwd);
+    if (!stats.isDirectory()) {
+      throw new Error("cwd must be a directory");
+    }
 
     const timeoutMs = normalizeTimeoutMs(args.timeoutMs);
     const result = await runCommand({

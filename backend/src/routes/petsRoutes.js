@@ -11,14 +11,15 @@ export function createPetsRoutes(services) {
     storage: multer.memoryStorage(),
     limits: {
       fileSize: 20 * 1024 * 1024,
-      files: 1
+      files: 64
     }
   });
 
   router.get("/pets", asyncHandler(controller.listPets));
   router.post("/pets/settings", asyncHandler(controller.saveSettings));
   router.post("/pets/manifest", asyncHandler(controller.saveManifest));
-  router.post("/pets/upload", upload.single("pet"), asyncHandler(controller.uploadPet));
+  router.post("/pets/upload", upload.array("files", 64), asyncHandler(controller.uploadPetPackage));
+  router.get("/pets/assets/:fileName/:assetName", asyncHandler(controller.getPetAsset));
   router.get("/pets/assets/:fileName", asyncHandler(controller.getPetAsset));
 
   return router;

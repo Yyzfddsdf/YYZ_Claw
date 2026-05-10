@@ -4,14 +4,19 @@ import "./desktop-pet.css";
 
 const DEFAULT_MANIFEST = {
   sprite: {
-    columns: 4,
-    rows: 4,
-    totalFrames: 16,
+    columns: 8,
+    rows: 9,
+    totalFrames: 72,
+    frameWidth: 128,
+    frameHeight: 128,
     rowStates: [
-      { row: 0, state: "idle", label: "空闲", frames: [0, 1, 2, 3], fps: 4 },
-      { row: 1, state: "active", label: "活跃", frames: [4, 5, 6, 7], fps: 6 },
-      { row: 2, state: "hover", label: "悬停", frames: [8, 9, 10, 11], fps: 5 },
-      { row: 3, state: "detached", label: "拖出窗口", frames: [12, 13, 14, 15], fps: 6 }
+      { row: 0, state: "idle", label: "待机", frames: [0, 1, 2, 3, 4, 5], durations: [280, 110, 110, 140, 140, 320] },
+      { row: 1, state: "running-right", label: "向右跑动", frames: [0, 1, 2, 3, 4, 5, 6, 7], durations: [120, 120, 120, 120, 120, 120, 120, 220] },
+      { row: 2, state: "running-left", label: "向左跑动", frames: [0, 1, 2, 3, 4, 5, 6, 7], durations: [120, 120, 120, 120, 120, 120, 120, 220] },
+      { row: 3, state: "waving", label: "挥手", frames: [0, 1, 2, 3], durations: [140, 140, 140, 280] },
+      { row: 4, state: "jumping", label: "跳跃", frames: [0, 1, 2, 3, 4], durations: [140, 140, 140, 140, 280] },
+      { row: 6, state: "waiting", label: "等待", frames: [0, 1, 2, 3, 4, 5], durations: [150, 150, 150, 150, 150, 260] },
+      { row: 7, state: "running", label: "干活中", frames: [0, 1, 2, 3, 4, 5], durations: [120, 120, 120, 120, 120, 220] }
     ]
   }
 };
@@ -22,16 +27,17 @@ function clamp(value, min, max) {
 
 function normalizeManifest(manifest) {
   const sprite = manifest?.sprite ?? DEFAULT_MANIFEST.sprite;
-  const rowStates = Array.isArray(sprite?.rowStates) && sprite.rowStates.length > 0
-    ? sprite.rowStates
-    : DEFAULT_MANIFEST.sprite.rowStates;
+  const rowStates =
+    Array.isArray(sprite?.rowStates) && sprite.rowStates.length > 0
+      ? sprite.rowStates
+      : DEFAULT_MANIFEST.sprite.rowStates;
   return {
     sprite: {
-      columns: Number(sprite?.columns) || 4,
-      rows: Number(sprite?.rows) || 4,
-      totalFrames: Number(sprite?.totalFrames) || 16,
-      frameWidth: Number(sprite?.frameWidth) || 0,
-      frameHeight: Number(sprite?.frameHeight) || 0,
+      columns: Number(sprite?.columns) || 8,
+      rows: Number(sprite?.rows) || 9,
+      totalFrames: Number(sprite?.totalFrames) || 72,
+      frameWidth: Number(sprite?.frameWidth) || 128,
+      frameHeight: Number(sprite?.frameHeight) || 128,
       rowStates
     }
   };
@@ -44,20 +50,36 @@ function resolveRowConfig(manifest, state) {
 
 function useSpriteClock(state, manifest) {
   const rowConfig = useMemo(() => resolveRowConfig(manifest, state), [manifest, state]);
-  const frames = Array.isArray(rowConfig?.frames) && rowConfig.frames.length > 0 ? rowConfig.frames : [0, 1, 2, 3];
-  const fps = Number(rowConfig?.fps) > 0 ? Number(rowConfig.fps) : 4;
+  const frames = useMemo(
+    () => (Array.isArray(rowConfig?.frames) && rowConfig.frames.length > 0 ? rowConfig.frames : [0]),
+    [rowConfig]
+  );
+  const durations = useMemo(
+    () =>
+      Array.isArray(rowConfig?.durations) && rowConfig.durations.length > 0
+        ? rowConfig.durations
+        : [160],
+    [rowConfig]
+  );
   const [frameIndex, setFrameIndex] = useState(0);
 
   useEffect(() => {
     setFrameIndex(0);
-    const timer = window.setInterval(() => {
+  }, [frames.length, state]);
+
+  useEffect(() => {
+    if (frames.length <= 1) {
+      return undefined;
+    }
+    const duration = durations[frameIndex] ?? durations[durations.length - 1] ?? 160;
+    const timer = window.setTimeout(() => {
       setFrameIndex((previous) => (previous + 1) % frames.length);
-    }, Math.max(80, Math.round(1000 / fps)));
-    return () => window.clearInterval(timer);
-  }, [fps, frames.length, state]);
+    }, Math.max(80, duration));
+    return () => window.clearTimeout(timer);
+  }, [durations, frameIndex, frames.length]);
 
   return {
-    columnIndex: frameIndex % frames.length,
+    columnIndex: frames[frameIndex] ?? frames[0] ?? 0,
     rowIndex: Number(rowConfig?.row) || 0
   };
 }
@@ -74,14 +96,16 @@ export function DesktopPet({
   const normalizedManifest = useMemo(() => normalizeManifest(manifest), [manifest]);
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [transientState, setTransientState] = useState("");
   const [position, setPosition] = useState(() => ({
     x: Number(settings?.detachedPosition?.x) || 80,
     y: Number(settings?.detachedPosition?.y) || 80
   }));
   const dragOffsetRef = useRef({ x: 0, y: 0 });
-  const lastScreenPointRef = useRef({ x: 0, y: 0 });
-  const hostRef = useRef(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+  const dragDirectionRef = useRef("running-right");
+  const specialTimerRef = useRef(null);
+  const clearTimerRef = useRef(null);
 
   useEffect(() => {
     setPosition({
@@ -99,6 +123,7 @@ export function DesktopPet({
       null
     );
   }, [pets, settings?.selectedPet]);
+
   const visibleActiveSessions = useMemo(
     () =>
       (Array.isArray(activeSessions) ? activeSessions : [])
@@ -111,26 +136,59 @@ export function DesktopPet({
     [activeSessions]
   );
 
-  const activeState = dragging ? "detached" : hovered ? "hover" : active ? "active" : "idle";
-  const spriteClock = useSpriteClock(activeState, normalizedManifest);
-
   useEffect(() => {
-    if (!selectedPet?.url) {
-      setImageSize({ width: 0, height: 0 });
+    if (specialTimerRef.current) {
+      window.clearTimeout(specialTimerRef.current);
+      specialTimerRef.current = null;
+    }
+    if (clearTimerRef.current) {
+      window.clearTimeout(clearTimerRef.current);
+      clearTimerRef.current = null;
+    }
+    if (dragging || active) {
+      setTransientState("");
       return undefined;
     }
-    const image = new Image();
-    image.onload = () => {
-      setImageSize({
-        width: Number(image.naturalWidth) || 0,
-        height: Number(image.naturalHeight) || 0
-      });
+
+    let cancelled = false;
+    const scheduleSpecial = () => {
+      specialTimerRef.current = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        const nextState = Math.random() < 0.5 ? "waving" : "jumping";
+        setTransientState(nextState);
+        clearTimerRef.current = window.setTimeout(() => {
+          if (cancelled) {
+            return;
+          }
+          setTransientState("");
+          scheduleSpecial();
+        }, 1200);
+      }, hovered ? 3200 + Math.floor(Math.random() * 2600) : 5200 + Math.floor(Math.random() * 4200));
     };
-    image.src = selectedPet.url;
+
+    scheduleSpecial();
     return () => {
-      image.onload = null;
+      cancelled = true;
+      if (specialTimerRef.current) {
+        window.clearTimeout(specialTimerRef.current);
+        specialTimerRef.current = null;
+      }
+      if (clearTimerRef.current) {
+        window.clearTimeout(clearTimerRef.current);
+        clearTimerRef.current = null;
+      }
     };
-  }, [selectedPet?.url]);
+  }, [active, dragging, hovered]);
+
+  const activeState = dragging
+    ? dragDirectionRef.current
+    : active
+      ? "running"
+      : transientState || (hovered ? "waiting" : "idle");
+
+  const spriteClock = useSpriteClock(activeState, normalizedManifest);
 
   useEffect(() => {
     if (!selectedPet && pets.length > 0) {
@@ -147,35 +205,29 @@ export function DesktopPet({
     }
 
     function handlePointerMove(event) {
+      const currentX = detachedWindow ? event.screenX : event.clientX;
+      const currentY = detachedWindow ? event.screenY : event.clientY;
+      const dx = currentX - lastPointerRef.current.x;
+      const dy = currentY - lastPointerRef.current.y;
+      lastPointerRef.current = { x: currentX, y: currentY };
+
+      if (Math.abs(dx) > 2) {
+        dragDirectionRef.current = dx >= 0 ? "running-right" : "running-left";
+      }
+
       if (detachedWindow) {
-        const dx = event.screenX - lastScreenPointRef.current.x;
-        const dy = event.screenY - lastScreenPointRef.current.y;
-        lastScreenPointRef.current = {
-          x: event.screenX,
-          y: event.screenY
-        };
         if (window.yyzClaw?.dragPetWindow) {
           window.yyzClaw.dragPetWindow({ dx, dy });
         }
         return;
       }
 
-      const nextX = detachedWindow
-        ? Math.round(event.screenX - dragOffsetRef.current.x)
-        : Math.round(event.clientX - dragOffsetRef.current.x);
-      const nextY = detachedWindow
-        ? Math.round(event.screenY - dragOffsetRef.current.y)
-        : Math.round(event.clientY - dragOffsetRef.current.y);
+      const nextX = Math.round(event.clientX - dragOffsetRef.current.x);
+      const nextY = Math.round(event.clientY - dragOffsetRef.current.y);
       setPosition({
         x: nextX,
         y: nextY
       });
-      if (detachedWindow && window.yyzClaw?.movePetWindow) {
-        window.yyzClaw.movePetWindow({
-          x: nextX,
-          y: nextY
-        });
-      }
     }
 
     function handlePointerUp() {
@@ -235,16 +287,10 @@ export function DesktopPet({
     return null;
   }
 
-  const columns = Math.max(1, Number(normalizedManifest.sprite.columns) || 4);
-  const rows = Math.max(1, Number(normalizedManifest.sprite.rows) || 4);
-  const spriteFrameWidth =
-    Number(normalizedManifest.sprite.frameWidth) ||
-    (imageSize.width > 0 ? Math.round(imageSize.width / columns) : 96);
-  const spriteFrameHeight =
-    Number(normalizedManifest.sprite.frameHeight) ||
-    (imageSize.height > 0 ? Math.round(imageSize.height / rows) : 96);
-  const frameWidth = 128;
-  const frameHeight = 128;
+  const columns = Math.max(1, Number(normalizedManifest.sprite.columns) || 8);
+  const rows = Math.max(1, Number(normalizedManifest.sprite.rows) || 9);
+  const frameWidth = Math.max(1, Number(normalizedManifest.sprite.frameWidth) || 128);
+  const frameHeight = Math.max(1, Number(normalizedManifest.sprite.frameHeight) || 128);
   const spriteWidthPercent = `${columns * 100}%`;
   const spriteHeightPercent = `${rows * 100}%`;
   const backgroundPositionX = `${(spriteClock.columnIndex / Math.max(1, columns - 1)) * 100}%`;
@@ -252,7 +298,6 @@ export function DesktopPet({
 
   return (
     <div
-      ref={hostRef}
       className={`desktop-pet ${dragging ? "is-dragging" : ""} ${
         detachedWindow ? "is-detached-window" : ""
       }`}
@@ -270,16 +315,16 @@ export function DesktopPet({
             x: detachedWindow ? event.screenX - window.screenX : event.clientX - rect.left,
             y: detachedWindow ? event.screenY - window.screenY : event.clientY - rect.top
           };
-          lastScreenPointRef.current = {
-            x: event.screenX,
-            y: event.screenY
+          lastPointerRef.current = {
+            x: detachedWindow ? event.screenX : event.clientX,
+            y: detachedWindow ? event.screenY : event.clientY
           };
           setDragging(true);
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        title={selectedPet.name}
-        aria-label={`桌宠 ${selectedPet.name}`}
+        title={selectedPet.displayName || selectedPet.name}
+        aria-label={`桌宠 ${selectedPet.displayName || selectedPet.name}`}
       >
         <span
           className="desktop-pet-sprite"
@@ -292,7 +337,7 @@ export function DesktopPet({
             backgroundRepeat: "no-repeat"
           }}
         />
-        {!detachedWindow ? <span className="desktop-pet-name">{selectedPet.name}</span> : null}
+        {!detachedWindow ? <span className="desktop-pet-name">{selectedPet.displayName || selectedPet.name}</span> : null}
       </button>
       {detachedWindow && visibleActiveSessions.length > 0 ? (
         <div className="desktop-pet-bubbles" aria-label="活跃会话">

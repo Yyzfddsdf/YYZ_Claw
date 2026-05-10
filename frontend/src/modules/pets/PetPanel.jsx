@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useRef, useMemo, useState } from "react";
 
-import { savePetSettings } from "../../api/petsApi";
+import { savePetSettings, uploadPetPackage } from "../../api/petsApi";
 import { notify } from "../../shared/feedback";
 import "./pets.css";
 
@@ -15,8 +15,17 @@ function formatFileSize(size) {
   return `${Math.ceil(value / 1024)} KB`;
 }
 
+function resolvePetName(pet) {
+  return String(pet?.displayName || pet?.name || pet?.fileName || "").trim() || "未命名宠物";
+}
+
+function resolvePetDescription(pet) {
+  return String(pet?.description || "").trim() || "Codex 宠物包";
+}
+
 export function PetPanel({ petState, onPetStateChange }) {
   const [busy, setBusy] = useState(false);
+  const uploadInputRef = useRef(null);
   const pets = Array.isArray(petState?.pets) ? petState.pets : [];
   const settings = petState?.settings ?? { selectedPet: "" };
   const manifest = petState?.manifest ?? null;
@@ -46,7 +55,9 @@ export function PetPanel({ petState, onPetStateChange }) {
       notify({
         tone: "success",
         title: "桌宠已切换",
-        message: fileName || "已清空选择"
+        message: fileName
+          ? resolvePetName(pets.find((item) => item.fileName === fileName))
+          : "已清空选择"
       });
     } catch (error) {
       notify({
@@ -81,7 +92,7 @@ export function PetPanel({ petState, onPetStateChange }) {
       notify({
         tone: "success",
         title: enabled ? "桌宠已开启" : "桌宠已关闭",
-        message: selectedPet?.name ?? "桌宠设置已保存"
+        message: resolvePetName(selectedPet) || "桌宠设置已保存"
       });
     } catch (error) {
       notify({
@@ -94,8 +105,42 @@ export function PetPanel({ petState, onPetStateChange }) {
     }
   }
 
-  const frameWidth = Number(manifest?.sprite?.frameWidth) || 256;
-  const frameHeight = Number(manifest?.sprite?.frameHeight) || 256;
+  async function handleUploadFolder(event) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const response = await uploadPetPackage(files);
+      onPetStateChange?.({
+        pets: response?.pets ?? pets,
+        settings: response?.settings ?? settings,
+        manifest: response?.manifest ?? manifest
+      });
+      notify({
+        tone: "success",
+        title: "宠物文件夹已上传",
+        message: resolvePetName(response?.pet) || "已更新宠物列表"
+      });
+    } catch (error) {
+      notify({
+        tone: "danger",
+        title: "上传宠物文件夹失败",
+        message: error.message || "无法上传宠物包"
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const frameWidth = Number(manifest?.sprite?.frameWidth) || 128;
+  const frameHeight = Number(manifest?.sprite?.frameHeight) || 128;
+  const columns = Math.max(1, Number(manifest?.sprite?.columns) || 8);
+  const rows = Math.max(1, Number(manifest?.sprite?.rows) || 9);
+  const spriteSize = `${columns * 100}% ${rows * 100}%`;
 
   return (
     <div className="pet-panel">
@@ -106,7 +151,8 @@ export function PetPanel({ petState, onPetStateChange }) {
         </div>
         <div className="pet-panel-summary">
           <span>当前桌宠</span>
-          <strong>{selectedPet?.name ?? "未选择"}</strong>
+          <strong>{resolvePetName(selectedPet)}</strong>
+          <small title={resolvePetDescription(selectedPet)}>{resolvePetDescription(selectedPet)}</small>
           <small>{pets.length} 个可用宠物</small>
           <button
             type="button"
@@ -116,6 +162,24 @@ export function PetPanel({ petState, onPetStateChange }) {
           >
             {settings.enabled === false ? "开启桌宠" : "关闭桌宠"}
           </button>
+          <button
+            type="button"
+            className="pet-enable-toggle pet-upload-folder"
+            disabled={busy}
+            onClick={() => uploadInputRef.current?.click()}
+          >
+            上传宠物文件夹
+          </button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="application/json,image/*,.webp,.png,.jpg,.jpeg,.gif,.avif,.apng"
+            webkitdirectory=""
+            directory=""
+            multiple
+            hidden
+            onChange={handleUploadFolder}
+          />
         </div>
       </header>
 
@@ -129,7 +193,7 @@ export function PetPanel({ petState, onPetStateChange }) {
                 className="pet-card-preview"
                 disabled={busy}
                 onClick={() => handleSelect(pet.fileName)}
-                aria-label={`选择桌宠 ${pet.name}`}
+                aria-label={`选择桌宠 ${resolvePetName(pet)}`}
               >
                 <span
                   className="pet-card-sprite"
@@ -137,16 +201,23 @@ export function PetPanel({ petState, onPetStateChange }) {
                     width: `${frameWidth}px`,
                     height: `${frameHeight}px`,
                     backgroundImage: `url("${pet.url}")`,
-                    backgroundSize: "400% 400%",
+                    backgroundSize: spriteSize,
                     backgroundPosition: "0% 0%"
                   }}
                 />
-                <span className="pet-card-badge">{isSelected ? "当前使用" : pet.source === "default" ? "默认资产" : "用户宠物"}</span>
+                <span className="pet-card-badge">
+                  {isSelected ? "当前使用" : pet.source === "default" ? "内置" : "本地"}
+                </span>
               </button>
               <div className="pet-card-meta">
                 <div>
-                  <strong title={pet.name}>{pet.name}</strong>
-                  <small>{formatFileSize(pet.size)} · {pet.source}</small>
+                  <strong title={resolvePetName(pet)}>{resolvePetName(pet)}</strong>
+                  <small title={resolvePetDescription(pet)}>
+                    {resolvePetDescription(pet)}
+                  </small>
+                  <small>
+                    {formatFileSize(pet.size)} · {pet.source}
+                  </small>
                 </div>
                 <button
                   type="button"

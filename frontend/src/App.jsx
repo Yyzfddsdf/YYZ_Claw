@@ -80,16 +80,19 @@ function createEmptyPets() {
     },
     manifest: {
       sprite: {
-        columns: 4,
-        rows: 4,
-        totalFrames: 16,
-        frameWidth: 96,
-        frameHeight: 96,
+        columns: 8,
+        rows: 9,
+        totalFrames: 72,
+        frameWidth: 128,
+        frameHeight: 128,
         rowStates: [
-          { row: 0, state: "idle", label: "空闲", frames: [0, 1, 2, 3], fps: 4 },
-          { row: 1, state: "active", label: "活跃", frames: [4, 5, 6, 7], fps: 6 },
-          { row: 2, state: "hover", label: "悬停", frames: [8, 9, 10, 11], fps: 5 },
-          { row: 3, state: "detached", label: "拖出窗口", frames: [12, 13, 14, 15], fps: 6 }
+          { row: 0, state: "idle", label: "待机", frames: [0, 1, 2, 3, 4, 5], durations: [280, 110, 110, 140, 140, 320] },
+          { row: 1, state: "running-right", label: "向右跑动", frames: [0, 1, 2, 3, 4, 5, 6, 7], durations: [120, 120, 120, 120, 120, 120, 120, 220] },
+          { row: 2, state: "running-left", label: "向左跑动", frames: [0, 1, 2, 3, 4, 5, 6, 7], durations: [120, 120, 120, 120, 120, 120, 120, 220] },
+          { row: 3, state: "waving", label: "挥手", frames: [0, 1, 2, 3], durations: [140, 140, 140, 280] },
+          { row: 4, state: "jumping", label: "跳跃", frames: [0, 1, 2, 3, 4], durations: [140, 140, 140, 140, 280] },
+          { row: 6, state: "waiting", label: "等待", frames: [0, 1, 2, 3, 4, 5], durations: [150, 150, 150, 150, 150, 260] },
+          { row: 7, state: "running", label: "干活中", frames: [0, 1, 2, 3, 4, 5], durations: [120, 120, 120, 120, 120, 220] }
         ]
       }
     }

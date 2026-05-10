@@ -61,6 +61,7 @@ function normalizeMcpConfig(config) {
   return servers.map(s => ({
     name: s.name ?? "",
     transport: s.transport ?? "stdio",
+    cwd: s.cwd ?? "",
     command: s.command ?? "",
     args: Array.isArray(s.args) ? s.args : [],
     url: s.url ?? "",
@@ -299,6 +300,7 @@ export function ConfigPanel({
       if (s.transport === 'stdio') {
         const envObj = {};
         s.env.forEach(item => { if (item.key.trim()) envObj[item.key.trim()] = item.value; });
+        server.cwd = s.cwd.trim();
         server.command = s.command.trim();
         server.args = Array.isArray(s.args) ? s.args : String(s.args || "").split(/\s+/).filter(Boolean);
         server.env = envObj;
@@ -327,7 +329,7 @@ export function ConfigPanel({
 
   function addMcpServer() {
     const newIndex = mcpServers.length;
-    setMcpServers(prev => [...prev, { name: "", transport: "stdio", command: "", args: [], url: "", env: [], headers: [], enabled: true, startupTimeoutMs: "", requestTimeoutMs: "" }]);
+    setMcpServers(prev => [...prev, { name: "", transport: "stdio", cwd: "", command: "", args: [], url: "", env: [], headers: [], enabled: true, startupTimeoutMs: "", requestTimeoutMs: "" }]);
     setExpandedServers(prev => ({ ...prev, [newIndex]: true }));
   }
 
@@ -738,6 +740,7 @@ export function ConfigPanel({
 
                 {server.transport === 'stdio' ? (
                   <>
+                    <ConfigRow label="工作目录 (cwd)" desc="MCP 进程启动时的基准目录；不填则继承宿主当前目录" value={server.cwd} onChange={v => updateMcpServer(sIndex, 'cwd', v)} placeholder="例如 D:\\mcp\\filesystem-server" disabled={mcpSaving} />
                     <ConfigRow label="命令" desc="可执行程序 (node, npx, python)" value={server.command} onChange={v => updateMcpServer(sIndex, 'command', v)} disabled={mcpSaving} />
                     <ConfigRow label="参数" desc="命令行参数 (空格分隔)" value={Array.isArray(server.args) ? server.args.join(' ') : server.args} onChange={v => updateMcpServer(sIndex, 'args', v)} disabled={mcpSaving} />
                     

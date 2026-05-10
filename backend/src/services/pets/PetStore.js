@@ -3,6 +3,9 @@ import path from "node:path";
 
 const SETTINGS_FILE_NAME = "settings.json";
 const MANIFEST_FILE_NAME = "pet.json";
+const PACKAGE_MANIFEST_FILE_NAME = "pet.json";
+const PACKAGE_SPRITESHEET_FILE_NAME = "spritesheet.webp";
+
 const ALLOWED_EXTENSIONS = new Map([
   [".apng", "image/apng"],
   [".avif", "image/avif"],
@@ -13,6 +16,58 @@ const ALLOWED_EXTENSIONS = new Map([
   [".svg", "image/svg+xml"],
   [".webp", "image/webp"]
 ]);
+
+const CODEX_DEFAULT_ROW_STATES = [
+  {
+    row: 0,
+    state: "idle",
+    label: "待机",
+    frames: [0, 1, 2, 3, 4, 5],
+    durations: [280, 110, 110, 140, 140, 320]
+  },
+  {
+    row: 1,
+    state: "running-right",
+    label: "向右跑动",
+    frames: [0, 1, 2, 3, 4, 5, 6, 7],
+    durations: [120, 120, 120, 120, 120, 120, 120, 220]
+  },
+  {
+    row: 2,
+    state: "running-left",
+    label: "向左跑动",
+    frames: [0, 1, 2, 3, 4, 5, 6, 7],
+    durations: [120, 120, 120, 120, 120, 120, 120, 220]
+  },
+  {
+    row: 3,
+    state: "waving",
+    label: "挥手",
+    frames: [0, 1, 2, 3],
+    durations: [140, 140, 140, 280]
+  },
+  {
+    row: 4,
+    state: "jumping",
+    label: "跳跃",
+    frames: [0, 1, 2, 3, 4],
+    durations: [140, 140, 140, 140, 280]
+  },
+  {
+    row: 6,
+    state: "waiting",
+    label: "等待",
+    frames: [0, 1, 2, 3, 4, 5],
+    durations: [150, 150, 150, 150, 150, 260]
+  },
+  {
+    row: 7,
+    state: "running",
+    label: "干活中",
+    frames: [0, 1, 2, 3, 4, 5],
+    durations: [120, 120, 120, 120, 120, 220]
+  }
+];
 
 function normalizeText(value, maxLength = 500) {
   return String(value ?? "").trim().slice(0, maxLength);
@@ -27,7 +82,7 @@ function normalizeFileName(value) {
     .slice(0, 160);
 }
 
-function normalizeInteger(value, fallback, min = 1, max = 8192) {
+function normalizeInteger(value, fallback, min = 0, max = 8192) {
   const numeric = Number.parseInt(value, 10);
   if (!Number.isFinite(numeric)) {
     return fallback;
@@ -55,6 +110,36 @@ function safeJsonParse(raw, fallback) {
   }
 }
 
+function normalizeUploadPath(value) {
+  const segments = String(value ?? "")
+    .replaceAll("\\", "/")
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment && segment !== ".");
+  if (segments.some((segment) => segment === "..")) {
+    return [];
+  }
+  return segments;
+}
+
+function stripTopLevelFolder(value) {
+  const segments = normalizeUploadPath(value);
+  if (segments.length <= 1) {
+    return [];
+  }
+  return segments.slice(1);
+}
+
+function normalizeNumberArray(value, maxLength = 64, min = 0, max = 8192) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => Number.parseInt(item, 10))
+    .filter((item) => Number.isFinite(item) && item >= min && item <= max)
+    .slice(0, maxLength);
+}
+
 async function pathExists(targetPath) {
   try {
     await fs.access(targetPath);
@@ -67,19 +152,14 @@ async function pathExists(targetPath) {
 function defaultManifest() {
   return {
     version: 1,
-    description: "一个图片就是一个完整宠物；采用 4x4 常规切块，每行一种状态，每列一帧。",
+    description: "Codex 宠物运行清单。",
     sprite: {
-      columns: 4,
-      rows: 4,
-      totalFrames: 16,
-      frameWidth: 0,
-      frameHeight: 0,
-      rowStates: [
-        { row: 0, state: "idle", label: "空闲", frames: [0, 1, 2, 3], fps: 4 },
-        { row: 1, state: "active", label: "活跃", frames: [4, 5, 6, 7], fps: 6 },
-        { row: 2, state: "hover", label: "悬停", frames: [8, 9, 10, 11], fps: 5 },
-        { row: 3, state: "detached", label: "拖出窗口", frames: [12, 13, 14, 15], fps: 6 }
-      ]
+      columns: 8,
+      rows: 9,
+      totalFrames: 72,
+      frameWidth: 128,
+      frameHeight: 128,
+      rowStates: CODEX_DEFAULT_ROW_STATES
     }
   };
 }
@@ -94,34 +174,39 @@ function normalizeManifest(value = {}) {
 
   const normalizedRowStates = rowStatesSource
     .map((rowState, index) => {
-      const frames = Array.isArray(rowState?.frames)
-        ? rowState.frames
-            .map((frame) => Number.parseInt(frame, 10))
-            .filter((frame) => Number.isFinite(frame) && frame >= 0)
-            .slice(0, 4)
-        : [];
+      const frames = normalizeNumberArray(rowState?.frames, 32, 0, 255);
+      const durations = normalizeNumberArray(rowState?.durations, 32, 1, 10000);
+      const fallback = CODEX_DEFAULT_ROW_STATES[index] || {};
       return {
-        row: normalizeInteger(rowState?.row, index, 0, 15),
-        state: normalizeText(rowState?.state, 40) || ["idle", "active", "hover", "detached"][index] || `state-${index + 1}`,
-        label: normalizeText(rowState?.label, 40) || ["空闲", "活跃", "悬停", "拖出窗口"][index] || `状态 ${index + 1}`,
-        frames: frames.length > 0 ? frames : [index * 4, index * 4 + 1, index * 4 + 2, index * 4 + 3],
-        fps: normalizeInteger(rowState?.fps, [4, 6, 5, 6][index] || 4, 1, 24)
+        row: normalizeInteger(rowState?.row, fallback.row ?? index, 0, 15),
+        state:
+          normalizeText(rowState?.state, 40) ||
+          fallback.state ||
+          `state-${index + 1}`,
+        label:
+          normalizeText(rowState?.label, 40) ||
+          fallback.label ||
+          `状态 ${index + 1}`,
+        frames: frames.length > 0 ? frames : fallback.frames || [index],
+        durations:
+          durations.length > 0 ? durations : fallback.durations || [160],
+        fps: normalizeInteger(rowState?.fps, fallback.fps || 6, 1, 24)
       };
     })
-    .slice(0, 4);
+    .slice(0, 9);
 
   return {
     version: normalizeInteger(source.version, 1, 1, 99),
     description:
-      normalizeText(source.description, 240) ||
-      "一个图片就是一个完整宠物；采用 4x4 常规切块，每行一种状态，每列一帧。",
+      normalizeText(source.description, 240) || defaultManifest().description,
     sprite: {
-      columns: normalizeInteger(spriteSource.columns, 4, 1, 16),
-      rows: normalizeInteger(spriteSource.rows, 4, 1, 16),
-      totalFrames: normalizeInteger(spriteSource.totalFrames, 16, 1, 256),
-      frameWidth: normalizeInteger(spriteSource.frameWidth, 0, 0, 8192),
-      frameHeight: normalizeInteger(spriteSource.frameHeight, 0, 0, 8192),
-      rowStates: normalizedRowStates.length > 0 ? normalizedRowStates : defaultManifest().sprite.rowStates
+      columns: normalizeInteger(spriteSource.columns, 8, 1, 16),
+      rows: normalizeInteger(spriteSource.rows, 9, 1, 16),
+      totalFrames: normalizeInteger(spriteSource.totalFrames, 72, 1, 256),
+      frameWidth: normalizeInteger(spriteSource.frameWidth, 128, 0, 8192),
+      frameHeight: normalizeInteger(spriteSource.frameHeight, 128, 0, 8192),
+      rowStates:
+        normalizedRowStates.length > 0 ? normalizedRowStates : defaultManifest().sprite.rowStates
     }
   };
 }
@@ -137,6 +222,15 @@ function normalizeSettings(value = {}) {
       y: normalizeInteger(source?.detachedPosition?.y, 80, -10000, 10000)
     }
   };
+}
+
+function packageAssetUrl(fileName, assetName, mtimeMs) {
+  return `/api/pets/assets/${encodeURIComponent(fileName)}/${encodeURIComponent(assetName)}?v=${Math.trunc(mtimeMs)}`;
+}
+
+function isFileInsideRoot(filePath, rootPath) {
+  const resolvedRoot = `${rootPath}${path.sep}`;
+  return filePath === rootPath || filePath.startsWith(resolvedRoot);
 }
 
 export class PetStore {
@@ -216,6 +310,38 @@ export class PetStore {
     return settings;
   }
 
+  async readPackageManifest(packageDir) {
+    const manifestPath = path.join(packageDir, PACKAGE_MANIFEST_FILE_NAME);
+    if (!(await pathExists(manifestPath))) {
+      return null;
+    }
+
+    const raw = await fs.readFile(manifestPath, "utf8");
+    const manifest = safeJsonParse(raw, null);
+    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+      return null;
+    }
+
+    const spritesheetName =
+      path.basename(normalizeText(manifest.spritesheetPath, 180)) ||
+      PACKAGE_SPRITESHEET_FILE_NAME;
+    const spritesheetPath = path.join(packageDir, spritesheetName);
+    if (!(await pathExists(spritesheetPath))) {
+      return null;
+    }
+
+    const stat = await fs.stat(spritesheetPath);
+    const fallbackName = path.basename(packageDir);
+    return {
+      id: normalizeFileName(manifest.id) || fallbackName,
+      displayName: normalizeText(manifest.displayName, 120) || fallbackName,
+      description: normalizeText(manifest.description, 240),
+      spritesheetPath: spritesheetName,
+      size: stat.size,
+      updatedAt: stat.mtimeMs
+    };
+  }
+
   async listPets() {
     await this.ensureDir();
     const manifests = await Promise.all([
@@ -226,35 +352,45 @@ export class PetStore {
     for (const pet of manifests.flat()) {
       byName.set(pet.fileName, pet);
     }
-    return Array.from(byName.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+    return Array.from(byName.values()).sort((left, right) =>
+      left.displayName.localeCompare(right.displayName, "zh-CN")
+    );
   }
 
   async listPetsFromDir(rootDir, source) {
     if (!(await pathExists(rootDir))) {
       return [];
     }
+
     const dirents = await fs.readdir(rootDir, { withFileTypes: true });
     const items = [];
     for (const dirent of dirents) {
-      if (!dirent.isFile()) {
+      if (!dirent.isDirectory()) {
         continue;
       }
-      const fileName = normalizeFileName(dirent.name);
-      const mimeType = this.getMimeType(fileName);
-      if (!fileName || !mimeType) {
+
+      const packageDir = path.join(rootDir, dirent.name);
+      const packageManifest = await this.readPackageManifest(packageDir);
+      if (!packageManifest) {
         continue;
       }
-      const assetPath = path.join(rootDir, fileName);
-      const stat = await fs.stat(assetPath);
+
       items.push({
-        id: fileName,
-        name: path.basename(fileName, path.extname(fileName)),
-        fileName,
-        mimeType,
+        id: packageManifest.id,
+        fileName: dirent.name,
+        name: packageManifest.displayName,
+        displayName: packageManifest.displayName,
+        description: packageManifest.description,
+        kind: "codex-package",
         source,
-        size: stat.size,
-        updatedAt: stat.mtimeMs,
-        url: `/api/pets/assets/${encodeURIComponent(fileName)}?v=${Math.trunc(stat.mtimeMs)}`
+        size: packageManifest.size,
+        updatedAt: packageManifest.updatedAt,
+        spritesheetPath: packageManifest.spritesheetPath,
+        url: packageAssetUrl(
+          dirent.name,
+          packageManifest.spritesheetPath,
+          packageManifest.updatedAt
+        )
       });
     }
     return items;
@@ -262,27 +398,34 @@ export class PetStore {
 
   async getPetByFileName(fileName) {
     const safeName = normalizeFileName(fileName);
-    if (!safeName || !this.getMimeType(safeName)) {
+    if (!safeName) {
       return null;
     }
     const pets = await this.listPets();
     return pets.find((item) => item.fileName === safeName) ?? null;
   }
 
-  async getAsset(fileName) {
+  async getAsset(fileName, assetName = "") {
     const safeName = normalizeFileName(fileName);
-    const mimeType = this.getMimeType(safeName);
-    if (!safeName || !mimeType) {
+    const safeAsset = normalizeFileName(assetName);
+    if (!safeName) {
       return null;
     }
 
     for (const rootDir of [this.rootDir, this.defaultRootDir]) {
-      const assetPath = path.join(rootDir, safeName);
+      const packageDir = path.join(rootDir, safeName);
+      if (!(await pathExists(packageDir))) {
+        continue;
+      }
+
+      const targetAsset = safeAsset || PACKAGE_SPRITESHEET_FILE_NAME;
+      const assetPath = path.join(packageDir, targetAsset);
       if (!(await pathExists(assetPath))) {
         continue;
       }
+
       return {
-        contentType: mimeType,
+        contentType: this.getMimeType(targetAsset) || "image/webp",
         buffer: await fs.readFile(assetPath)
       };
     }
@@ -290,25 +433,105 @@ export class PetStore {
     return null;
   }
 
-  async saveUploadedPet(file = {}) {
+  async saveUploadedPetPackage(uploadedFiles = []) {
     await this.ensureDir();
-    const originalName = normalizeFileName(file.originalname);
-    const mimeType = normalizeText(file.mimetype, 80).toLowerCase();
-    const ext = path.extname(originalName).toLowerCase();
-    const expectedMime = ALLOWED_EXTENSIONS.get(ext);
-    if (!originalName || !expectedMime || expectedMime !== mimeType || !file.buffer?.length) {
-      throw new Error("pet must be an image file: png, jpg, jpeg, webp, gif, apng, avif, or svg");
+
+    if (!Array.isArray(uploadedFiles) || uploadedFiles.length === 0) {
+      throw new Error("pet package files are required");
     }
 
-    const baseName = path.basename(originalName, ext).slice(0, 120) || "pet";
-    let fileName = `${baseName}${ext}`;
-    let suffix = 2;
-    while (await pathExists(path.join(this.rootDir, fileName))) {
-      fileName = `${baseName}_${suffix}${ext}`;
-      suffix += 1;
+    const normalizedFiles = [];
+
+    for (const file of uploadedFiles) {
+      const relativePath = normalizeUploadPath(file?.originalname ?? file?.filename ?? "");
+      if (relativePath.length === 0) {
+        throw new Error("pet package file path is required");
+      }
+
+      normalizedFiles.push({
+        buffer: Buffer.isBuffer(file?.buffer) ? file.buffer : Buffer.from(file?.buffer ?? []),
+        relativePath: relativePath.join(path.sep)
+      });
     }
 
-    await fs.writeFile(path.join(this.rootDir, fileName), file.buffer);
-    return this.getPetByFileName(fileName);
+    const topLevelNames = normalizedFiles.map((item) => item.relativePath.split(path.sep)[0]);
+    const sharedTopLevel = topLevelNames.length > 0 && topLevelNames.every((item) => item === topLevelNames[0]);
+    const hasNestedPaths = normalizedFiles.some((item) => item.relativePath.includes(path.sep));
+    const packageRootName = sharedTopLevel && hasNestedPaths ? topLevelNames[0] : "";
+
+    const fileEntries = new Map();
+    for (const item of normalizedFiles) {
+      const relativePath = packageRootName
+        ? item.relativePath.split(path.sep).slice(1).join(path.sep)
+        : item.relativePath;
+      if (!relativePath) {
+        throw new Error("pet package file path is required");
+      }
+      if (fileEntries.has(relativePath)) {
+        throw new Error(`duplicate file found in upload: ${relativePath}`);
+      }
+      fileEntries.set(relativePath, {
+        buffer: item.buffer,
+        relativePath
+      });
+    }
+
+    const manifestEntry = fileEntries.get(MANIFEST_FILE_NAME);
+    if (!manifestEntry) {
+      throw new Error("pet.json is required");
+    }
+
+    const parsedManifest = safeJsonParse(manifestEntry.buffer.toString("utf8"), null);
+    if (!parsedManifest || typeof parsedManifest !== "object" || Array.isArray(parsedManifest)) {
+      throw new Error("pet.json must be valid JSON");
+    }
+
+    const spritesheetName =
+      path.basename(normalizeText(parsedManifest.spritesheetPath, 180)) ||
+      PACKAGE_SPRITESHEET_FILE_NAME;
+    if (!fileEntries.has(spritesheetName)) {
+      throw new Error(`spritesheet file is required: ${spritesheetName}`);
+    }
+
+    const packageName = normalizeFileName(parsedManifest.id) || normalizeFileName(packageRootName);
+    if (!packageName) {
+      throw new Error("pet package id is required");
+    }
+
+    const targetDir = path.join(this.rootDir, packageName);
+    if (!isFileInsideRoot(targetDir, this.rootDir)) {
+      throw new Error("invalid pet package target");
+    }
+
+    await fs.rm(targetDir, { recursive: true, force: true });
+    await fs.mkdir(targetDir, { recursive: true });
+
+    for (const { buffer, relativePath } of fileEntries.values()) {
+      const outputPath = path.join(targetDir, relativePath);
+      if (!isFileInsideRoot(outputPath, targetDir)) {
+        throw new Error(`invalid file path: ${relativePath}`);
+      }
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.writeFile(outputPath, buffer);
+    }
+
+    const packageManifest = await this.readPackageManifest(targetDir);
+    if (!packageManifest) {
+      throw new Error("uploaded pet package is invalid");
+    }
+
+    return {
+      id: packageManifest.id,
+      fileName: packageName,
+      name: packageManifest.displayName,
+      displayName: packageManifest.displayName,
+      description: packageManifest.description,
+      kind: "codex-package",
+      source: "user",
+      size: packageManifest.size,
+      updatedAt: packageManifest.updatedAt,
+      spritesheetPath: packageManifest.spritesheetPath,
+      url: packageAssetUrl(packageName, packageManifest.spritesheetPath, packageManifest.updatedAt)
+    };
   }
 }

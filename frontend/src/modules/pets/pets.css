@@ -92,6 +92,18 @@
   color: #db2777;
 }
 
+.pet-upload-folder {
+  margin-top: 0.55rem;
+  border-color: rgba(59, 130, 246, 0.24);
+  background: rgba(239, 246, 255, 0.95);
+  color: #1d4ed8;
+}
+
+.pet-upload-folder:hover:not(:disabled) {
+  border-color: rgba(59, 130, 246, 0.38);
+  background: rgba(219, 234, 254, 0.95);
+}
+
 .pet-enable-toggle:disabled {
   opacity: 0.56;
   cursor: not-allowed;

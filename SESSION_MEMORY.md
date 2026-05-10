@@ -1,6 +1,62 @@
 # SESSION MEMORY
 
 ## 上一步实际完成了什么
+  - 已新增 hook 标准文件 [HOOK_STANDARD.md](/D:/Work/YYZ_Claw/HOOK_STANDARD.md)，明确当前框架支持的 5 个 hook 事件：
+  - `sessionStart`
+  - `userPromptSubmitted`
+  - `preToolUse`
+  - `postToolUse`
+  - `Stop`
+- 已记录这 5 个事件的语义：
+  - `sessionStart`：用户第一句话之前补运行时提醒
+  - `userPromptSubmitted`：每一个问题后补充上下文
+  - `preToolUse`：工具执行前检查 / 补充 / 拦截 / 改写
+  - `postToolUse`：工具执行后处理结果 / 日志 / 回写上下文
+  - `Stop`：任意主智能体或子智能体完成一次回复时触发，主智能体与子智能体都走同一个 `Stop`
+  - hook 支持 MCP 作用域，但默认只作用于本插件自身携带的 MCP，不跨插件、不跨别的 MCP 串用；`Stop` 不算 MCP 作用域，只覆盖 `preToolUse` / `postToolUse`
+  - hook 的执行方式是触发 command / script；输出结果才决定是插入上下文、控制工具、还是做收尾记录
+  - hook 配置采用 JSON，真实结构是 `hooks -> 事件名 -> matcher 组 -> hooks 数组`，使用 Claude Code 风格的 `SessionStart` / `PreToolUse` / `PermissionRequest` / `UserPromptSubmit` / `Stop`；运行时输入和输出都走 JSON / stdin / stdout
+  - `matcher` 是事件内的过滤器，决定这一组 hook 针对谁触发；`SessionStart` 里通常匹配启动方式，工具类事件里通常匹配工具名，`UserPromptSubmit` 和 `Stop` 一般不靠 matcher
+  - 在 MCP 作用域下，`matcher` 可以写 MCP 名字或 MCP 工具命名空间，但只针对本插件自己携带的 MCP
+  - 全局 hook 和插件级 hook 使用同一套 JSON 结构，区别只在于配置位置和作用范围，不是两套协议
+- 已新增路线文件 [PLUGIN_ROADMAP.md](/D:/Work/YYZ_Claw/PLUGIN_ROADMAP.md)，记录接下来要完成的三件事：
+  - 完整 plugin 功能
+  - 完整插件市场功能
+  - 全局 hook 机制
+- 已梳理当前项目自己的 plugin 实现边界，结论是“有一套插件系统，但不是 Open Plugins 的全量实现”：
+  - 已实现：`/yyz/plugins` 目录发现、`plugin.json`/`.plugin/plugin.json`/`.claude-plugin/plugin.json`/`.codex-plugin/plugin.json` 兼容读取、`skills`/`rules`/`assets` 发现与加载、插件启用/停用、插件技能注入主技能库、插件规则注入 prompt、插件资产读取、前端插件中心与技能中心展示。
+  - 未实现：插件安装/市场分发、`commands`/`agents`/`outputStyles` 的完整执行链、插件级 hooks 执行、插件级 MCP server 启动与转发、`apps` / connector 绑定。
+  - 当前 `hooks` 和 `mcp` 只做了“存在性/元数据识别”，不等于完整运行时接管。
+  - 已查清目前网上较标准的 Open Plugins 规范来源：
+  - 文档：[Open Plugins Specification v1.0.0](https://open-plugins.com/plugin-builders/specification)
+    - 标准插件根目录是一个目录包，不是单文件。
+    - 推荐的 manifest 位置是 `/.plugin/plugin.json`，并且允许工具兼容 `.<tool-name>-plugin/plugin.json`。
+    - 如果有 `plugin.json`，`name` 是唯一必填字段，且要满足小写 kebab-case / period 约束。
+    - Open Plugins 只标准化 hooks 作为插件组件的存在与发现，不把 hook 的事件 JSON 协议定死；hook 的具体配置格式仍由宿主工具定义。
+  - 已确认标准 plugin 各部分职责：
+    - `/.plugin/plugin.json`：插件元数据与可选路径配置。
+    - `commands/`：slash 命令技能。
+    - `agents/`：agent 定义，Open Plugins 路径是插件根目录 `agents/`，文件内容沿用 Claude Code 的 Markdown + YAML frontmatter 标准；当前核心标准只保留 `name` 和 `description` 两个字段。我们会通过适配层复用现有子智能体链路，不改文件格式规范。
+    - `skills/`：技能目录，每个子目录一个 `SKILL.md`。
+    - `rules/`：持续规则文件。
+  - `hooks/hooks.json`：hook 配置。
+  - `/.mcp.json`：MCP server 配置。
+  - `scripts/`：hook / 工具脚本。
+  - `assets/`：图标、logo、静态资源。
+  - `LICENSE` / `CHANGELOG.md`：许可与版本历史。
+- 已确认组件发现规则：
+  - 默认目录存在就自动加载，不存在不是错误。
+    - 自定义路径是补充默认发现，不是替代。
+    - 组件路径必须相对插件根目录，并以 `./` 开头。
+    - 插件组件会被命名空间化为 `{plugin-name}:{component-name}`。
+  - 已新增 `PLUGIN_COMMAND_STANDARD.md`，把 plugin 的 `command` 定义为我们自己的独立 `/xxx` 输入替换机制：用户输入 `/review` 后，宿主自动把它替换成定义好的提示词内容，再按普通消息发送。
+  - 已新增 `MCP_STANDARD.md`，明确全局 MCP 和插件内 MCP 的 JSON 格式不一样：全局 MCP 用 `servers`，插件内 MCP 用 `mcpServers`，但两者底层都遵守同一套 MCP 协议。
+  - Open Plugins 的插件内 `.mcp.json` 官方只明确了本地进程型配置字段：`command`、`args`、`env`、`cwd`；没有把 `url` / `httpHeaders` 写成插件标准字段，远程 MCP 不是这页里已经定死的插件格式。
+  - 已把 `app/` 目录定义为我们框架里的核心授权扩展能力：作为“需要授权的 MCP”入口，用于账号绑定、scope 管理、认证状态联动，不属于 Open Plugins 核心标准，但属于我们自己的创新点。
+  - 已新增 [PLUGIN_MARKETPLACE_STANDARD.md](/D:/Work/YYZ_Claw/PLUGIN_MARKETPLACE_STANDARD.md)，把插件市场定义为 marketplace catalog + plugin package 的分层模型，支持安装、更新、卸载、缓存和 user/project/local 作用域。
+  - 已把插件内 `.mcp.json` 的“最标准示例”写入 `MCP_STANDARD.md`：`mcpServers` 顶层、`command + args + env + cwd`、使用 `${PLUGIN_ROOT}`，并明确这是本地进程型 MCP server 的标准写法。
+  - 已给项目前端 MCP 配置面板补上 `cwd` 入口，`stdio` server 现在可直接填写工作目录并随配置保存。
+- 已确认 `GitHub` 这个 curated 插件不是走项目自定义 `.mcp.json` 的普通 MCP server，而是通过插件清单 + app 绑定 + connector 账号通道工作。
 - 已开始重构子智能体能力装配：
   - `ScopedToolRegistry` 新增“默认继承全部主工具 + 黑名单剔除”能力。
   - `AgentRuntimeFactory` 改为子智能体默认继承主工具池全部工具，只从 `backend/src/subagents/tools` 读取共享私有工具，只从 `backend/src/subagents/hooks` 读取共享私有 hook。
@@ -63,6 +119,14 @@
   - 概览与详情都能读到 `exited + exitCode 0 + result`
 
 ## 下一步打算做什么
+- 后续所有 hook 实现都以 [HOOK_STANDARD.md](/D:/Work/YYZ_Claw/HOOK_STANDARD.md) 为准，不再扩展默认事件语义；`Stop` 对所有主子智能体同级、同名触发；hook 的 MCP 作用域默认只限本插件自身的 MCP，且不包含 `Stop`；hook 通过 command / script 触发，输出决定上下文或控制效果；hook JSON 标准以 `hooks -> 事件名 -> matcher 组 -> hooks 数组` 为准。
+- 如果后续要做自定义插件框架，优先按 Open Plugins 规范落盘：
+  - 根目录插件包
+  - `/.plugin/plugin.json`
+  - 默认目录组件发现
+  - 只在需要时加 `/.mcp.json` / `/.app.json`
+- 如果要把现有 plugin 系统补齐到更接近标准 Open Plugins，优先补 `commands`、`agents`、`hooks` 执行、`mcpServers` 执行和安装/市场层。
+- 继续按 [PLUGIN_ROADMAP.md](/D:/Work/YYZ_Claw/PLUGIN_ROADMAP.md) 推进三件事：完整 plugin、插件市场、全局 hook 机制。
 - 继续验证安装版首次启动时，`.yyz/subagents` 默认资产初始化是否正常。
 - 继续检查 Git 分支时间线与 commit 级 diff 预览的交互细节，尤其是 hover 浮层和详细 diff 切换。
 - 如有需要，补齐 `package.json` 的 `description / author`，去掉打包日志里的提醒。

@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import { createChatRoutes } from "./chatRoutes.js";
 import { createConfigRoutes } from "./configRoutes.js";
+import { createHookSettingsRoutes } from "./hookSettingsRoutes.js";
 import { createAutomationRoutes } from "./automationRoutes.js";
 import { createBackgroundRoutes } from "./backgroundRoutes.js";
 import { createDebateRoutes } from "./debateRoutes.js";
@@ -21,6 +22,7 @@ export function createApiRouter(services) {
   const router = Router();
 
   router.use(createConfigRoutes(services));
+  router.use(createHookSettingsRoutes(services));
   router.use(createBackgroundRoutes(services));
   router.use(createMcpRoutes(services));
   router.use(createMemoryRoutes(services));

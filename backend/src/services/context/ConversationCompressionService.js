@@ -812,6 +812,11 @@ export class ConversationCompressionService {
     const normalized = normalizeMessage(message);
     const imageAttachments = normalizeImageAttachments(normalized.meta);
     const parsedFilesPrompt = buildParsedFilesPrompt(normalized.meta);
+    const metaKind = String(normalized?.meta?.kind ?? "").trim();
+
+    if (metaKind === "hook_status") {
+      return null;
+    }
 
     if (isCompressionSummary(normalized)) {
       return {

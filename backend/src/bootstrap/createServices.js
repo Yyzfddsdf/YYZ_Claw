@@ -6,6 +6,7 @@ import {
   BACKGROUNDS_DIR,
   CONFIG_FILE,
   FEISHU_CONFIG_FILE,
+  HOOK_SETTINGS_FILE,
   GLOBAL_AGENTS_FILE,
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
@@ -38,6 +39,7 @@ import { FeishuConfigStore } from "../im/feishu/config/FeishuConfigStore.js";
 import { ApprovalRulesStore } from "../services/config/ApprovalRulesStore.js";
 import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
 import { MemorySummaryStore } from "../services/config/MemorySummaryStore.js";
+import { HookSettingsStore } from "../services/config/HookSettingsStore.js";
 import { PersonaStore } from "../services/personas/PersonaStore.js";
 import { PluginCatalog } from "../services/plugins/PluginCatalog.js";
 import { PluginPromptBuilder } from "../services/plugins/PluginPromptBuilder.js";
@@ -56,6 +58,7 @@ import { RemoteControlConfigStore } from "../integrations/remote-control/config/
 import { RemoteControlProviderAdapter } from "../integrations/remote-control/providers/RemoteControlProviderAdapter.js";
 import { RemoteControlProviderRegistry } from "../integrations/remote-control/providers/RemoteControlProviderRegistry.js";
 import { HookBlockBuilder } from "../services/hooks/HookBlockBuilder.js";
+import { HookExecutionService } from "../services/hooks/HookExecutionService.js";
 import { HookRegistry } from "../services/hooks/HookRegistry.js";
 import { AutomationSchedulerService } from "../services/automation/AutomationSchedulerService.js";
 import { SqliteAutomationTaskStore } from "../services/automation/SqliteAutomationTaskStore.js";
@@ -132,6 +135,8 @@ export async function createServices() {
 
   const mcpConfigStore = new McpConfigStore(MCP_CONFIG_FILE);
   await mcpConfigStore.ensureFile();
+  const hookSettingsStore = new HookSettingsStore(HOOK_SETTINGS_FILE);
+  await hookSettingsStore.ensureFile();
 
   const approvalRulesStore = new ApprovalRulesStore(APPROVAL_RULES_FILE);
   await approvalRulesStore.ensureFile();
@@ -238,6 +243,10 @@ export async function createServices() {
     hookRegistry,
     maxHooks: 3,
     maxBlockChars: 1800
+  });
+  const hookExecutionService = new HookExecutionService({
+    pluginCatalog,
+    hookSettingsStore
   });
   const runtimeScopeBuilder = new RuntimeScopeBuilder({
     compressionService,
@@ -347,7 +356,8 @@ export async function createServices() {
     memorySummaryService,
     orchestratorSchedulerService,
     orchestratorStore,
-    orchestratorSupervisorService: null
+    orchestratorSupervisorService: null,
+    hookExecutionService
   });
   const automationSchedulerService = new AutomationSchedulerService({
     taskStore: automationTaskStore,
@@ -384,6 +394,7 @@ export async function createServices() {
     longTermMemoryRecallService,
     runtimeBlockRuntime,
     runtimeInjectionComposer,
+    hookExecutionService,
     maxRetries: 3,
     baseDelayMs: 500,
     maxDelayMs: 5000
@@ -403,6 +414,7 @@ export async function createServices() {
     localToolRegistry,
     hookRegistry,
     hookBlockBuilder,
+    hookExecutionService,
     runtimeBlockRegistry,
     runtimeScopeBuilder,
     runtimeBlockRuntime,
@@ -423,6 +435,7 @@ export async function createServices() {
     remoteControlProviderRegistry,
     feishuConfigStore,
     mcpConfigStore,
+    hookSettingsStore,
     pluginCatalog,
     pluginSettingsStore,
     approvalRulesStore,

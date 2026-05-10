@@ -7,6 +7,15 @@ import {
 import { NumericInput } from "../../shared/NumericInput";
 import "./config.css";
 
+const HOOK_EVENT_OPTIONS = [
+  { key: "SessionStart", label: "SessionStart", desc: "会话第一条用户消息进入时触发一次。" },
+  { key: "UserPromptSubmitted", label: "UserPromptSubmitted", desc: "每次用户提交消息时触发。" },
+  { key: "PreToolUse", label: "PreToolUse", desc: "工具执行前触发。" },
+  { key: "PermissionRequest", label: "PermissionRequest", desc: "工具进入审批前触发。" },
+  { key: "PostToolUse", label: "PostToolUse", desc: "工具执行后触发。" },
+  { key: "Stop", label: "Stop", desc: "当前 agent 回合结束时触发。" }
+];
+
 function normalizeConfig(config) {
   const profiles = Array.isArray(config?.modelProfiles)
     ? config.modelProfiles.map((profile, index) => ({
@@ -80,18 +89,37 @@ function formatStatusText(status) {
   return `已加载 ${toolCount} 个工具${errorCount > 0 ? `，${errorCount} 个失败` : ""}`;
 }
 
+function normalizeHookSettings(settings) {
+  const source = settings?.events ?? {};
+  return {
+    events: Object.fromEntries(
+      HOOK_EVENT_OPTIONS.map((item) => [
+        item.key,
+        {
+          enabled: source?.[item.key]?.enabled !== false
+        }
+      ])
+    )
+  };
+}
+
 export function ConfigPanel({
   initialConfig,
   initialMcpConfig,
+  initialHookSettings,
   mcpStatus,
   loading,
   saving,
   mcpLoading,
   mcpSaving,
+  hookSettingsLoading,
+  hookSettingsSaving,
   error,
   mcpError,
+  hookSettingsError,
   onSave,
-  onSaveMcpConfig
+  onSaveMcpConfig,
+  onSaveHookSettings
 }) {
   const [form, setForm] = useState(() => normalizeConfig(initialConfig));
   const [localError, setLocalError] = useState("");
@@ -99,6 +127,9 @@ export function ConfigPanel({
   const [mcpServers, setMcpServers] = useState(() => normalizeMcpConfig(initialMcpConfig));
   const [mcpLocalError, setMcpLocalError] = useState("");
   const [mcpSaveMessage, setMcpSaveMessage] = useState("");
+  const [hookSettings, setHookSettings] = useState(() => normalizeHookSettings(initialHookSettings));
+  const [hookSettingsLocalError, setHookSettingsLocalError] = useState("");
+  const [hookSettingsSaveMessage, setHookSettingsSaveMessage] = useState("");
   const [expandedServers, setExpandedServers] = useState({});
   const [expandedModelProfiles, setExpandedModelProfiles] = useState({});
   const [openTransportMenuIndex, setOpenTransportMenuIndex] = useState(-1);
@@ -113,6 +144,10 @@ export function ConfigPanel({
   useEffect(() => {
     setMcpServers(normalizeMcpConfig(initialMcpConfig));
   }, [initialMcpConfig]);
+
+  useEffect(() => {
+    setHookSettings(normalizeHookSettings(initialHookSettings));
+  }, [initialHookSettings]);
 
   useEffect(() => {
     function handleDocumentPointerDown(event) {
@@ -325,6 +360,29 @@ export function ConfigPanel({
       await onSaveMcpConfig({ servers: finalServers });
       setMcpSaveMessage("MCP 配置已成功应用");
     } catch { /* error handled by parent */ }
+  }
+
+  async function handleHookSettingsSubmit(event) {
+    event.preventDefault();
+    setHookSettingsLocalError("");
+    setHookSettingsSaveMessage("");
+
+    try {
+      await onSaveHookSettings(normalizeHookSettings(hookSettings));
+      setHookSettingsSaveMessage("全局 Hook 开关已成功应用");
+    } catch { /* error handled by parent */ }
+  }
+
+  function updateHookEventEnabled(eventKey, enabled) {
+    setHookSettings((prev) => ({
+      ...prev,
+      events: {
+        ...prev.events,
+        [eventKey]: {
+          enabled
+        }
+      }
+    }));
   }
 
   function addMcpServer() {
@@ -811,6 +869,54 @@ export function ConfigPanel({
           {mcpSaveMessage && <span className="status-note success">{mcpSaveMessage}</span>}
           {(mcpLocalError || mcpError) && <span className="status-note error">{mcpLocalError || mcpError}</span>}
           <button type="submit" className="btn-primary" disabled={mcpSaving}>{mcpSaving ? "正在应用..." : "应用 MCP 配置"}</button>
+        </div>
+      </form>
+
+      <div className="config-divider" style={{ margin: '1.25rem 0' }} />
+
+      <div className="module-title-wrap">
+        <h2>全局 Hook 开关</h2>
+        <p>这里只控制全局 6 个 Hook 事件是否启用，不影响插件级 Hook。</p>
+      </div>
+
+      <form onSubmit={handleHookSettingsSubmit}>
+        <div className="config-section">
+          <div className="config-section-header">
+            <h3>事件级开关</h3>
+          </div>
+          <div className="config-section-body">
+            {HOOK_EVENT_OPTIONS.map((item) => {
+              const enabled = hookSettings?.events?.[item.key]?.enabled !== false;
+              return (
+                <div key={item.key} className="config-item">
+                  <div className="config-item-info">
+                    <span className="config-item-label">{item.label}</span>
+                    <span className="config-item-desc">{item.desc}</span>
+                  </div>
+                  <div className="config-item-control">
+                    <button
+                      type="button"
+                      className={`pet-enable-toggle ${enabled ? "is-on" : ""}`}
+                      onClick={() => updateHookEventEnabled(item.key, !enabled)}
+                      disabled={hookSettingsLoading || hookSettingsSaving}
+                    >
+                      {enabled ? "已开启" : "已关闭"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="config-footer">
+          {hookSettingsSaveMessage && <span className="status-note success">{hookSettingsSaveMessage}</span>}
+          {(hookSettingsLocalError || hookSettingsError) && (
+            <span className="status-note error">{hookSettingsLocalError || hookSettingsError}</span>
+          )}
+          <button type="submit" className="btn-primary" disabled={hookSettingsLoading || hookSettingsSaving}>
+            {hookSettingsSaving ? "保存中..." : "应用 Hook 开关"}
+          </button>
         </div>
       </form>
     </div>

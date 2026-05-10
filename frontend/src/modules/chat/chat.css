@@ -2294,6 +2294,28 @@
   border-bottom-right-radius: var(--radius-lg);
 }
 
+.bubble-user.bubble-hook-prompt,
+.bubble-user.bubble-hook-status {
+  align-self: flex-start;
+}
+
+.bubble-user.bubble-hook-prompt header,
+.bubble-user.bubble-hook-status header {
+  flex-direction: row;
+}
+
+.bubble-user.bubble-hook-prompt .bubble-content {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: var(--radius-lg);
+}
+
+.bubble-user.bubble-hook-status .bubble-content {
+  display: none;
+}
+
 .runtime-hook-strip {
   border: 1px solid #fcd34d;
   background: #fff7ed;
@@ -2308,6 +2330,46 @@
   font-size: 0.78rem;
   font-weight: 600;
   color: #9a3412;
+}
+
+.hook-prompt-card {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.hook-prompt-main {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.hook-prompt-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.14rem 0.5rem;
+  background: rgba(37, 99, 235, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.24);
+  color: #1d4ed8;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.hook-status-strip {
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(248, 250, 252, 0.92);
+  border-radius: 999px;
+  padding: 0.35rem 0.72rem;
+  box-shadow: none;
+}
+
+.hook-status-strip-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #334155;
 }
 
 .bubble-tool-image-input {

@@ -124,6 +124,7 @@ export class ConversationAgentRuntimeService {
     this.orchestratorSchedulerService = options.orchestratorSchedulerService ?? null;
     this.orchestratorStore = options.orchestratorStore ?? null;
     this.orchestratorSupervisorService = options.orchestratorSupervisorService ?? null;
+    this.hookExecutionService = options.hookExecutionService ?? null;
   }
 
   async resolveConversationRuntime(conversationId) {

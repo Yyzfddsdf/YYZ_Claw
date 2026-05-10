@@ -448,6 +448,21 @@ function getRuntimeHookStripText(message) {
   return "运行时提醒";
 }
 
+function getHookPromptBadgeText(message) {
+  const hookEventName = String(message?.meta?.hookEventName ?? "").trim();
+  return hookEventName ? `Hook 上下文 · ${hookEventName}` : "Hook 上下文";
+}
+
+function getHookStatusText(message) {
+  const meta = message?.meta && typeof message.meta === "object" ? message.meta : {};
+  const statusMessage = String(meta.statusMessage ?? meta.systemMessage ?? message?.content ?? "").trim();
+  if (statusMessage) {
+    return statusMessage;
+  }
+  const hookEventName = String(meta.hookEventName ?? "").trim();
+  return hookEventName ? `Hook 状态 · ${hookEventName}` : "Hook 状态";
+}
+
 function clipOrchestratorText(value, maxLength = 96) {
   const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
   if (!normalized || normalized.length <= maxLength) {
@@ -578,6 +593,8 @@ function resolveMessageSpeakText({
   message,
   messageText,
   isRuntimeHookInjectedMessage,
+  isHookPromptMessage,
+  isHookStatusMessage,
   isOrchestratorMessage,
   orchestratorNotice,
   isCompressionSummary,
@@ -590,6 +607,14 @@ function resolveMessageSpeakText({
 
   if (isRuntimeHookInjectedMessage) {
     return truncateTtsText(getRuntimeHookStripText(message));
+  }
+
+  if (isHookStatusMessage) {
+    return truncateTtsText(getHookStatusText(message));
+  }
+
+  if (isHookPromptMessage) {
+    return truncateTtsText(stripMarkdownForTts(messageText) || getHookPromptBadgeText(message));
   }
 
   if (isOrchestratorMessage) {
@@ -833,6 +858,8 @@ function findPreviousRunnableUserMessageId(messages, currentIndex) {
     if (
       String(candidate?.role ?? "").trim() === "user" &&
       candidateKind !== "runtime_hook_injected" &&
+      candidateKind !== "hook_prompt" &&
+      candidateKind !== "hook_status" &&
       candidateKind !== "tool_image_input"
     ) {
       return String(candidate?.id ?? "").trim();
@@ -3035,6 +3062,8 @@ export function ChatPanel({
               const messageMetaKind = getMessageMetaKind(message);
               const isInternalToolImageMessage = messageMetaKind === "tool_image_input";
               const isRuntimeHookInjectedMessage = messageMetaKind === "runtime_hook_injected";
+              const isHookPromptMessage = messageMetaKind === "hook_prompt";
+              const isHookStatusMessage = messageMetaKind === "hook_status";
               const isOrchestratorMessage = messageMetaKind === "orchestrator_message";
               const isGoalContinuationMessage = messageMetaKind === "goal_continuation";
               const isPlanContinuationMessage = messageMetaKind === "plan_continuation";
@@ -3092,6 +3121,8 @@ export function ChatPanel({
                 message,
                 messageText,
                 isRuntimeHookInjectedMessage,
+                isHookPromptMessage,
+                isHookStatusMessage,
                 isOrchestratorMessage,
                 orchestratorNotice,
                 isCompressionSummary,
@@ -3112,6 +3143,8 @@ export function ChatPanel({
                 Boolean(message.id) &&
                 !isInternalToolImageMessage &&
                 !isRuntimeHookInjectedMessage &&
+                !isHookPromptMessage &&
+                !isHookStatusMessage &&
                 !isOrchestratorMessage &&
                 !isCompressionSummary;
               const rerunAnchorMessageId =
@@ -3130,6 +3163,8 @@ export function ChatPanel({
                 Boolean(message.id) &&
                 !isSubagentConversation &&
                 !isRuntimeHookInjectedMessage &&
+                !isHookPromptMessage &&
+                !isHookStatusMessage &&
                 !isInternalToolImageMessage;
               const showBubbleActionRow =
                 canCopyMessage || !isSpeakDisabled || canBranchMessage || canRerunMessage || canEditMessage;
@@ -3205,6 +3240,8 @@ export function ChatPanel({
                     isAttachmentOnlyUserMessage ? "bubble-attachment-only" : ""
                   } ${isInternalToolImageMessage ? "bubble-tool-image-input" : ""} ${
                     isRuntimeHookInjectedMessage ? "bubble-runtime-hook-injected" : ""
+                  } ${isHookPromptMessage ? "bubble-hook-prompt" : ""} ${
+                    isHookStatusMessage ? "bubble-hook-status" : ""
                   } ${
                     isGoalContinuationMessage ? "bubble-goal-continuation" : ""
                   } ${
@@ -3219,7 +3256,11 @@ export function ChatPanel({
                         {isInternalToolImageMessage && "Tool Image Input"}
                         {message.role === "user" &&
                           !isInternalToolImageMessage &&
+                          !isHookPromptMessage &&
+                          !isHookStatusMessage &&
                           "User"}
+                        {isHookPromptMessage && "Hook Prompt"}
+                        {isHookStatusMessage && "Hook Status"}
                         {message.role === "assistant" && (isCompressionSummary ? "Compression" : "Assistant")}
                         {message.role === "tool" && "Tool"}
                         {message.role === "system" && "System"}
@@ -3237,6 +3278,23 @@ export function ChatPanel({
                   {isRuntimeHookInjectedMessage ? (
                     <div className="runtime-hook-strip">
                       <span className="runtime-hook-strip-label">{getRuntimeHookStripText(message)}</span>
+                    </div>
+                  ) : isHookStatusMessage ? (
+                    <div className="hook-status-strip">
+                      <span className="hook-status-strip-label">{getHookStatusText(message)}</span>
+                    </div>
+                  ) : isHookPromptMessage ? (
+                    <div className="hook-prompt-card">
+                      <div className="hook-prompt-main">
+                        <span className="hook-prompt-badge">{getHookPromptBadgeText(message)}</span>
+                      </div>
+                      {messageText.length > 0 && (
+                        <MarkdownMessage
+                          content={message.content || ""}
+                          className="bubble-content"
+                          streaming={isStreamingThisMessage}
+                        />
+                      )}
                     </div>
                   ) : isGoalContinuationMessage ? (
                     <div className="goal-continuation-card">

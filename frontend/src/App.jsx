@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { fetchBackgrounds } from "./api/backgroundApi";
 import { fetchConfig, saveConfig } from "./api/configApi";
+import { fetchHookSettings, saveHookSettings } from "./api/hookSettingsApi";
 import { fetchMcpConfig, saveMcpConfig } from "./api/mcpApi";
 import { fetchPets, savePetSettings } from "./api/petsApi";
 import { ActiveScenePanel } from "./modules/active-scene/ActiveScenePanel";
@@ -42,6 +43,19 @@ function createEmptyConfig() {
 function createEmptyMcpConfig() {
   return {
     servers: []
+  };
+}
+
+function createEmptyHookSettings() {
+  return {
+    events: {
+      SessionStart: { enabled: true },
+      UserPromptSubmitted: { enabled: true },
+      PreToolUse: { enabled: true },
+      PermissionRequest: { enabled: true },
+      PostToolUse: { enabled: true },
+      Stop: { enabled: true }
+    }
   };
 }
 
@@ -209,6 +223,10 @@ function MainApp({
   const [mcpError, setMcpError] = useState("");
   const [mcpLoading, setMcpLoading] = useState(true);
   const [mcpSaving, setMcpSaving] = useState(false);
+  const [hookSettings, setHookSettings] = useState(createEmptyHookSettings);
+  const [hookSettingsError, setHookSettingsError] = useState("");
+  const [hookSettingsLoading, setHookSettingsLoading] = useState(true);
+  const [hookSettingsSaving, setHookSettingsSaving] = useState(false);
   const [appearance, setAppearance] = useState(createEmptyAppearance);
   const [petState, setPetState] = useState(createEmptyPets);
   const [petWindowPayload, setPetWindowPayload] = useState(() =>
@@ -293,6 +311,34 @@ function MainApp({
     }
 
     loadPets();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadHookSettings() {
+      setHookSettingsLoading(true);
+      setHookSettingsError("");
+
+      try {
+        const response = await fetchHookSettings();
+
+        if (!mounted) return;
+
+        setHookSettings(response?.settings ?? createEmptyHookSettings());
+      } catch (error) {
+        if (!mounted) return;
+        setHookSettingsError(error.message || "加载 Hook 开关失败");
+      } finally {
+        if (mounted) setHookSettingsLoading(false);
+      }
+    }
+
+    loadHookSettings();
 
     return () => {
       mounted = false;
@@ -418,6 +464,21 @@ function MainApp({
       }));
     } catch {
       // Keep local movement responsive even if persistence fails.
+    }
+  }
+
+  async function handleSaveHookSettings(nextSettings) {
+    setHookSettingsSaving(true);
+    setHookSettingsError("");
+
+    try {
+      const response = await saveHookSettings(nextSettings);
+      setHookSettings(response?.settings ?? nextSettings);
+    } catch (error) {
+      setHookSettingsError(error.message || "保存 Hook 开关失败");
+      throw error;
+    } finally {
+      setHookSettingsSaving(false);
     }
   }
 
@@ -842,15 +903,20 @@ function MainApp({
             <ConfigPanel
               initialConfig={config}
               initialMcpConfig={mcpConfig}
+              initialHookSettings={hookSettings}
               mcpStatus={mcpStatus}
               loading={configLoading}
               saving={configSaving}
               mcpLoading={mcpLoading}
               mcpSaving={mcpSaving}
+              hookSettingsLoading={hookSettingsLoading}
+              hookSettingsSaving={hookSettingsSaving}
               onSave={handleSaveConfig}
               onSaveMcpConfig={handleSaveMcpConfig}
+              onSaveHookSettings={handleSaveHookSettings}
               error={configError}
               mcpError={mcpError}
+              hookSettingsError={hookSettingsError}
             />
           </section>
         )}

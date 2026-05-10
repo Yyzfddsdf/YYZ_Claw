@@ -49,6 +49,10 @@ import {
 } from "../services/chat/conversationRuntimeShared.js";
 import { AgentConversationRecorder } from "../services/orchestration/AgentConversationRecorder.js";
 import { resolveSubagentCompletionDispatchRequest } from "../services/orchestration/subagentCompletionShared.js";
+import {
+  createHookAppendedMessagesPayload,
+  createHookContinuationMessage
+} from "../services/hooks/HookExecutionService.js";
 import { isAbortError } from "../services/runs/runAbort.js";
 import { endSse, initSse, writeSseEvent } from "../services/stream/SseChannel.js";
 
@@ -830,6 +834,118 @@ function emitRunEvent(run, payload, conversationRunCoordinator, res) {
   }
 }
 
+function conversationHasUserMessages(messages = []) {
+  return Array.isArray(messages)
+    ? messages.some((message) => String(message?.role ?? "").trim() === "user")
+    : false;
+}
+
+function isHookMetaKind(message) {
+  const kind = String(message?.meta?.kind ?? "").trim();
+  return kind === "hook_prompt" || kind === "hook_status";
+}
+
+function isMeaningfulConversationMessage(message) {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return false;
+  }
+  if (isHookMetaKind(message)) {
+    return false;
+  }
+  const role = String(message?.role ?? "").trim();
+  if (!role) {
+    return false;
+  }
+  if (role === "tool") {
+    return true;
+  }
+  if (role === "assistant") {
+    const content = String(message?.content ?? "").trim();
+    const reasoningContent = String(message?.reasoningContent ?? "").trim();
+    const toolCalls = Array.isArray(message?.toolCalls) ? message.toolCalls : [];
+    return Boolean(content || reasoningContent || toolCalls.length > 0);
+  }
+  if (role === "user") {
+    const content = String(message?.content ?? "").trim();
+    return Boolean(content);
+  }
+  return true;
+}
+
+function shouldTriggerSessionStart(existingMessages = [], latestSubmittedUserMessage = null) {
+  const meaningfulMessages = Array.isArray(existingMessages)
+    ? existingMessages.filter(isMeaningfulConversationMessage)
+    : [];
+  if (meaningfulMessages.length === 0) {
+    return true;
+  }
+  if (meaningfulMessages.length !== 1) {
+    return false;
+  }
+  const [onlyMessage] = meaningfulMessages;
+  if (String(onlyMessage?.role ?? "").trim() !== "user") {
+    return false;
+  }
+  const existingContent = String(onlyMessage?.content ?? "").trim();
+  const submittedContent = String(latestSubmittedUserMessage?.content ?? "").trim();
+  return Boolean(existingContent && submittedContent && existingContent === submittedContent);
+}
+
+async function executeHookEventAndAppend({
+  hookExecutionService,
+  eventName,
+  payload,
+  executionContext,
+  historyStore,
+  conversationId,
+  history,
+  recorder = null,
+  foregroundRun = null,
+  conversationRunCoordinator = null,
+  res = null,
+  checkpoint = "hook"
+} = {}) {
+  if (!hookExecutionService || typeof hookExecutionService.executeEvent !== "function") {
+    return {
+      hookResult: {
+        messages: [],
+        permissionDecision: null,
+        permissionDecisionReason: "",
+        postToolDecision: null,
+        postToolReason: "",
+        stopContinue: true,
+        stopReason: "",
+        errors: []
+      },
+      history
+    };
+  }
+
+  const hookResult = await hookExecutionService.executeEvent(eventName, payload, executionContext);
+  const messages = Array.isArray(hookResult?.messages) ? hookResult.messages.filter(Boolean) : [];
+  let nextHistory = history ?? null;
+
+  if (messages.length > 0 && historyStore && conversationId) {
+    nextHistory =
+      historyStore.appendMessages(conversationId, messages, {
+        updatedAt: Number(messages.at(-1)?.timestamp ?? Date.now())
+      }) ?? nextHistory;
+    if (Array.isArray(executionContext?.rawConversationMessages)) {
+      executionContext.rawConversationMessages.push(...messages);
+    }
+    const appendedPayload = createHookAppendedMessagesPayload(messages, checkpoint);
+    if (recorder && typeof recorder.applyEvent === "function") {
+      recorder.applyEvent(appendedPayload);
+    }
+    emitRunEvent(foregroundRun, appendedPayload, conversationRunCoordinator, res);
+  }
+
+  return {
+    hookResult,
+    history: nextHistory
+  };
+}
+
 function beginManualCompressionReplayRun({
   conversationId,
   conversationRunCoordinator
@@ -937,6 +1053,7 @@ export function createChatController({
   skillValidator,
   skillPromptBuilder,
   pluginPromptBuilder,
+  hookExecutionService,
   skillCatalog,
   pluginCatalog,
   personaStore,
@@ -1009,10 +1126,65 @@ export function createChatController({
     const conversationId = String(activeRun.conversationId ?? "").trim();
     const sessionId = String(activeRun.sessionId ?? "").trim();
     const agentId = String(activeRun.agentId ?? "").trim();
-    const flushedHistory =
+    let flushedHistory =
       typeof activeRun.flushRecorderSnapshotToHistory === "function"
         ? activeRun.flushRecorderSnapshotToHistory()
         : (conversationId ? historyStore.getConversation(conversationId) : null);
+
+    const stopHookExecutionContext =
+      activeRun.hookExecutionContext && typeof activeRun.hookExecutionContext === "object"
+        ? {
+            ...activeRun.hookExecutionContext,
+            rawConversationMessages: Array.isArray(flushedHistory?.messages)
+              ? [...flushedHistory.messages]
+              : []
+          }
+        : null;
+    if (conversationId && stopHookExecutionContext) {
+      const stopHookResult = await executeHookEventAndAppend({
+        hookExecutionService,
+        eventName: "Stop",
+        payload: {
+          turn_id:
+            String(stopHookExecutionContext?.currentAtomicStepId ?? stopHookExecutionContext?.runId ?? "").trim()
+            || `turn_${Date.now()}`,
+          stop_hook_active: true,
+          last_assistant_message:
+            Array.isArray(flushedHistory?.messages)
+              ? String(
+                  [...flushedHistory.messages]
+                    .reverse()
+                    .find((message) => String(message?.role ?? "").trim() === "assistant")
+                    ?.content ?? ""
+                ).trim()
+              : ""
+        },
+        executionContext: stopHookExecutionContext,
+        historyStore,
+        conversationId,
+        history: flushedHistory,
+        recorder: null,
+        foregroundRun: activeRun,
+        conversationRunCoordinator,
+        res: null,
+        checkpoint: "stop_hook"
+      });
+      flushedHistory = stopHookResult.history ?? flushedHistory;
+      if (stopHookResult.hookResult?.stopContinue === false && stopHookResult.hookResult?.stopReason) {
+        flushedHistory =
+          historyStore.appendMessages(
+            conversationId,
+            [
+              createHookContinuationMessage(stopHookResult.hookResult.stopReason, {
+                stopReason: stopHookResult.hookResult.stopReason
+              })
+            ].filter(Boolean),
+            {
+              updatedAt: Date.now()
+            }
+          ) ?? flushedHistory;
+      }
+    }
 
     conversationRunCoordinator?.emitEvent?.(activeRun, {
       type: "session_end",
@@ -2445,6 +2617,7 @@ export function createChatController({
               thinkingMode: resumedHistory?.thinkingMode,
               approvalMode: resumedHistory?.approvalMode
             });
+          foregroundRun.recorder = recorder;
         }
 
         emitRunEvent(
@@ -2515,6 +2688,9 @@ export function createChatController({
             res
           })
         };
+        if (foregroundRun) {
+          foregroundRun.hookExecutionContext = executionContext;
+        }
 
         runResult = await runtimeChatAgent.resumePendingApproval({
           pendingApproval: resolvedPendingApproval,
@@ -2800,6 +2976,13 @@ export function createChatController({
         const firstUserMessage = chatValidation.data.messages.find(
           (item) => item.role === "user" && item.content.trim().length > 0
         );
+        const latestSubmittedUserMessage = [...chatValidation.data.messages]
+          .reverse()
+          .find((item) => String(item?.role ?? "").trim() === "user") ?? null;
+        const shouldRunSessionStart = shouldTriggerSessionStart(
+          existingConversation?.messages,
+          latestSubmittedUserMessage
+        );
         const firstSentence = extractFirstSentence(firstUserMessage?.content);
 
         if (
@@ -2949,6 +3132,67 @@ export function createChatController({
             : effectiveMessages;
         }
 
+        const hookTurnContext = {
+          conversationId,
+          runId: foregroundRun?.runId,
+          sessionId: resolvedRuntime?.sessionId,
+          agentId: resolvedRuntime?.agentId,
+          agentType: resolvedRuntime?.agentType,
+          currentAtomicStepId: foregroundRun?.stepId,
+          workplacePath,
+          workingDirectory: workplacePath,
+          runtimeConfig: runtimeExecutionConfig,
+          activePluginNames: Array.isArray(resolvedRuntime?.activePluginNames)
+            ? resolvedRuntime.activePluginNames
+            : [],
+          rawConversationMessages: Array.isArray(existingConversation?.messages)
+            ? [...existingConversation.messages]
+            : []
+        };
+
+        if (shouldRunSessionStart && latestSubmittedUserMessage) {
+          const sessionStartResult = await executeHookEventAndAppend({
+            hookExecutionService,
+            eventName: "SessionStart",
+            payload: {
+              source: "startup"
+            },
+            executionContext: hookTurnContext,
+            historyStore,
+            conversationId,
+            history: existingConversation,
+            foregroundRun,
+            conversationRunCoordinator,
+            res,
+            checkpoint: "session_start_hook"
+          });
+          existingConversation = sessionStartResult.history ?? existingConversation;
+        }
+
+        if (latestSubmittedUserMessage) {
+          const userPromptResult = await executeHookEventAndAppend({
+            hookExecutionService,
+            eventName: "UserPromptSubmitted",
+            payload: {
+              turn_id: String(foregroundRun?.stepId ?? foregroundRun?.runId ?? "").trim() || `turn_${Date.now()}`,
+              prompt: String(latestSubmittedUserMessage?.content ?? "")
+            },
+            executionContext: hookTurnContext,
+            historyStore,
+            conversationId,
+            history: existingConversation,
+            foregroundRun,
+            conversationRunCoordinator,
+            res,
+            checkpoint: "user_prompt_submitted_hook"
+          });
+          existingConversation = userPromptResult.history ?? existingConversation;
+        }
+
+        effectiveMessages = Array.isArray(existingConversation?.messages)
+          ? existingConversation.messages
+          : effectiveMessages;
+
         if (conversationId && firstSentence) {
           if (existingConversation && isAutoTitleCandidate(existingConversation.title)) {
             scheduleAsyncTitleGeneration({
@@ -3077,6 +3321,7 @@ export function createChatController({
               thinkingMode: thinkingRuntimeOptions.thinkingMode,
               approvalMode
             });
+          foregroundRun.recorder = recorder;
         }
         const pinnedMemorySummaryPrompt = await resolvePinnedMemorySummaryPrompt({
           historyStore,
@@ -3153,6 +3398,9 @@ export function createChatController({
             res
           })
         };
+        if (foregroundRun) {
+          foregroundRun.hookExecutionContext = executionContext;
+        }
 
         runResult = await runtimeChatAgent.run({
           messages: [

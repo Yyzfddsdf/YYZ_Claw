@@ -14,6 +14,10 @@ import {
   sleepWithSignal,
   throwIfAborted
 } from "../runs/runAbort.js";
+import {
+  createHookAppendedMessagesPayload,
+  createHookContinuationMessage
+} from "../hooks/HookExecutionService.js";
 import { ToolCallPreflightService } from "../tools/ToolCallPreflightService.js";
 import { isPlanIncomplete } from "../chat/conversationRuntimeShared.js";
 
@@ -168,12 +172,34 @@ function sanitizeToolCallsForModel(toolCalls) {
     .filter((toolCall) => toolCall && toolCall.function.name);
 }
 
+function parseToolArgumentsForHook(rawArguments) {
+  if (rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)) {
+    return rawArguments;
+  }
+  const text = String(rawArguments ?? "").trim();
+  if (!text) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function sanitizeConversationForModel(conversation = [], options = {}) {
   const includeReasoningContent = Boolean(options.includeReasoningContent);
   return Array.isArray(conversation)
-    ? conversation.map((message) => {
+    ? conversation
+      .map((message) => {
         if (!message || typeof message !== "object" || Array.isArray(message)) {
           return message;
+        }
+
+        const metaKind = String(message?.meta?.kind ?? "").trim();
+        if (metaKind === "hook_status") {
+          return null;
         }
 
         const reasoningContent = includeReasoningContent
@@ -199,6 +225,7 @@ function sanitizeConversationForModel(conversation = [], options = {}) {
 
         return sanitizedMessage;
       })
+      .filter(Boolean)
     : [];
 }
 
@@ -241,6 +268,7 @@ export class ChatAgent {
     this.longTermMemoryRecallService = options.longTermMemoryRecallService ?? null;
     this.runtimeBlockRuntime = options.runtimeBlockRuntime ?? null;
     this.runtimeInjectionComposer = options.runtimeInjectionComposer ?? null;
+    this.hookExecutionService = options.hookExecutionService ?? null;
     this.maxRetries = Number.isInteger(options.maxRetries) ? options.maxRetries : 3;
     this.baseDelayMs = Number.isInteger(options.baseDelayMs)
       ? options.baseDelayMs
@@ -532,6 +560,67 @@ export class ChatAgent {
         hooks: []
       };
     }
+  }
+
+  appendHookMessages({
+    messages = [],
+    conversation,
+    executionContext,
+    onEvent,
+    checkpoint = "hook"
+  } = {}) {
+    const normalizedMessages = Array.isArray(messages)
+      ? messages.filter((message) => message && typeof message === "object" && !Array.isArray(message))
+      : [];
+    if (normalizedMessages.length === 0) {
+      return [];
+    }
+
+    for (const message of normalizedMessages) {
+      if (String(message?.meta?.kind ?? "").trim() === "hook_prompt") {
+        conversation.push({
+          role: "user",
+          content: String(message.content ?? "")
+        });
+      }
+    }
+
+    if (Array.isArray(executionContext?.rawConversationMessages)) {
+      executionContext.rawConversationMessages.push(...normalizedMessages);
+    }
+
+    onEvent?.(createHookAppendedMessagesPayload(normalizedMessages, checkpoint));
+    return normalizedMessages;
+  }
+
+  async runHookEvent(eventName, payload, executionContext) {
+    if (!this.hookExecutionService || typeof this.hookExecutionService.executeEvent !== "function") {
+      return {
+        messages: [],
+        permissionDecision: null,
+        permissionDecisionReason: "",
+        postToolDecision: null,
+        postToolReason: "",
+        stopContinue: true,
+        stopReason: "",
+        errors: []
+      };
+    }
+
+    return this.hookExecutionService.executeEvent(eventName, payload, executionContext);
+  }
+
+  createDeniedToolResult(toolCall, reason = "工具调用被拒绝") {
+    const toolName = String(toolCall?.function?.name ?? "tool").trim() || "tool";
+    const text = String(reason ?? "").trim() || "工具调用被拒绝";
+    const body = JSON.stringify({ error: text }, null, 2);
+    return {
+      name: toolName,
+      isError: true,
+      content: body,
+      modelContent: body,
+      hooks: []
+    };
   }
 
   requiresApproval(toolCall, approvalMode, approvalRules) {
@@ -1017,39 +1106,203 @@ export class ChatAgent {
 
         const finalState = assembler.snapshot();
         onEvent?.({ type: "final", ...finalState });
+        let finalStatus = "completed";
         if (isPlanIncomplete(executionContext?.planState)) {
+          finalStatus = "plan_incomplete";
           onEvent?.({
             type: "plan_incomplete",
             plan: executionContext.planState,
             mergedText: assembler.getMergedText()
           });
-          return {
-            status: "plan_incomplete",
-            ...finalState
-          };
-        }
-        if (String(executionContext?.goal ?? "").trim() && !isGoalSubmitted(executionContext)) {
+        } else if (String(executionContext?.goal ?? "").trim() && !isGoalSubmitted(executionContext)) {
+          finalStatus = "goal_incomplete";
           onEvent?.({
             type: "goal_incomplete",
             goal: String(executionContext?.goal ?? "").trim(),
             mergedText: assembler.getMergedText()
           });
-          return {
-            status: "goal_incomplete",
-            ...finalState
-          };
         }
+
+        const stopHookResult = await this.runHookEvent(
+          "Stop",
+          {
+            turn_id:
+              String(executionContext?.currentAtomicStepId ?? executionContext?.runId ?? "").trim()
+              || `turn_${Date.now()}`,
+            stop_hook_active: Boolean(executionContext?.turnRuntime?.stopHookActive),
+            last_assistant_message: assistantContent
+          },
+          executionContext
+        );
+        this.appendHookMessages({
+          messages: stopHookResult.messages,
+          conversation,
+          executionContext,
+          onEvent,
+          checkpoint: "stop_hook"
+        });
+        if (stopHookResult.stopContinue === false && stopHookResult.stopReason) {
+          executionContext.turnRuntime = executionContext.turnRuntime ?? {};
+          const continuationCount = Number(
+            executionContext.turnRuntime.stopHookContinuationCount ?? 0
+          );
+          if (continuationCount >= 3) {
+            return {
+              status: finalStatus,
+              ...finalState
+            };
+          }
+          executionContext.turnRuntime.stopHookActive = true;
+          executionContext.turnRuntime.stopHookContinuationCount = continuationCount + 1;
+          const continuationMessage = createHookContinuationMessage(stopHookResult.stopReason, {
+            stopReason: stopHookResult.stopReason
+          });
+          this.appendHookMessages({
+            messages: continuationMessage ? [continuationMessage] : [],
+            conversation,
+            executionContext,
+            onEvent,
+            checkpoint: "stop_continuation"
+          });
+          emptyFinalResponseCount = 0;
+          continue;
+        }
+
         return {
-          status: "completed",
+          status: finalStatus,
           ...finalState
         };
       }
 
-      if (
-        assistantRound.toolCalls.some((toolCall) =>
-          this.requiresApproval(toolCall, approvalMode, resolvedApprovalRules)
-        )
-      ) {
+      const turnId =
+        String(executionContext?.currentAtomicStepId ?? executionContext?.runId ?? "").trim()
+        || `turn_${Date.now()}`;
+      const pendingApprovalToolCalls = [];
+      const deferredExecutableToolCalls = [];
+
+      for (const toolCall of assistantRound.toolCalls) {
+        const toolName = String(toolCall?.function?.name ?? "").trim();
+        const toolInput = parseToolArgumentsForHook(toolCall?.function?.arguments);
+        const preToolHookResult = await this.runHookEvent(
+          "PreToolUse",
+          {
+            turn_id: turnId,
+            tool_name: toolName,
+            tool_use_id: String(toolCall?.id ?? "").trim(),
+            tool_input: toolInput
+          },
+          executionContext
+        );
+        this.appendHookMessages({
+          messages: preToolHookResult.messages,
+          conversation,
+          executionContext,
+          onEvent,
+          checkpoint: "pre_tool_use"
+        });
+
+        if (preToolHookResult.permissionDecision === "deny") {
+          onEvent?.({
+            type: "tool_call",
+            toolName,
+            arguments: toolCall?.function?.arguments,
+            toolCallId: toolCall.id
+          });
+          const deniedToolResult = this.createDeniedToolResult(
+            toolCall,
+            preToolHookResult.permissionDecisionReason || `工具 ${toolName} 被拒绝执行`
+          );
+          assembler.appendToolResult(
+            deniedToolResult.name,
+            deniedToolResult.modelContent ?? deniedToolResult.content
+          );
+          onEvent?.({
+            type: "tool_result",
+            toolCallId: toolCall.id,
+            toolName: deniedToolResult.name,
+            content: deniedToolResult.content,
+            hooks: [],
+            isError: true,
+            mergedText: assembler.getMergedText()
+          });
+          conversation.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: deniedToolResult.modelContent ?? deniedToolResult.content
+          });
+          continue;
+        }
+
+        if (this.requiresApproval(toolCall, approvalMode, resolvedApprovalRules)) {
+          const permissionHookResult = await this.runHookEvent(
+            "PermissionRequest",
+            {
+              turn_id: turnId,
+              tool_name: toolName,
+              tool_use_id: String(toolCall?.id ?? "").trim(),
+              tool_input: toolInput,
+              tool_input_description: toolName
+            },
+            executionContext
+          );
+          this.appendHookMessages({
+            messages: permissionHookResult.messages,
+            conversation,
+            executionContext,
+            onEvent,
+            checkpoint: "permission_request"
+          });
+
+          if (permissionHookResult.permissionDecision === "deny") {
+            onEvent?.({
+              type: "tool_call",
+              toolName,
+              arguments: toolCall?.function?.arguments,
+              toolCallId: toolCall.id
+            });
+            const deniedToolResult = this.createDeniedToolResult(
+              toolCall,
+              permissionHookResult.permissionDecisionReason || `工具 ${toolName} 未通过审批`
+            );
+            assembler.appendToolResult(
+              deniedToolResult.name,
+              deniedToolResult.modelContent ?? deniedToolResult.content
+            );
+            onEvent?.({
+              type: "tool_result",
+              toolCallId: toolCall.id,
+              toolName: deniedToolResult.name,
+              content: deniedToolResult.content,
+              hooks: [],
+              isError: true,
+              mergedText: assembler.getMergedText()
+            });
+            conversation.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: deniedToolResult.modelContent ?? deniedToolResult.content
+            });
+            continue;
+          }
+
+          if (permissionHookResult.permissionDecision !== "allow") {
+            pendingApprovalToolCalls.push(toolCall);
+            continue;
+          }
+        }
+
+        deferredExecutableToolCalls.push(toolCall);
+      }
+
+      if (pendingApprovalToolCalls.length > 0) {
+        const remainingToolCalls = [
+          ...deferredExecutableToolCalls,
+          ...pendingApprovalToolCalls
+        ];
+        assistantRound.toolCalls = remainingToolCalls;
+        if (assistantRound.assistantMessage) {
+          assistantRound.assistantMessage.tool_calls = remainingToolCalls;
+        }
         const approvalRecord = this.createPendingApprovalPayload({
           approvalStore,
           conversationId,
@@ -1070,7 +1323,7 @@ export class ChatAgent {
           toolApprovalGroup: approvalRecord.toolApprovalGroup,
           toolApprovalSection: approvalRecord.toolApprovalSection,
           arguments: approvalRecord.toolArguments,
-          toolCount: assistantRound.toolCalls.length,
+          toolCount: remainingToolCalls.length,
           approvalMode: normalizeApprovalMode(approvalMode)
         });
 
@@ -1082,7 +1335,7 @@ export class ChatAgent {
         };
       }
 
-      for (const toolCall of assistantRound.toolCalls) {
+      for (const toolCall of deferredExecutableToolCalls) {
         throwIfAborted(abortSignal);
         this.recordRuntimeToolEvent(executionContext, {
           phase: "call",
@@ -1098,7 +1351,31 @@ export class ChatAgent {
           toolCallId: toolCall.id
         });
 
-        const toolResult = await this.executeToolCall(toolCall, executionContext);
+        let toolResult = await this.executeToolCall(toolCall, executionContext);
+        const postToolHookResult = await this.runHookEvent(
+          "PostToolUse",
+          {
+            turn_id: turnId,
+            tool_name: toolResult.name,
+            tool_use_id: String(toolCall?.id ?? "").trim(),
+            tool_input: parseToolArgumentsForHook(toolCall?.function?.arguments),
+            tool_response: toolResult.content
+          },
+          executionContext
+        );
+        this.appendHookMessages({
+          messages: postToolHookResult.messages,
+          conversation,
+          executionContext,
+          onEvent,
+          checkpoint: "post_tool_use"
+        });
+        if (postToolHookResult.postToolDecision === "block" && postToolHookResult.postToolReason) {
+          toolResult = {
+            ...toolResult,
+            modelContent: postToolHookResult.postToolReason
+          };
+        }
         this.recordRuntimeToolEvent(executionContext, {
           phase: "result",
           toolCallId: toolCall.id,

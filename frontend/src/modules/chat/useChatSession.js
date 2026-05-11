@@ -73,6 +73,7 @@ const EMPTY_COMPRESSION_STATE = Object.freeze({
   trigger: "",
   conversationId: ""
 });
+const EMPTY_COMPRESSION_STATES = Object.freeze({});
 
 function normalizeToolCalls(toolCalls) {
   return Array.isArray(toolCalls)
@@ -1310,9 +1311,10 @@ export function useChatSession(runtimeConfig = {}) {
   const [personaCatalog, setPersonaCatalog] = useState([]);
   const [personaCatalogLoaded, setPersonaCatalogLoaded] = useState(false);
   const [tokenUsageRecords, setTokenUsageRecords] = useState([]);
-  const [compressionState, setCompressionState] = useState(EMPTY_COMPRESSION_STATE);
+  const [compressionStatesByConversation, setCompressionStatesByConversation] =
+    useState(EMPTY_COMPRESSION_STATES);
   const [foregroundStreamingConversationIds, setForegroundStreamingConversationIds] = useState([]);
-  const compressionStateRef = useRef(EMPTY_COMPRESSION_STATE);
+  const compressionStatesByConversationRef = useRef(EMPTY_COMPRESSION_STATES);
   const modelProfiles = useMemo(() => normalizeModelProfiles(runtimeConfig), [runtimeConfig]);
   const defaultMainModelProfileId = String(runtimeConfig?.defaultMainModelProfileId ?? "").trim();
   const abortControllersByConversationRef = useRef(new Map());
@@ -1339,6 +1341,9 @@ export function useChatSession(runtimeConfig = {}) {
   const processedRunEventSeqByRunIdRef = useRef(new Map());
 
   const isStreaming = foregroundStreamingConversationIds.length > 0;
+  const compressionState =
+    compressionStatesByConversation[String(activeConversationId ?? "").trim()] ??
+    EMPTY_COMPRESSION_STATE;
   const isCompressing =
     compressionState.inProgress &&
     String(compressionState.conversationId ?? "").trim() === String(activeConversationId ?? "").trim();
@@ -1698,7 +1703,8 @@ export function useChatSession(runtimeConfig = {}) {
 
           selectedSkillsRef.current = [];
           selectedPluginsRef.current = [];
-          updateCompressionState(EMPTY_COMPRESSION_STATE);
+          compressionStatesByConversationRef.current = EMPTY_COMPRESSION_STATES;
+          setCompressionStatesByConversation(EMPTY_COMPRESSION_STATES);
           setConversationList([]);
           setActiveConversationId(draftConversationId);
           lastPersistedSignatureRef.current = "";
@@ -1750,23 +1756,7 @@ export function useChatSession(runtimeConfig = {}) {
         setConversationList(nextConversationList);
         setDraftConversation(null);
         setActiveConversationId(initialConversationId);
-        updateCompressionState((prev) => {
-          const normalizedConversationId = String(prev?.conversationId ?? "").trim();
-          if (!prev?.inProgress || !normalizedConversationId) {
-            return EMPTY_COMPRESSION_STATE;
-          }
-
-          const hasConversation = nextConversationList.some(
-            (item) => String(item?.id ?? "").trim() === normalizedConversationId
-          );
-          return hasConversation
-            ? {
-                inProgress: true,
-                trigger: String(prev?.trigger ?? "auto").trim() || "auto",
-                conversationId: normalizedConversationId
-              }
-            : EMPTY_COMPRESSION_STATE;
-        });
+        pruneCompressionStatesForSummaries(nextConversationList);
         lastPersistedSignatureRef.current = "";
         const loadedTokenUsageRecords = Array.isArray(loadedHistory?.tokenUsageRecords)
           ? loadedHistory.tokenUsageRecords.map(normalizeTokenUsageRecord)
@@ -2191,37 +2181,70 @@ export function useChatSession(runtimeConfig = {}) {
   }
 
   function clearCompressionStateForConversation(conversationId) {
-    const normalizedConversationId = String(conversationId ?? "").trim();
-    updateCompressionState((prev) => {
-      if (String(prev?.conversationId ?? "").trim() !== normalizedConversationId) {
-        return prev;
-      }
-
-      return {
-        inProgress: false,
-        trigger: "",
-        conversationId: ""
-      };
-    });
+    setCompressionStateForConversation(conversationId, EMPTY_COMPRESSION_STATE);
   }
 
-  function updateCompressionState(nextValueOrUpdater) {
-    const previousValue = compressionStateRef.current ?? EMPTY_COMPRESSION_STATE;
+  function normalizeCompressionState(value, conversationId = "") {
+    const resolvedConversationId = String(value?.conversationId ?? conversationId ?? "").trim();
+    if (!value || typeof value !== "object" || Array.isArray(value) || !resolvedConversationId) {
+      return EMPTY_COMPRESSION_STATE;
+    }
+
+    return {
+      inProgress: Boolean(value.inProgress),
+      trigger: String(value.trigger ?? "").trim(),
+      conversationId: resolvedConversationId
+    };
+  }
+
+  function setCompressionStateForConversation(conversationId, nextValueOrUpdater) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return EMPTY_COMPRESSION_STATE;
+    }
+
+    const previousStates =
+      compressionStatesByConversationRef.current ?? EMPTY_COMPRESSION_STATES;
+    const previousValue =
+      previousStates[normalizedConversationId] ?? EMPTY_COMPRESSION_STATE;
     const resolvedValue =
       typeof nextValueOrUpdater === "function"
         ? nextValueOrUpdater(previousValue)
         : nextValueOrUpdater;
     const normalizedValue =
-      resolvedValue && typeof resolvedValue === "object" && !Array.isArray(resolvedValue)
-        ? {
-            inProgress: Boolean(resolvedValue.inProgress),
-            trigger: String(resolvedValue.trigger ?? "").trim(),
-            conversationId: String(resolvedValue.conversationId ?? "").trim()
-          }
-        : EMPTY_COMPRESSION_STATE;
-    compressionStateRef.current = normalizedValue;
-    setCompressionState(normalizedValue);
+      normalizeCompressionState(resolvedValue, normalizedConversationId);
+    const nextStates = { ...previousStates };
+
+    if (normalizedValue.inProgress) {
+      nextStates[normalizedConversationId] = normalizedValue;
+    } else {
+      delete nextStates[normalizedConversationId];
+    }
+
+    compressionStatesByConversationRef.current = nextStates;
+    setCompressionStatesByConversation(nextStates);
     return normalizedValue;
+  }
+
+  function pruneCompressionStatesForSummaries(summaries) {
+    const validIds = new Set(
+      (Array.isArray(summaries) ? summaries : [])
+        .map((item) => String(item?.id ?? "").trim())
+        .filter(Boolean)
+    );
+    const previousStates =
+      compressionStatesByConversationRef.current ?? EMPTY_COMPRESSION_STATES;
+    const nextStates = {};
+
+    for (const [conversationId, state] of Object.entries(previousStates)) {
+      if (validIds.has(conversationId) && state?.inProgress) {
+        nextStates[conversationId] = state;
+      }
+    }
+
+    compressionStatesByConversationRef.current = nextStates;
+    setCompressionStatesByConversation(nextStates);
+    return nextStates;
   }
 
   function isConversationForegroundStreaming(conversationId) {
@@ -2322,11 +2345,11 @@ export function useChatSession(runtimeConfig = {}) {
       return false;
     }
 
-    const currentCompressionState = compressionStateRef.current ?? compressionState;
-    return (
-      Boolean(currentCompressionState?.inProgress) &&
-      String(currentCompressionState?.conversationId ?? "").trim() === normalizedConversationId
-    );
+    const currentCompressionState =
+      (compressionStatesByConversationRef.current ?? EMPTY_COMPRESSION_STATES)[
+        normalizedConversationId
+      ];
+    return Boolean(currentCompressionState?.inProgress);
   }
 
   function isDraftConversationId(conversationId) {
@@ -3777,7 +3800,7 @@ export function useChatSession(runtimeConfig = {}) {
       trigger: normalizedTrigger,
       conversationId: targetConversationId
     };
-    updateCompressionState(nextCompressionState);
+    setCompressionStateForConversation(targetConversationId, nextCompressionState);
     setError("");
 
     try {
@@ -3806,7 +3829,7 @@ export function useChatSession(runtimeConfig = {}) {
           developerPrompt: normalizeDeveloperPrompt(history.developerPrompt ?? "")
         });
       }
-      updateCompressionState({
+      setCompressionStateForConversation(targetConversationId, {
         inProgress: false,
         trigger: "",
         conversationId: ""
@@ -3828,14 +3851,11 @@ export function useChatSession(runtimeConfig = {}) {
       }
       return response;
     } catch (compressionError) {
-      updateCompressionState((prev) => ({
+      setCompressionStateForConversation(targetConversationId, (prev) => ({
         ...prev,
         inProgress: false,
         trigger: "",
-        conversationId:
-          String(prev?.conversationId ?? "").trim() === targetConversationId
-            ? ""
-            : prev?.conversationId ?? ""
+        conversationId: ""
       }));
       if (String(activeConversationIdRef.current ?? "").trim() === targetConversationId) {
         setError(compressionError?.message || "压缩会话失败");
@@ -4059,7 +4079,7 @@ export function useChatSession(runtimeConfig = {}) {
         trigger: String(event?.trigger ?? "auto").trim() || "auto",
         conversationId: normalizedTargetConversationId
       };
-      updateCompressionState(nextCompressionState);
+      setCompressionStateForConversation(normalizedTargetConversationId, nextCompressionState);
       return true;
     }
 

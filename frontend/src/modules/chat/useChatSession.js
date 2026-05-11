@@ -1343,6 +1343,7 @@ export function useChatSession(runtimeConfig = {}) {
   const activeAgentRunConversationIdsRef = useRef(new Set());
   const recentlyDeletedConversationIdsRef = useRef(new Set());
   const processedRunEventSeqByRunIdRef = useRef(new Map());
+  const stopContinuationConversationIdsRef = useRef(new Set());
 
   const isStreaming = foregroundStreamingConversationIds.length > 0;
   const compressionState =
@@ -2368,6 +2369,7 @@ export function useChatSession(runtimeConfig = {}) {
 
     activeAgentRunConversationIdsRef.current.delete(normalizedConversationId);
     externalStreamStatesRef.current.delete(normalizedConversationId);
+    stopContinuationConversationIdsRef.current.delete(normalizedConversationId);
     updateConversationRunStateLocally(normalizedConversationId, {
       agentBusy: false,
       agentStatus:
@@ -2993,6 +2995,7 @@ export function useChatSession(runtimeConfig = {}) {
         clearConversationRuntimeReplyError(deletedConversationId);
         activeAgentRunConversationIdsRef.current.delete(deletedConversationId);
         externalStreamStatesRef.current.delete(deletedConversationId);
+        stopContinuationConversationIdsRef.current.delete(deletedConversationId);
       }
       setRuntimeStatusByConversation((prev) => {
         const next = { ...prev };
@@ -3985,6 +3988,14 @@ export function useChatSession(runtimeConfig = {}) {
       }, 16);
     };
     const ensureActiveAssistantMessage = () => {
+      if (
+        streamState.forceNextAssistantMessage ||
+        stopContinuationConversationIdsRef.current.has(normalizedTargetConversationId)
+      ) {
+        stopContinuationConversationIdsRef.current.delete(normalizedTargetConversationId);
+        streamState.activeAssistantMessageId = null;
+        streamState.forceNextAssistantMessage = false;
+      }
       const currentAssistantId = String(streamState.activeAssistantMessageId ?? "").trim();
       if (currentAssistantId) {
         return currentAssistantId;
@@ -4109,6 +4120,10 @@ export function useChatSession(runtimeConfig = {}) {
       });
       clearResolvedPendingInsertions(normalizedTargetConversationId, incomingMessages);
       streamState.activeAssistantMessageId = null;
+      if (String(event?.checkpoint ?? "").trim() === "stop_continuation") {
+        streamState.forceNextAssistantMessage = true;
+        stopContinuationConversationIdsRef.current.add(normalizedTargetConversationId);
+      }
       return true;
     }
 

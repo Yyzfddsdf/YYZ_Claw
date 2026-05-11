@@ -18,6 +18,7 @@ import {
   resolveAgentRuntimeConfig,
   scheduleAsyncTitleGeneration
 } from "../chat/conversationRuntimeShared.js";
+import { createHookAppendedMessagesPayload } from "../hooks/HookExecutionService.js";
 import { AgentConversationRecorder } from "./AgentConversationRecorder.js";
 import { resolveAgentSessionId } from "./agentIdentity.js";
 import { resolveSubagentCompletionDispatchRequest } from "./subagentCompletionShared.js";
@@ -34,6 +35,35 @@ function appendCompressionSummaryMessage(historyStore, conversationId, compressi
   return historyStore.appendMessages(conversationId, [compressionResult.summaryMessage], {
     updatedAt: Number(compressionResult.summaryMessage.timestamp ?? Date.now())
   });
+}
+
+function appendHookMessagesToRuntime({
+  historyStore,
+  conversationId,
+  recorder,
+  executionContext,
+  onEvent,
+  messages = [],
+  checkpoint = "hook"
+} = {}) {
+  const normalizedMessages = Array.isArray(messages)
+    ? messages.filter((message) => message && typeof message === "object" && !Array.isArray(message))
+    : [];
+  if (normalizedMessages.length === 0) {
+    return [];
+  }
+
+  historyStore.appendMessages(conversationId, normalizedMessages, {
+    updatedAt: Date.now()
+  });
+  if (Array.isArray(executionContext?.rawConversationMessages)) {
+    executionContext.rawConversationMessages.push(...normalizedMessages);
+  }
+
+  const payload = createHookAppendedMessagesPayload(normalizedMessages, checkpoint);
+  recorder.applyEvent(payload);
+  onEvent?.(payload);
+  return normalizedMessages;
 }
 
 function normalizeToolCalls(toolCalls) {
@@ -418,7 +448,7 @@ export class ConversationAgentRuntimeService {
       includeMemorySummaryPrompt: !resolved.isSubagent,
       includeSubagentGuardPrompt: resolved.isSubagent
     });
-    const modelHistoryMessages = this.compressionService.buildModelMessages(effectiveMessages);
+    let modelHistoryMessages = this.compressionService.buildModelMessages(effectiveMessages);
     const recorder = new AgentConversationRecorder({
       initialMessages: effectiveMessages
     });
@@ -530,6 +560,43 @@ export class ConversationAgentRuntimeService {
         return messages;
       }
     };
+
+    const latestSubmittedUserMessage = [...effectiveMessages]
+      .reverse()
+      .find((message) => normalizeText(message?.role) === "user" && normalizeText(message?.content));
+    if (
+      latestSubmittedUserMessage &&
+      this.hookExecutionService &&
+      typeof this.hookExecutionService.executeEvent === "function"
+    ) {
+      const hookResult = await this.hookExecutionService.executeEvent(
+        "UserPromptSubmitted",
+        {
+          turn_id:
+            normalizeText(options.currentAtomicStepId)
+            || normalizeText(options.runId)
+            || `turn_${Date.now()}`,
+          prompt: normalizeText(latestSubmittedUserMessage.content)
+        },
+        executionContext
+      );
+      const appendedHookMessages = appendHookMessagesToRuntime({
+        historyStore: this.historyStore,
+        conversationId,
+        recorder,
+        executionContext,
+        onEvent: options.onEvent,
+        messages: hookResult?.messages,
+        checkpoint: "user_prompt_submitted_hook"
+      });
+      if (appendedHookMessages.length > 0) {
+        effectiveMessages = [
+          ...effectiveMessages,
+          ...appendedHookMessages
+        ];
+        modelHistoryMessages = this.compressionService.buildModelMessages(effectiveMessages);
+      }
+    }
 
     const runResult = await resolved.chatAgent.run({
       messages: [

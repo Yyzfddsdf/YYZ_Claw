@@ -279,6 +279,7 @@ export async function createServices() {
     sharedSubagentToolsDir: path.join(SUBAGENT_RUNTIME_DIR, "tools"),
     sharedSubagentHooksDir: path.join(SUBAGENT_RUNTIME_DIR, "hooks"),
     approvalRulesStore,
+    hookExecutionService,
     longTermMemoryRecallService,
     runtimeBlockRegistry,
     runtimeScopeBuilder,

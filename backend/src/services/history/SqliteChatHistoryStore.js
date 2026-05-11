@@ -1983,7 +1983,6 @@ export class SqliteChatHistoryStore {
 
     const requestedWorkplacePath = String(payload.workplacePath ?? "").trim();
     const workplacePath = requestedWorkplacePath || existing.workplacePath || this.defaultWorkplacePath;
-    const title = String(payload.title ?? "").trim() || existing.title || "新会话";
     const parentConversationId = normalizeConversationParentId(
       payload.parentConversationId ?? existing.parentConversationId
     );
@@ -2018,7 +2017,6 @@ export class SqliteChatHistoryStore {
       `
         UPDATE conversations
         SET
-          title = ?,
           workplace_path = ?,
           parent_conversation_id = ?,
           source = ?,
@@ -2038,7 +2036,6 @@ export class SqliteChatHistoryStore {
         WHERE id = ?
       `
     ).run(
-      title,
       workplacePath,
       parentConversationId,
       source,
@@ -2093,7 +2090,6 @@ export class SqliteChatHistoryStore {
 
     const requestedWorkplacePath = String(payload.workplacePath ?? "").trim();
     const workplacePath = requestedWorkplacePath || existing.workplacePath || this.defaultWorkplacePath;
-    const title = String(payload.title ?? "").trim() || existing.title || "新会话";
     const source = normalizeConversationSource(payload.source ?? existing.source);
     const model = String(payload.model ?? existing.model ?? "").trim();
     const modelProfileId = String(payload.modelProfileId ?? existing.modelProfileId ?? "").trim();
@@ -2154,7 +2150,6 @@ export class SqliteChatHistoryStore {
         `
           UPDATE conversations
           SET
-            title = ?,
             workplace_path = ?,
             parent_conversation_id = ?,
             source = ?,
@@ -2174,7 +2169,6 @@ export class SqliteChatHistoryStore {
           WHERE id = ?
         `
       ).run(
-        title,
         workplacePath,
         parentConversationId,
         source,

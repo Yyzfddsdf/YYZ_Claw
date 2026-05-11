@@ -28,6 +28,7 @@ export class AgentRuntimeFactory {
     this.sharedSubagentToolsDir = options.sharedSubagentToolsDir ?? "";
     this.sharedSubagentHooksDir = options.sharedSubagentHooksDir ?? "";
     this.approvalRulesStore = options.approvalRulesStore ?? null;
+    this.hookExecutionService = options.hookExecutionService ?? null;
     this.longTermMemoryRecallService = options.longTermMemoryRecallService ?? null;
     this.runtimeBlockRegistry = options.runtimeBlockRegistry ?? null;
     this.runtimeScopeBuilder = options.runtimeScopeBuilder ?? null;
@@ -86,6 +87,7 @@ export class AgentRuntimeFactory {
     const chatAgent = new ChatAgent({
       toolRegistry,
       approvalRulesStore: this.approvalRulesStore,
+      hookExecutionService: this.hookExecutionService,
       longTermMemoryRecallService: this.longTermMemoryRecallService,
       runtimeBlockRuntime,
       runtimeInjectionComposer: this.runtimeInjectionComposer,

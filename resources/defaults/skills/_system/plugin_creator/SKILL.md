@@ -78,6 +78,49 @@ Optional placeholders:
 - `hooks`: path to `hooks/hooks.json`. Use the `_system/hooks` skill for the actual hook file format and script patterns.
 - `commands`: path to the plugin command directory. In YYZ_Claw, plugin commands are simple `/` prompt expanders.
 
+## Plugin Subagents
+
+Plugin subagents are defined at the plugin root, not inside a plugin skill directory. Use them when a plugin needs a dedicated execution persona that can run as an independent subagent.
+
+Recommended location:
+
+```text
+my-plugin/
+  agents/
+    specialist-agent.md
+```
+
+File format is Markdown with YAML frontmatter:
+
+```md
+---
+name: specialist-agent
+description: Short purpose statement for discovery and selection.
+---
+
+You are `specialist-agent`, a dedicated subagent for this plugin.
+
+## Responsibilities
+
+- Define what this subagent owns.
+- Define what it should inspect before acting.
+- Define its output contract.
+- Define boundaries it must not cross.
+```
+
+Required frontmatter fields:
+
+- `name`: lower-case kebab-case name. Prefer matching the filename.
+- `description`: concise model-facing description used for discovery and selection.
+
+Important:
+
+- Plugin agents live in the plugin root `agents/` directory.
+- Do not put plugin agent definitions under `skills/<skill-name>/agents/`; that directory is skill UI metadata such as `openai.yaml`.
+- Do not write an agent as a command, hook, MCP server, or skill.
+- The Markdown body is the subagent's standing behavior instructions: identity, responsibilities, workflow, output requirements, and boundaries.
+- Enabled plugin agents are discovered and namespaced by the host to avoid collisions with agents from other plugins.
+
 ## Plugin Commands
 
 Plugin commands do not need a separate system skill.

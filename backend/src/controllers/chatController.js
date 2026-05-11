@@ -3356,7 +3356,7 @@ export function createChatController({
 
           const compressionResult = await compressionService.compressConversation({
             messages: effectiveMessages,
-            runtimeConfig: configValidation.data,
+            runtimeConfig: runtimeExecutionConfig,
             latestTokenUsage: existingConversation?.tokenUsage ?? null,
             trigger: "auto"
           });

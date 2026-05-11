@@ -32,6 +32,29 @@ agents/
 
 插件里的 agents 目录就是 Open Plugins 的 `agents/`，路径在插件根目录下。
 
+## 插件示例：novel-writer
+
+`novel-writer` 插件在默认资产里提供一个小说子智能体：
+
+```text
+resources/defaults/plugins/novel-writer/
+  agents/
+    novel-architect.md
+```
+
+`novel-architect` 用于长篇小说结构设计、连续性检查、章节推进和修订建议。
+
+示例 frontmatter：
+
+```md
+---
+name: novel-architect
+description: 专门负责长篇小说结构、连续性、章节推进和修订建议的子智能体
+---
+```
+
+插件启用后，宿主会扫描插件根目录的 `agents/*.md`，并把该 agent 作为插件子智能体加载。
+
 ## 文件格式
 ```md
 ---

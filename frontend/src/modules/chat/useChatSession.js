@@ -4530,10 +4530,16 @@ export function useChatSession(runtimeConfig = {}) {
     if (event?.type === "session_end") {
       cancelBufferedAssistantFlush();
       flushBufferedAssistantTokens();
-      if (event?.history && Array.isArray(event.history.messages)) {
+      const runStatus = String(event?.status ?? "").trim() || "idle";
+      const shouldPreserveLocalPartialAssistant =
+        runStatus === "aborted" && Boolean(streamState.activeAssistantMessageId);
+      if (
+        !shouldPreserveLocalPartialAssistant &&
+        event?.history &&
+        Array.isArray(event.history.messages)
+      ) {
         applyPersistedHistorySnapshot(normalizedTargetConversationId, event.history);
       }
-      const runStatus = String(event?.status ?? "").trim() || "idle";
       if (runStatus === "aborted") {
         setExecutionAutopsy(normalizedTargetConversationId, {
           type: "aborted",

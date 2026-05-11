@@ -154,6 +154,10 @@ async function expandInboundContentWithPluginCommands(inbound, pluginCatalog, se
   };
 }
 
+function resolvePluginCatalog(runtime) {
+  return runtime?.pluginCatalog ?? runtime?.runtimeService?.pluginCatalog ?? null;
+}
+
 function buildRemoteCommandExpansionNotice(replacements = []) {
   const uniqueNames = [...new Set(
     (Array.isArray(replacements) ? replacements : [])
@@ -373,7 +377,7 @@ export class RemoteControlRuntimeService {
     const conversationId = normalizeText(conversation.id);
     const commandExpansion = await expandInboundContentWithPluginCommands(
       inbound,
-      this.pluginCatalog,
+      resolvePluginCatalog(this),
       Array.isArray(conversation?.plugins) ? conversation.plugins : []
     );
     const expandedInbound = commandExpansion.inbound;
@@ -653,7 +657,7 @@ export class RemoteControlRuntimeService {
 
     const commandExpansion = await expandInboundContentWithPluginCommands(
       inbound,
-      this.pluginCatalog,
+      resolvePluginCatalog(this),
       Array.isArray(conversation?.plugins) ? conversation.plugins : []
     );
     const expandedInbound = commandExpansion.inbound;

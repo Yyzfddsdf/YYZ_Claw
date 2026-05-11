@@ -1258,105 +1258,10 @@ export function createChatController({
     const conversationId = String(activeRun.conversationId ?? "").trim();
     const sessionId = String(activeRun.sessionId ?? "").trim();
     const agentId = String(activeRun.agentId ?? "").trim();
-    let flushedHistory =
-      typeof activeRun.flushRecorderSnapshotToHistory === "function"
-        ? activeRun.flushRecorderSnapshotToHistory()
-        : (conversationId ? historyStore.getConversation(conversationId) : null);
 
-    const stopHookExecutionContext =
-      activeRun.hookExecutionContext && typeof activeRun.hookExecutionContext === "object"
-        ? {
-            ...activeRun.hookExecutionContext,
-            rawConversationMessages: Array.isArray(flushedHistory?.messages)
-              ? [...flushedHistory.messages]
-              : []
-          }
-        : null;
-    if (conversationId && stopHookExecutionContext) {
-      const stopHookResult = await executeHookEventAndAppend({
-        hookExecutionService,
-        eventName: "Stop",
-        payload: {
-          turn_id:
-            String(stopHookExecutionContext?.currentAtomicStepId ?? stopHookExecutionContext?.runId ?? "").trim()
-            || `turn_${Date.now()}`,
-          stop_hook_active: true,
-          last_assistant_message:
-            Array.isArray(flushedHistory?.messages)
-              ? String(
-                  [...flushedHistory.messages]
-                    .reverse()
-                    .find((message) => String(message?.role ?? "").trim() === "assistant")
-                    ?.content ?? ""
-                ).trim()
-              : ""
-        },
-        executionContext: stopHookExecutionContext,
-        historyStore,
-        conversationId,
-        history: flushedHistory,
-        recorder: null,
-        foregroundRun: activeRun,
-        conversationRunCoordinator,
-        res: null,
-        checkpoint: "stop_hook"
-      });
-      flushedHistory = stopHookResult.history ?? flushedHistory;
-      if (stopHookResult.hookResult?.stopContinue === false && stopHookResult.hookResult?.stopReason) {
-        flushedHistory =
-          historyStore.appendMessages(
-            conversationId,
-            [
-              createHookContinuationMessage(stopHookResult.hookResult.stopReason, {
-                stopReason: stopHookResult.hookResult.stopReason
-              })
-            ].filter(Boolean),
-            {
-              updatedAt: Date.now()
-            }
-          ) ?? flushedHistory;
-      }
-    }
-
-    conversationRunCoordinator?.emitEvent?.(activeRun, {
-      type: "session_end",
-      status: "aborted",
-      history: flushedHistory
-    });
-    conversationRunCoordinator?.abortRun?.(activeRun, reason);
-
-    // 等待进行中的listener完成，避免浪费token
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    if (sessionId && agentId && typeof wakeDispatcher?.finishForegroundRun === "function") {
-      await wakeDispatcher.finishForegroundRun({
-        sessionId,
-        agentId,
-        status: "idle"
-      });
-    } else {
-      conversationRunCoordinator?.finishRun?.(activeRun, {
-        status: "idle"
-      });
-    }
-
-    if (sessionId && agentId) {
-      const existingAgent = orchestratorStore?.getAgent?.(agentId)
-        ?? orchestratorStore?.findAgentByConversationId?.(conversationId)
-        ?? null;
-      orchestratorStore?.upsertAgent?.({
-        agentId,
-        sessionId,
-        conversationId: String(existingAgent?.conversationId ?? conversationId).trim(),
-        agentType: String(existingAgent?.agentType ?? "generic").trim() || "generic",
-        displayName: String(existingAgent?.displayName ?? "").trim(),
-        isPrimary: existingAgent?.isPrimary ?? false,
-        status: "idle",
-        atomicDepth: existingAgent?.atomicDepth,
-        openAtomicSteps: existingAgent?.openAtomicSteps ?? [],
-        metadata: existingAgent?.metadata ?? {},
-        lastActiveAt: Date.now()
-      });
+    if (!activeRun.stopRequested) {
+      activeRun.stopRequested = true;
+      conversationRunCoordinator?.abortRun?.(activeRun, reason);
     }
 
     return {
@@ -1364,7 +1269,7 @@ export function createChatController({
       runId: String(activeRun.runId ?? "").trim(),
       agentId,
       sessionId,
-      history: flushedHistory
+      history: conversationId ? historyStore.getConversation(conversationId) : null
     };
   }
 
@@ -2976,11 +2881,16 @@ export function createChatController({
             res
           );
         } else if (!res.writableEnded) {
+          const abortedHistory =
+            typeof foregroundRun?.flushRecorderSnapshotToHistory === "function"
+              ? foregroundRun.flushRecorderSnapshotToHistory()
+              : null;
           emitRunEvent(
             foregroundRun,
             {
               type: "session_end",
-              status: "aborted"
+              status: "aborted",
+              ...(abortedHistory ? { history: abortedHistory } : {})
             },
             conversationRunCoordinator,
             res
@@ -3681,11 +3591,16 @@ export function createChatController({
             res
           );
         } else if (!res.writableEnded) {
+          const abortedHistory =
+            typeof foregroundRun?.flushRecorderSnapshotToHistory === "function"
+              ? foregroundRun.flushRecorderSnapshotToHistory()
+              : null;
           emitRunEvent(
             foregroundRun,
             {
               type: "session_end",
-              status: "aborted"
+              status: "aborted",
+              ...(abortedHistory ? { history: abortedHistory } : {})
             },
             conversationRunCoordinator,
             res

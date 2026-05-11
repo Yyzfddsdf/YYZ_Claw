@@ -1335,6 +1335,7 @@ export function useChatSession(runtimeConfig = {}) {
   const conversationMessageCacheRef = useRef(new Map());
   const conversationRuntimeReplyErrorsRef = useRef({});
   const foregroundStreamingConversationIdsRef = useRef(new Set());
+  const stoppingConversationIdsRef = useRef(new Set());
   const externalStreamStatesRef = useRef(new Map());
   const externalAgentEventHandlerRef = useRef(null);
   const activeAgentRunConversationIdsRef = useRef(new Set());
@@ -2570,73 +2571,10 @@ export function useChatSession(runtimeConfig = {}) {
       return;
     }
 
-    const payloadMessages = toPersistableMessages(messages);
-    const title = String(activeConversationTitle ?? "新会话");
-    const payload = {
-      title,
-      messages: payloadMessages,
-      skills: [...selectedSkillsRef.current],
-      plugins: [...selectedPluginsRef.current],
-      disabledTools: activeConversationDisabledTools,
-      personaId: activeConversationPersonaId,
-      thinkingMode,
-      goal: activeConversationGoal,
-      planState: activeConversationPlanState,
-      developerPrompt: activeConversationDeveloperPrompt
-    };
-
-    const persistenceSignature = buildPersistenceSignature(payload);
-    if (lastPersistedSignatureRef.current === persistenceSignature) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      if (lastPersistedSignatureRef.current === persistenceSignature) {
-        return;
-      }
-
-      lastPersistedSignatureRef.current = persistenceSignature;
-
-      upsertHistoryById(activeConversationId, payload)
-        .then((response) => {
-          const history = response?.history;
-          if (!history) {
-            return;
-          }
-
-          setConversationList((prev) => upsertSummary(prev, toSummary(history)));
-
-          lastPersistedSignatureRef.current = buildPersistenceSignature({
-            title: String(history.title ?? title),
-            messages: Array.isArray(history.messages) ? history.messages : payloadMessages,
-            skills: Array.isArray(history.skills) ? history.skills : [...selectedSkillsRef.current],
-            plugins: Array.isArray(history.plugins) ? history.plugins : [...selectedPluginsRef.current],
-            disabledTools: normalizeToolNames(history.disabledTools ?? activeConversationDisabledTools),
-            workplacePath: String(history.workplacePath ?? payload.workplacePath ?? ""),
-            approvalMode: String(
-              history.approvalMode ?? activeConversationApprovalMode ?? "confirm"
-            ),
-            goal: normalizeGoal(history.goal ?? activeConversationGoal),
-            planState: normalizePlanState(history.planState ?? activeConversationPlanState),
-            personaId: String(history.personaId ?? activeConversationPersonaId ?? ""),
-            thinkingMode: normalizeThinkingMode(history.thinkingMode ?? thinkingMode),
-            developerPrompt: normalizeDeveloperPrompt(
-              history.developerPrompt ?? activeConversationDeveloperPrompt
-            )
-          });
-          if (!isPersistedConversation) {
-            setDraftConversation((prev) => (prev?.id === activeConversationId ? null : prev));
-          }
-        })
-        .catch(() => {
-          lastPersistedSignatureRef.current = "";
-          // Persistence failure should not block the chat interaction.
-        });
-    }, 250);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
+    // Normal chat turns are persisted by the backend recorder/stream lifecycle.
+    // Frontend PUT is reserved for explicit structural edits such as rerun/edit truncation
+    // and initial draft creation, so local transient stream state cannot overwrite history.
+    return;
   }, [
     messages,
     activeConversationIsRunning,
@@ -3945,12 +3883,30 @@ export function useChatSession(runtimeConfig = {}) {
   }
 
   function applyAgentEvent(event, streamState, targetConversationId, options = {}) {
+    const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
+    const source = String(options?.source ?? "direct").trim().toLowerCase();
+    const eventType = String(event?.type ?? "").trim();
+    const isForegroundAssistantStreamEvent =
+      source === "external" &&
+      (
+        isConversationForegroundStreaming(normalizedTargetConversationId) ||
+        foregroundStreamLoopConversationIdsRef.current.has(normalizedTargetConversationId)
+      ) &&
+      (
+        eventType === "assistant_token" ||
+        eventType === "assistant_reasoning_token" ||
+        eventType === "assistant_message_end" ||
+        eventType === "final" ||
+        eventType === "usage"
+      );
+    if (isForegroundAssistantStreamEvent) {
+      return true;
+    }
+
     if (!shouldProcessAgentEvent(event)) {
       return true;
     }
 
-    const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
-    const source = String(options?.source ?? "direct").trim().toLowerCase();
     const eventRunId = String(event?.runId ?? "").trim();
     const currentStreamRunId = String(streamState.runId ?? "").trim();
     if (eventRunId && currentStreamRunId && eventRunId !== currentStreamRunId) {
@@ -5619,34 +5575,32 @@ export function useChatSession(runtimeConfig = {}) {
           isConversationForegroundStreaming(targetConversationId)
         )
       );
-    let shouldFinalizeLocally = false;
-
-    if (activeAbortController) {
-      activeAbortController.abort();
-      shouldFinalizeLocally = true;
-    }
 
     if (!targetConversationId) {
       return;
     }
 
-    try {
-      const stopResult = await stopConversationRunById(targetConversationId);
-      shouldFinalizeLocally =
-        shouldFinalizeLocally ||
-        Boolean(stopResult?.success) ||
-        Boolean(stopResult?.stopped === false);
-    } catch {
-      shouldFinalizeLocally = shouldFinalizeLocally || localRunLikelyActive;
+    if (stoppingConversationIdsRef.current.has(targetConversationId)) {
+      return;
     }
+    stoppingConversationIdsRef.current.add(targetConversationId);
 
-    if (shouldFinalizeLocally || localRunLikelyActive) {
-      abortControllersByConversationRef.current.delete(targetConversationId);
-      foregroundStreamLoopConversationIdsRef.current.delete(targetConversationId);
-      setConversationForegroundStreaming(targetConversationId, false);
-      setPendingApprovalValue(null, { conversationId: targetConversationId });
-      clearConversationRuntimeReplyError(targetConversationId);
-      markConversationRunEndedLocally(targetConversationId, "aborted");
+    try {
+      try {
+        await stopConversationRunById(targetConversationId);
+      } catch {
+        activeAbortController?.abort();
+        if (localRunLikelyActive) {
+          abortControllersByConversationRef.current.delete(targetConversationId);
+          foregroundStreamLoopConversationIdsRef.current.delete(targetConversationId);
+          setConversationForegroundStreaming(targetConversationId, false);
+          setPendingApprovalValue(null, { conversationId: targetConversationId });
+          clearConversationRuntimeReplyError(targetConversationId);
+          markConversationRunEndedLocally(targetConversationId, "aborted");
+        }
+      }
+    } finally {
+      stoppingConversationIdsRef.current.delete(targetConversationId);
     }
   }
 

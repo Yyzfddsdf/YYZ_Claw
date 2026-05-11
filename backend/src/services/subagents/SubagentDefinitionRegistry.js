@@ -5,6 +5,14 @@ function normalizeText(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeAgentType(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 const DEFINITION_FILE_NAME = "definition.json";
 
 async function readOptionalText(filePath) {
@@ -16,7 +24,7 @@ async function readOptionalText(filePath) {
 }
 
 function normalizeDefinition(rawDefinition = {}, baseDir) {
-  const agentType = normalizeText(rawDefinition.agentType).toLowerCase();
+  const agentType = normalizeAgentType(rawDefinition.agentType);
   if (!agentType) {
     throw new Error(`Subagent definition in ${baseDir} is missing agentType`);
   }
@@ -41,9 +49,40 @@ function normalizeDefinition(rawDefinition = {}, baseDir) {
   };
 }
 
+function normalizePluginAgentDefinition(rawDefinition = {}) {
+  const agentType = normalizeAgentType(rawDefinition.agentType);
+  if (!agentType) {
+    return null;
+  }
+
+  const prompt = normalizeText(rawDefinition.prompt);
+  if (!prompt) {
+    return null;
+  }
+
+  return {
+    agentType,
+    displayName:
+      normalizeText(rawDefinition.displayName) ||
+      normalizeText(rawDefinition.name) ||
+      agentType,
+    description: normalizeText(rawDefinition.description),
+    promptFile: "",
+    metadata:
+      rawDefinition.metadata &&
+      typeof rawDefinition.metadata === "object" &&
+      !Array.isArray(rawDefinition.metadata)
+        ? rawDefinition.metadata
+        : {},
+    baseDir: normalizeText(rawDefinition.rootDir),
+    prompt
+  };
+}
+
 export class SubagentDefinitionRegistry {
   constructor(options = {}) {
     this.rootDir = options.rootDir;
+    this.pluginCatalog = options.pluginCatalog ?? null;
     this.definitionMap = new Map();
   }
 
@@ -93,15 +132,28 @@ export class SubagentDefinitionRegistry {
       this.definitionMap.set(definition.agentType, definition);
     }
 
+    const pluginAgents =
+      this.pluginCatalog && typeof this.pluginCatalog.collectPluginAgents === "function"
+        ? await this.pluginCatalog.collectPluginAgents({ enabledOnly: true })
+        : [];
+    for (const pluginAgent of pluginAgents) {
+      const definition = normalizePluginAgentDefinition(pluginAgent);
+      if (!definition) {
+        continue;
+      }
+
+      this.definitionMap.set(definition.agentType, definition);
+    }
+
     return this.list();
   }
 
   get(agentType) {
-    return this.definitionMap.get(normalizeText(agentType).toLowerCase()) ?? null;
+    return this.definitionMap.get(normalizeAgentType(agentType)) ?? null;
   }
 
   has(agentType) {
-    return this.definitionMap.has(normalizeText(agentType).toLowerCase());
+    return this.definitionMap.has(normalizeAgentType(agentType));
   }
 
   list() {

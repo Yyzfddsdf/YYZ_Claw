@@ -1327,6 +1327,7 @@ export function useChatSession(runtimeConfig = {}) {
   const activeConversationIdRef = useRef("");
   const queuedUserMessagesRef = useRef([]);
   const pendingApprovalsByConversationRef = useRef({});
+  const submittedApprovalIdsRef = useRef(new Set());
   const pendingInsertionsByConversationRef = useRef({});
   const foregroundStreamLoopConversationIdsRef = useRef(new Set());
   const conversationListRef = useRef([]);
@@ -1798,6 +1799,16 @@ export function useChatSession(runtimeConfig = {}) {
           ? { ...event }
           : {};
       delete nextEvent.conversationId;
+      if (
+        nextEvent?.history &&
+        typeof nextEvent.history === "object" &&
+        !Array.isArray(nextEvent.history)
+      ) {
+        const historyConversationId = String(nextEvent.history?.id ?? "").trim();
+        if (historyConversationId && historyConversationId !== normalizedConversationId) {
+          return;
+        }
+      }
 
       const streamStateMap = externalStreamStatesRef.current;
       const streamState = streamStateMap.get(normalizedConversationId) ?? {
@@ -1976,19 +1987,9 @@ export function useChatSession(runtimeConfig = {}) {
       }
 
       try {
-        const response = await fetchConversationRuntimeById(normalizedConversationId);
+        const runtime = await refreshConversationRuntimeStatus(normalizedConversationId);
         if (!mounted || activeConversationIdRef.current !== normalizedConversationId) {
           return;
-        }
-
-        const runtime = response?.runtime && typeof response.runtime === "object"
-          ? response.runtime
-          : null;
-        if (runtime) {
-          setRuntimeStatusByConversation((prev) => ({
-            ...prev,
-            [normalizedConversationId]: runtime
-          }));
         }
       } catch {
         if (!mounted) {
@@ -2011,6 +2012,35 @@ export function useChatSession(runtimeConfig = {}) {
   useEffect(() => {
     lastPersistedSignatureRef.current = "";
   }, [activeConversationId]);
+
+  async function refreshConversationRuntimeStatus(conversationId) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId || !hydratedRef.current) {
+      return null;
+    }
+
+    const response = await fetchConversationRuntimeById(normalizedConversationId);
+    const runtime = response?.runtime && typeof response.runtime === "object"
+      ? response.runtime
+      : null;
+    if (!runtime) {
+      return null;
+    }
+
+    setRuntimeStatusByConversation((prev) => ({
+      ...prev,
+      [normalizedConversationId]: runtime
+    }));
+    hydratePendingApprovalFromPayload(runtime.pendingApproval, normalizedConversationId);
+    if (runtime.pendingApproval) {
+      updateConversationRunStateLocally(normalizedConversationId, {
+        agentBusy: false,
+        agentStatus: "waiting_approval"
+      });
+    }
+
+    return runtime;
+  }
 
   function setVisibleMessagesForConversation(conversationId, nextMessages) {
     const normalizedConversationId = String(conversationId ?? "").trim();
@@ -2280,6 +2310,53 @@ export function useChatSession(runtimeConfig = {}) {
     setForegroundStreamingConversationIds([...nextIds]);
   }
 
+  function updateConversationRunStateLocally(conversationId, patch) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId || !patch || typeof patch !== "object") {
+      return;
+    }
+
+    setConversationList((prev) =>
+      prev.map((item) => {
+        let changed = false;
+        let nextItem = item;
+
+        if (String(item?.id ?? "").trim() === normalizedConversationId) {
+          nextItem = {
+            ...nextItem,
+            ...patch
+          };
+          changed = true;
+        }
+
+        if (Array.isArray(item?.subagents)) {
+          let subagentChanged = false;
+          const nextSubagents = item.subagents.map((subagent) => {
+            if (String(subagent?.conversationId ?? "").trim() !== normalizedConversationId) {
+              return subagent;
+            }
+
+            subagentChanged = true;
+            return {
+              ...subagent,
+              ...patch
+            };
+          });
+
+          if (subagentChanged) {
+            changed = true;
+            nextItem = {
+              ...nextItem,
+              subagents: nextSubagents
+            };
+          }
+        }
+
+        return changed ? nextItem : item;
+      })
+    );
+  }
+
   function markConversationRunEndedLocally(conversationId, nextStatus = "idle") {
     const normalizedConversationId = String(conversationId ?? "").trim();
     if (!normalizedConversationId) {
@@ -2288,22 +2365,15 @@ export function useChatSession(runtimeConfig = {}) {
 
     activeAgentRunConversationIdsRef.current.delete(normalizedConversationId);
     externalStreamStatesRef.current.delete(normalizedConversationId);
-    setConversationList((prev) =>
-      prev.map((item) =>
-        item.id === normalizedConversationId
-          ? {
-              ...item,
-              agentBusy: false,
-              agentStatus:
-                String(nextStatus ?? "").trim() === "error"
-                  ? "error"
-                  : String(nextStatus ?? "").trim() === "waiting_approval"
-                    ? "waiting_approval"
-                    : "idle"
-            }
-          : item
-      )
-    );
+    updateConversationRunStateLocally(normalizedConversationId, {
+      agentBusy: false,
+      agentStatus:
+        String(nextStatus ?? "").trim() === "error"
+          ? "error"
+          : String(nextStatus ?? "").trim() === "waiting_approval"
+            ? "waiting_approval"
+            : "idle"
+    });
 
     foregroundStreamLoopConversationIdsRef.current.delete(normalizedConversationId);
     abortControllersByConversationRef.current.delete(normalizedConversationId);
@@ -2363,6 +2433,11 @@ export function useChatSession(runtimeConfig = {}) {
   function applyPersistedHistorySnapshot(conversationId, history) {
     const normalizedConversationId = String(conversationId ?? history?.id ?? "").trim();
     if (!normalizedConversationId || !history || !Array.isArray(history.messages)) {
+      return null;
+    }
+
+    const historyConversationId = String(history?.id ?? "").trim();
+    if (historyConversationId && historyConversationId !== normalizedConversationId) {
       return null;
     }
 
@@ -2628,6 +2703,8 @@ export function useChatSession(runtimeConfig = {}) {
       setVisibleMessagesForConversation(normalizedConversationId, nextMessages);
       setTokenUsageRecords(nextTokenUsageRecords);
       setConversationList(nextConversationList);
+      hydratePendingApprovalFromPayload(history.pendingApproval, normalizedConversationId);
+      void refreshConversationRuntimeStatus(normalizedConversationId).catch(() => {});
     } catch (loadError) {
       const loadErrorMessage = String(loadError?.message || "");
       const isRecentlyDeletedMissingHistory =
@@ -3874,6 +3951,17 @@ export function useChatSession(runtimeConfig = {}) {
 
     const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
     const source = String(options?.source ?? "direct").trim().toLowerCase();
+    const eventRunId = String(event?.runId ?? "").trim();
+    const currentStreamRunId = String(streamState.runId ?? "").trim();
+    if (eventRunId && currentStreamRunId && eventRunId !== currentStreamRunId) {
+      streamState.activeAssistantMessageId = null;
+      streamState.pendingContentBuffer = "";
+      streamState.pendingReasoningBuffer = "";
+      streamState.flushFrameId = null;
+    }
+    if (eventRunId) {
+      streamState.runId = eventRunId;
+    }
 
     const isActiveTarget = normalizedTargetConversationId === activeConversationIdRef.current;
     const updateTargetMessages = (updater) =>
@@ -3977,23 +4065,6 @@ export function useChatSession(runtimeConfig = {}) {
       const currentAssistantId = String(streamState.activeAssistantMessageId ?? "").trim();
       if (currentAssistantId) {
         return currentAssistantId;
-      }
-
-      const cachedMessages = readConversationMessages(normalizedTargetConversationId);
-      const lastMessage =
-        Array.isArray(cachedMessages) && cachedMessages.length > 0
-          ? normalizeChatMessage(cachedMessages[cachedMessages.length - 1])
-          : null;
-      if (
-        lastMessage &&
-        String(lastMessage.role ?? "").trim() === "assistant" &&
-        Array.isArray(lastMessage.toolCalls) &&
-        lastMessage.toolCalls.length === 0 &&
-        String(lastMessage.id ?? "").trim()
-      ) {
-        const reusableAssistantId = String(lastMessage.id).trim();
-        streamState.activeAssistantMessageId = reusableAssistantId;
-        return reusableAssistantId;
       }
 
       const nextAssistantId = createId("assistant");
@@ -4119,6 +4190,13 @@ export function useChatSession(runtimeConfig = {}) {
     }
 
     if (event?.type === "session_resume") {
+      activeAgentRunConversationIdsRef.current.add(normalizedTargetConversationId);
+      updateConversationRunStateLocally(normalizedTargetConversationId, {
+        agentBusy: true,
+        agentStatus: "running"
+      });
+      streamState.activeAssistantMessageId = null;
+      clearConversationRuntimeReplyError(normalizedTargetConversationId);
       appendApprovalTimeline(normalizedTargetConversationId, {
         type: "session_resume",
         label: "审批恢复",
@@ -4134,35 +4212,10 @@ export function useChatSession(runtimeConfig = {}) {
         delete next[normalizedTargetConversationId];
         return next;
       });
-      setConversationList((prev) =>
-        prev.map((item) =>
-          item.id === normalizedTargetConversationId
-            ? {
-                ...item,
-                agentBusy: true,
-                agentStatus: "running"
-              }
-            : item
-        )
-      );
-      streamState.activeAssistantMessageId = null;
-      clearConversationRuntimeReplyError(normalizedTargetConversationId);
-      return true;
-    }
-
-    if (event?.type === "session_resume") {
-      activeAgentRunConversationIdsRef.current.add(normalizedTargetConversationId);
-      setConversationList((prev) =>
-        prev.map((item) =>
-          item.id === normalizedTargetConversationId
-            ? {
-                ...item,
-                agentBusy: true,
-                agentStatus: "running"
-              }
-            : item
-        )
-      );
+      updateConversationRunStateLocally(normalizedTargetConversationId, {
+        agentBusy: true,
+        agentStatus: "running"
+      });
       streamState.activeAssistantMessageId = null;
       clearConversationRuntimeReplyError(normalizedTargetConversationId);
       return true;
@@ -4852,6 +4905,43 @@ export function useChatSession(runtimeConfig = {}) {
     });
   }
 
+  function hydratePendingApprovalFromPayload(payload, fallbackConversationId = "") {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      const normalizedFallbackConversationId = String(fallbackConversationId ?? "").trim();
+      if (
+        normalizedFallbackConversationId &&
+        !isConversationForegroundStreaming(normalizedFallbackConversationId)
+      ) {
+        setPendingApprovalValue(null, { conversationId: normalizedFallbackConversationId });
+      }
+      return;
+    }
+
+    const approvalId = String(payload.approvalId ?? payload.id ?? "").trim();
+    const conversationId = String(
+      payload.conversationId ?? fallbackConversationId ?? ""
+    ).trim();
+    if (!approvalId || !conversationId) {
+      return;
+    }
+    if (submittedApprovalIdsRef.current.has(approvalId)) {
+      setPendingApprovalValue(null, { conversationId });
+      return;
+    }
+
+    setPendingApprovalValue({
+      approvalId,
+      conversationId,
+      toolCallId: String(payload.toolCallId ?? ""),
+      toolName: String(payload.toolName ?? ""),
+      toolApprovalGroup: String(payload.toolApprovalGroup ?? "unknown"),
+      toolApprovalSection: String(payload.toolApprovalSection ?? "unknown"),
+      arguments: normalizePendingApprovalArguments(payload.arguments ?? payload.toolArguments),
+      toolCount: Number(payload.toolCount ?? 1),
+      approvalMode: String(payload.approvalMode ?? "confirm")
+    }, { conversationId });
+  }
+
   function removeQueuedUserMessage(messageId) {
     const normalizedMessageId = String(messageId ?? "").trim();
     if (!normalizedMessageId) {
@@ -5428,6 +5518,7 @@ export function useChatSession(runtimeConfig = {}) {
     if (canBindForegroundStream) {
       setConversationForegroundStreaming(targetConversationId, true);
     }
+    submittedApprovalIdsRef.current.add(approvalId);
     setPendingApprovalValue(null, { conversationId: targetConversationId });
     appendApprovalTimeline(targetConversationId, {
       type: "approval_confirm",
@@ -5498,6 +5589,7 @@ export function useChatSession(runtimeConfig = {}) {
 
     try {
       await rejectToolApprovalById(approvalId);
+      submittedApprovalIdsRef.current.add(approvalId);
       appendApprovalTimeline(String(pendingApproval?.conversationId ?? "").trim(), {
         type: "approval_reject",
         label: "用户拒绝审批",

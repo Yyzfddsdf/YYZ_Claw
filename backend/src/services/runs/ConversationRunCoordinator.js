@@ -25,7 +25,7 @@ function buildRunPayload(run, payload = {}) {
     normalizedPayload.runId = run.runId;
   }
 
-  if (!normalizedPayload.conversationId && run.conversationId) {
+  if (run.conversationId) {
     normalizedPayload.conversationId = run.conversationId;
   }
 

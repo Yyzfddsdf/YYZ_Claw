@@ -288,6 +288,15 @@ function normalizeCommandName(value = "") {
   return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
 
+function normalizeAgentName(value = "") {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
 function normalizeSkillRecord(plugin, skillRootDir, parsed, stats) {
   const relativePath = safeRelativePath(plugin.skillsRootDir, skillRootDir);
   const pathSegments = relativePath.split("/").filter(Boolean);
@@ -363,6 +372,48 @@ function normalizeCommandRecord(plugin, commandFilePath, parsed, stats) {
   };
 }
 
+function normalizeAgentRecord(plugin, agentFilePath, parsed, stats) {
+  const relativePath = safeRelativePath(plugin.agentsRootDir, agentFilePath);
+  const rawFrontmatter = isPlainObject(parsed.frontmatter) ? parsed.frontmatter : {};
+  const fallbackName = path.basename(agentFilePath, path.extname(agentFilePath));
+  const name = normalizeAgentName(rawFrontmatter.name || fallbackName);
+  const description = normalizeText(rawFrontmatter.description);
+  const prompt = normalizeText(parsed.body);
+
+  if (!name) {
+    throw new Error(`agent name is required: ${relativePath}`);
+  }
+  if (!description) {
+    throw new Error(`agent description is required: ${relativePath}`);
+  }
+  if (!prompt) {
+    throw new Error(`agent body is required: ${relativePath}`);
+  }
+
+  const pluginAgentPrefix = normalizeAgentName(plugin.name) || "plugin";
+  return {
+    scope: "plugin",
+    pluginName: plugin.name,
+    pluginDisplayName: plugin.displayName,
+    name,
+    agentType: `${pluginAgentPrefix}--${name}`,
+    displayName: name,
+    description,
+    prompt,
+    metadata: {
+      source: "plugin",
+      pluginName: plugin.name,
+      pluginDisplayName: plugin.displayName,
+      relativePath
+    },
+    relativePath,
+    filePath: agentFilePath,
+    rootDir: plugin.rootDir,
+    size: stats.size,
+    mtimeMs: stats.mtimeMs
+  };
+}
+
 export class PluginCatalog {
   constructor(options = {}) {
     this.rootDir = path.resolve(String(options.rootDir ?? ""));
@@ -396,6 +447,7 @@ export class PluginCatalog {
     const enabled = pluginSettings.enabled !== false;
     const skillsRootDir = resolvePluginPath(pluginRootDir, manifest.skills, "./skills");
     const commandsRootDir = resolvePluginPath(pluginRootDir, manifest.commands, "./commands");
+    const agentsRootDir = resolvePluginPath(pluginRootDir, "./agents", "./agents");
     const mcpPath = resolvePluginPath(pluginRootDir, manifest.mcpServers, "./.mcp.json");
     const hooksPath = resolvePluginPath(pluginRootDir, manifest.hooks, path.join("./hooks", "hooks.json"));
     const rules = await readRules(pluginRootDir, manifest.rules);
@@ -412,10 +464,12 @@ export class PluginCatalog {
       },
       skillsRootDir,
       commandsRootDir,
+      agentsRootDir,
       mcpPath,
       hooksPath,
       hasSkills: await fileExists(skillsRootDir),
       hasCommands: await fileExists(commandsRootDir),
+      hasAgents: await fileExists(agentsRootDir),
       hasMcp: await fileExists(mcpPath),
       hasHooks: await fileExists(hooksPath),
       rules,
@@ -479,6 +533,7 @@ export class PluginCatalog {
       components: {
         skills: plugin.hasSkills,
         commands: plugin.hasCommands,
+        agents: plugin.hasAgents,
         mcp: plugin.hasMcp,
         hooks: plugin.hasHooks,
         rules: plugin.rules.length > 0
@@ -585,6 +640,53 @@ export class PluginCatalog {
     }
 
     return commands;
+  }
+
+  async collectPluginAgents(options = {}) {
+    const enabledOnly = options.enabledOnly !== false;
+    const catalog = await this.read();
+    const selectedPluginNames = Array.isArray(options.selectedPluginNames)
+      ? new Set(options.selectedPluginNames.map((item) => normalizeName(item)).filter(Boolean))
+      : null;
+    const plugins = catalog.plugins.filter((plugin) =>
+      (!enabledOnly || plugin.enabled) &&
+      (!selectedPluginNames || selectedPluginNames.has(plugin.normalizedName))
+    );
+    const agents = [];
+
+    for (const plugin of plugins) {
+      if (!plugin.hasAgents) {
+        continue;
+      }
+
+      const agentFiles = await collectMarkdownFiles(plugin.agentsRootDir);
+      for (const agentFilePath of agentFiles) {
+        try {
+          const stats = await readFileStats(agentFilePath);
+          const parsed = parseSkillMarkdown(await fs.readFile(agentFilePath, "utf8"));
+          agents.push(normalizeAgentRecord(plugin, agentFilePath, parsed, stats));
+        } catch (error) {
+          const nextError = {
+            component: "agents",
+            filePath: safeRelativePath(plugin.rootDir, agentFilePath),
+            message: normalizeText(error?.message) || "agent failed to load"
+          };
+          const alreadyTracked = Array.isArray(plugin.errors)
+            ? plugin.errors.some(
+                (item) =>
+                  String(item?.component ?? "").trim() === nextError.component &&
+                  String(item?.filePath ?? "").trim() === nextError.filePath &&
+                  String(item?.message ?? "").trim() === nextError.message
+              )
+            : false;
+          if (!alreadyTracked) {
+            plugin.errors.push(nextError);
+          }
+        }
+      }
+    }
+
+    return agents;
   }
 
   async expandCommandsInText(text, options = {}) {

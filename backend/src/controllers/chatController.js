@@ -110,6 +110,28 @@ function buildAgentMeta(agent) {
   };
 }
 
+function serializePendingApprovalForClient(pendingApproval) {
+  if (!pendingApproval || String(pendingApproval?.status ?? "").trim() !== "pending") {
+    return null;
+  }
+
+  return {
+    approvalId: String(pendingApproval.id ?? "").trim(),
+    conversationId: String(pendingApproval.conversationId ?? "").trim(),
+    toolCallId: String(pendingApproval.toolCallId ?? "").trim(),
+    toolName: String(pendingApproval.toolName ?? "").trim(),
+    toolApprovalGroup: String(pendingApproval.toolApprovalGroup ?? "unknown").trim() || "unknown",
+    toolApprovalSection: String(pendingApproval.toolApprovalSection ?? "unknown").trim() || "unknown",
+    arguments: parseJsonIfString(pendingApproval.toolArguments),
+    toolCount: Array.isArray(pendingApproval.toolCalls)
+      ? Math.max(1, pendingApproval.toolCalls.length)
+      : 1,
+    approvalMode: String(pendingApproval.approvalMode ?? "confirm").trim() || "confirm",
+    createdAt: Number(pendingApproval.createdAt ?? 0),
+    updatedAt: Number(pendingApproval.updatedAt ?? 0)
+  };
+}
+
 function resolveSkillOwnerHistory(history, historyStore) {
   if (!history) {
     return null;
@@ -170,7 +192,10 @@ function enrichHistoryDetail(history, orchestratorStore, historyStore) {
   if (source === "subagent") {
     return {
       ...summary,
-      subagents: []
+      subagents: [],
+      pendingApproval: serializePendingApprovalForClient(
+        historyStore?.getPendingToolApprovalByConversationId?.(summary.id)
+      )
     };
   }
 
@@ -182,7 +207,10 @@ function enrichHistoryDetail(history, orchestratorStore, historyStore) {
       ...buildAgentMeta(agent),
       conversationId: String(agent?.conversationId ?? "").trim(),
       lastActiveAt: Number(agent?.lastActiveAt ?? 0)
-    }))
+    })),
+    pendingApproval: serializePendingApprovalForClient(
+      historyStore?.getPendingToolApprovalByConversationId?.(summary.id)
+    )
   };
 }
 
@@ -298,7 +326,8 @@ function buildRuntimeStatusPayload({
   sessionInfo,
   agentRecord,
   sessionSnapshot,
-  activeRun
+  activeRun,
+  pendingApproval
 }) {
   const normalizedConversationId = String(conversationId ?? "").trim();
   const sessionId = String(sessionInfo?.sessionId ?? normalizedConversationId).trim();
@@ -347,6 +376,7 @@ function buildRuntimeStatusPayload({
     targetAgentId,
     primaryAgentId: String(sessionInfo?.primaryAgentId ?? "").trim(),
     activeRun: buildRunSummary(activeRun),
+    pendingApproval: serializePendingApprovalForClient(pendingApproval),
     currentAgent,
     agents,
     messageStats,
@@ -1603,6 +1633,8 @@ export function createChatController({
         (agentRecord?.agentId
           ? conversationRunCoordinator?.getRunByAgent?.(sessionInfo.sessionId, agentRecord.agentId)
           : null);
+      const pendingApproval =
+        historyStore.getPendingToolApprovalByConversationId?.(conversationId) ?? null;
 
       res.json({
         runtime: buildRuntimeStatusPayload({
@@ -1611,7 +1643,8 @@ export function createChatController({
           sessionInfo,
           agentRecord,
           sessionSnapshot,
-          activeRun
+          activeRun,
+          pendingApproval
         })
       });
     },
@@ -2621,6 +2654,7 @@ export function createChatController({
         throw createValidationError("clarify approval requires selectedOption or additionalText");
       }
       const resolvedPendingApproval = applyClarifyApprovalInput(pendingApproval, clarifyInput);
+      historyStore.updatePendingToolApprovalStatus(approvalId, "approved");
 
       initSse(res);
       let foregroundStatus = "idle";

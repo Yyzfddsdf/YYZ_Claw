@@ -4,7 +4,13 @@ function createValidationError(message, statusCode = 400) {
   return error;
 }
 
-export function createPluginsController({ pluginCatalog, pluginSettingsStore, mcpManager }) {
+export function createPluginsController({
+  pluginCatalog,
+  pluginSettingsStore,
+  mcpManager,
+  subagentDefinitionRegistry,
+  agentRuntimeFactory
+}) {
   function ensurePluginCatalog() {
     if (!pluginCatalog || typeof pluginCatalog.listPlugins !== "function") {
       throw createValidationError("plugin catalog is not available", 500);
@@ -24,10 +30,16 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore, mc
         typeof pluginCatalog.collectPluginCommands === "function"
           ? await pluginCatalog.collectPluginCommands({ enabledOnly: false })
           : [];
+      const pluginAgents =
+        typeof pluginCatalog.collectPluginAgents === "function"
+          ? await pluginCatalog.collectPluginAgents({ enabledOnly: false })
+          : [];
       const skillCountByPlugin = new Map();
       const skillsByPlugin = new Map();
       const commandCountByPlugin = new Map();
       const commandsByPlugin = new Map();
+      const agentCountByPlugin = new Map();
+      const agentsByPlugin = new Map();
       for (const skill of pluginSkills) {
         const pluginName = String(skill.pluginName ?? "").trim();
         if (!pluginName) {
@@ -78,6 +90,24 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore, mc
         });
         commandsByPlugin.set(pluginName, existing);
       }
+      for (const agent of pluginAgents) {
+        const pluginName = String(agent?.pluginName ?? "").trim();
+        if (!pluginName) {
+          continue;
+        }
+        agentCountByPlugin.set(pluginName, (agentCountByPlugin.get(pluginName) ?? 0) + 1);
+        const existing = agentsByPlugin.get(pluginName) ?? [];
+        existing.push({
+          pluginName: agent.pluginName,
+          pluginDisplayName: agent.pluginDisplayName,
+          agentType: agent.agentType,
+          name: agent.name,
+          displayName: agent.displayName,
+          description: agent.description,
+          relativePath: agent.relativePath
+        });
+        agentsByPlugin.set(pluginName, existing);
+      }
 
       res.json({
         rootDir: catalog.rootDir,
@@ -86,7 +116,9 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore, mc
           skillCount: skillCountByPlugin.get(plugin.name) ?? plugin.skillCount ?? 0,
           skills: skillsByPlugin.get(plugin.name) ?? [],
           commandCount: commandCountByPlugin.get(plugin.name) ?? plugin.commandCount ?? 0,
-          commands: commandsByPlugin.get(plugin.name) ?? []
+          commands: commandsByPlugin.get(plugin.name) ?? [],
+          agentCount: agentCountByPlugin.get(plugin.name) ?? plugin.agentCount ?? 0,
+          agents: agentsByPlugin.get(plugin.name) ?? []
         })),
         errors: catalog.errors,
         pluginCount: plugins.length
@@ -98,6 +130,9 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore, mc
       await pluginCatalog.refresh();
       if (mcpManager && typeof mcpManager.refresh === "function") {
         await mcpManager.refresh();
+      }
+      if (subagentDefinitionRegistry && typeof subagentDefinitionRegistry.load === "function") {
+        await subagentDefinitionRegistry.load();
       }
       const plugins = await pluginCatalog.listPlugins();
       res.json({
@@ -122,6 +157,12 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore, mc
       await pluginCatalog.refresh();
       if (mcpManager && typeof mcpManager.refresh === "function") {
         await mcpManager.refresh();
+      }
+      if (subagentDefinitionRegistry && typeof subagentDefinitionRegistry.load === "function") {
+        await subagentDefinitionRegistry.load();
+      }
+      if (agentRuntimeFactory && typeof agentRuntimeFactory.clear === "function") {
+        agentRuntimeFactory.clear();
       }
       const plugins = await pluginCatalog.listPlugins();
       const plugin = plugins.find((item) => item.name === pluginName);

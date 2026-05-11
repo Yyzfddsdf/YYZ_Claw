@@ -117,4 +117,8 @@ export class AgentRuntimeFactory {
       this.runtimeCache.delete(cacheKey);
     }
   }
+
+  clear() {
+    this.runtimeCache.clear();
+  }
 }

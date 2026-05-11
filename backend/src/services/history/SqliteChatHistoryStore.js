@@ -3457,6 +3457,30 @@ export class SqliteChatHistoryStore {
     };
   }
 
+  getPendingToolApprovalByConversationId(conversationId) {
+    const db = this.ensureDb();
+    const normalizedConversationId = String(conversationId ?? "").trim();
+
+    if (!normalizedConversationId) {
+      return null;
+    }
+
+    const row = db
+      .prepare(
+        `
+          SELECT id
+          FROM pending_tool_approvals
+          WHERE conversation_id = ?
+            AND status = 'pending'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `
+      )
+      .get(normalizedConversationId);
+
+    return row?.id ? this.getPendingToolApproval(row.id) : null;
+  }
+
   updatePendingToolApprovalStatus(approvalId, status) {
     const db = this.ensureDb();
     const normalizedStatus = String(status ?? "").trim();

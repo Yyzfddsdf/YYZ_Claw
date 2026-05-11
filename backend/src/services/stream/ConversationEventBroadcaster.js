@@ -56,8 +56,8 @@ export class ConversationEventBroadcaster {
     const data =
       payload && typeof payload === "object" && !Array.isArray(payload)
         ? {
-            conversationId: normalizedConversationId,
-            ...cloneValue(payload)
+            ...cloneValue(payload),
+            conversationId: normalizedConversationId
           }
         : {
             conversationId: normalizedConversationId,

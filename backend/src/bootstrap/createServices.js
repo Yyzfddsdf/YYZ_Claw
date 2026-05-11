@@ -274,7 +274,8 @@ export async function createServices() {
     store: orchestratorStore
   });
   const subagentDefinitionRegistry = new SubagentDefinitionRegistry({
-    rootDir: SUBAGENT_ASSETS_DIR
+    rootDir: SUBAGENT_ASSETS_DIR,
+    pluginCatalog
   });
   await subagentDefinitionRegistry.load();
   const agentRuntimeFactory = new AgentRuntimeFactory({

@@ -214,7 +214,7 @@ Use it for:
 
 Important:
 
-- `Stop` is **not** “conversation closed”
+- `Stop` is **not** "conversation closed"
 - it is **turn end**
 
 ---
@@ -580,13 +580,13 @@ Behavior:
 - `allow`
   - hook fired
   - tool is allowed to continue down the normal execution chain
-  - model does not receive a separate “approved” message; it simply sees the later tool flow
+  - model does not receive a separate "approved" message; it simply sees the later tool flow
 
 Important:
 
 - the actual rejection message comes from `permissionDecisionReason`
 - not from `reason`
-- current YYZ_Claw implementation does **not** support legacy `decision = "block"` plus `reason` for `PreToolUse`
+- YYZ_Claw also supports legacy `decision = "block"` plus `reason` at the top level for `PreToolUse` (see Codex compatibility section)
 
 ### `PermissionRequest`
 
@@ -851,3 +851,105 @@ If a hook does not seem to work, check:
 7. For `PermissionRequest`, does the tool actually require approval?
 8. For plugin hooks, is the plugin enabled?
 9. For global hooks, is that event disabled in `hook-settings.json`?
+
+---
+
+## 14. OpenAI Codex 兼容格式
+
+YYZ_Claw 支持以下 OpenAI Codex 兼容的快捷方式，方便从其他平台迁移 hook 脚本。
+
+### `exit 2` + stderr 快捷路径
+
+脚本退出码 `2` 且 stderr 不为空时，自动映射为阻止/续跑决策，无需输出 JSON。
+
+各事件的行为：
+
+| 事件 | `exit 2` 效果 | stderr 用途 |
+|------|--------------|-------------|
+| `PreToolUse` | 阻止工具执行 | 作为拒绝理由返回给模型 |
+| `PermissionRequest` | — | 不支持 `exit 2`，请使用 JSON |
+| `PostToolUse` | 阻止工具结果 | 作为替换内容返回给模型 |
+| `UserPromptSubmitted` | 阻止提示词处理 | 作为阻止原因注入 |
+| `Stop` | 触发续跑 | 作为续跑提示文本 |
+
+示例（Python）：
+
+```python
+import sys, json
+data = json.load(sys.stdin)
+cmd = data.get("tool_input", {}).get("command", "")
+if "rm -rf" in cmd:
+    print("高危命令，已阻止", file=sys.stderr)
+    sys.exit(2)  # ← 等价于 JSON 输出 permissionDecision: "deny"
+sys.exit(0)
+```
+
+### PreToolUse 旧格式：顶层 `decision: "block"` + `reason`
+
+除了标准 `hookSpecificOutput.permissionDecision` 外，也接受顶层旧格式：
+
+```json
+{
+  "decision": "block",
+  "reason": "Destructive command blocked by policy."
+}
+```
+
+等价于：
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Destructive command blocked by policy."
+  }
+}
+```
+
+### Stop 旧格式：顶层 `decision: "block"` + `reason`
+
+除了标准 `continue: false` + `stopReason` 外，也接受顶层旧格式：
+
+```json
+{
+  "decision": "block",
+  "reason": "Run one more pass over the failing tests."
+}
+```
+
+等价于：
+
+```json
+{
+  "continue": false,
+  "stopReason": "Run one more pass over the failing tests."
+}
+```
+
+### PermissionRequest 旧格式
+
+也接受顶层 `decision: "allow"` / `"deny"` / `"block"` + `reason`：
+
+```json
+{
+  "decision": "allow",
+  "reason": ""
+}
+```
+
+等价于：
+
+```json
+{
+  "hookSpecificOutput": {
+    "decision": { "behavior": "allow", "message": "" }
+  }
+}
+```
+
+### 注意事项
+
+- `exit 2` 仅在脚本**没有输出有效 JSON** 时生效。如果脚本同时输出 JSON 到 stdout 和 `exit 2`，以 JSON 内容为准。
+- 旧格式 `decision: "block"` 优先级低于标准格式 `hookSpecificOutput.permissionDecision`。
+- 如果 `exit 2` + stderr 和 JSON 输出同时存在，且 JSON 解析成功，则 JSON 内容优先，`exit 2` 的 stderr 不会生效。

@@ -131,8 +131,38 @@ export function repairConversationMessages(messages = []) {
     output.push(message);
   }
 
+  // Final validation: ensure every assistant message with tool_calls is
+  // immediately followed by tool result messages covering all tool_call IDs.
+  // Injects stub results for any missing ones to prevent 400 errors.
+  for (let i = 0; i < output.length; i += 1) {
+    const msg = output[i];
+    if (msg.role !== "assistant" || !Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0) {
+      continue;
+    }
+
+    const expectedIds = new Set(msg.tool_calls.map((tc) => tc.id));
+
+    let j = i + 1;
+    while (j < output.length && output[j]?.role === "tool") {
+      expectedIds.delete(output[j].tool_call_id);
+      j += 1;
+    }
+
+    if (expectedIds.size > 0) {
+      for (const missingId of expectedIds) {
+        output.splice(j, 0, {
+          role: "tool",
+          tool_call_id: missingId,
+          content: "[Tool result unavailable]"
+        });
+        j += 1;
+      }
+    }
+  }
+
   return output;
 }
+
 
 export function resolveProviderThinkingEnabled(runtimeConfig = {}) {
   const capabilities =

@@ -478,10 +478,35 @@ export class HookExecutionService {
         }
       }
       if (!commandResult.ok && parsedStdout.kind !== "json") {
-        result.errors.push({
-          handlerId: handler.id,
-          message: normalizeText(commandResult.stderr) || `hook command failed with code ${commandResult.code}`
-        });
+        const exitCode = commandResult.code;
+        const stderrText = normalizeText(commandResult.stderr);
+        if (exitCode === 2 && stderrText) {
+          // exit code 2: 快捷阻止/续跑路径 (兼容 OpenAI Codex 规范)
+          if (eventName === "PreToolUse") {
+            result.permissionDecision = "deny";
+            result.permissionDecisionReason = stderrText;
+          } else if (eventName === "PostToolUse") {
+            result.postToolDecision = "block";
+            result.postToolReason = stderrText;
+          } else if (eventName === "Stop") {
+            result.stopContinue = false;
+            result.stopReason = stderrText;
+          } else if (eventName === "UserPromptSubmitted") {
+            const message = createHookPromptMessage({
+              content: stderrText,
+              hookEventName: eventName,
+              scope: `${handler.scopeType}:${handler.scopeName}`
+            });
+            if (message) {
+              messages.push(message);
+            }
+          }
+        } else {
+          result.errors.push({
+            handlerId: handler.id,
+            message: stderrText || `hook command failed with code ${exitCode}`
+          });
+        }
       }
 
       if (eventName === "SessionStart" || eventName === "UserPromptSubmitted") {
@@ -513,10 +538,18 @@ export class HookExecutionService {
       }
 
       if (eventName === "PreToolUse" && parsedStdout.kind === "json") {
-        const decision = normalizeText(parsedStdout.value?.hookSpecificOutput?.permissionDecision).toLowerCase();
-        const reason = String(
+        let decision = normalizeText(parsedStdout.value?.hookSpecificOutput?.permissionDecision).toLowerCase();
+        let reason = String(
           parsedStdout.value?.hookSpecificOutput?.permissionDecisionReason ?? ""
         ).trim();
+        // 兼容旧格式: 顶层 decision: "block"/"deny" + reason (OpenAI Codex 兼容格式)
+        if (!decision) {
+          const topDecision = normalizeText(parsedStdout.value?.decision).toLowerCase();
+          if (topDecision === "block" || topDecision === "deny") {
+            decision = "deny";
+            reason = String(parsedStdout.value?.reason ?? "").trim();
+          }
+        }
         if (decision === "deny" || decision === "allow") {
           result.permissionDecision = decision;
           result.permissionDecisionReason = reason;
@@ -560,9 +593,21 @@ export class HookExecutionService {
       }
 
       if (eventName === "Stop" && parsedStdout.kind === "json") {
+        // 标准格式: continue: false + stopReason
         if (parsedStdout.value?.continue === false) {
           result.stopContinue = false;
           result.stopReason = String(parsedStdout.value?.stopReason ?? "").trim();
+        }
+        // 兼容格式: decision: "block" + reason (OpenAI Codex 兼容格式)
+        if (result.stopContinue !== false) {
+          const topDecision = normalizeText(parsedStdout.value?.decision).toLowerCase();
+          if (topDecision === "block") {
+            const reason = String(parsedStdout.value?.reason ?? "").trim();
+            if (reason) {
+              result.stopContinue = false;
+              result.stopReason = reason;
+            }
+          }
         }
       }
     }

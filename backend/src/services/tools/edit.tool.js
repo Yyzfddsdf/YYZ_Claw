@@ -40,11 +40,9 @@ function resolveTargetPath(rawFilePath, cwd) {
     throw new Error("filePath is required");
   }
 
-  if (path.isAbsolute(candidate)) {
-    return path.resolve(candidate);
-  }
-
-  return path.resolve(cwd, candidate);
+  return path.isAbsolute(candidate)
+    ? path.resolve(candidate)
+    : path.resolve(cwd, candidate);
 }
 
 function appendWithLimit(current, next) {
@@ -75,9 +73,9 @@ function normalizeTimeoutMs(value) {
 
 function isStructuredPatch(patch) {
   const trimmed = patch.trimStart();
+
   return (
     trimmed.startsWith("*** Begin Patch") ||
-    trimmed.startsWith("*** ") ||
     trimmed.startsWith("*** Update File:") ||
     trimmed.startsWith("*** Add File:") ||
     trimmed.startsWith("*** Delete File:")
@@ -96,6 +94,24 @@ function finalizeStructuredBlock(current, blocks) {
   blocks.push(current);
 }
 
+function normalizePatchHeaderLine(line) {
+  const trimmed = line.trim();
+
+  if (trimmed === "*** Begin Patch ***") {
+    return "*** Begin Patch";
+  }
+
+  if (trimmed === "*** End Patch ***") {
+    return "*** End Patch";
+  }
+
+  if (trimmed === "*** End of File ***") {
+    return "*** End of File";
+  }
+
+  return line;
+}
+
 function isPatchHeaderLine(line) {
   return (
     line === "*** Begin Patch" ||
@@ -108,17 +124,17 @@ function isPatchHeaderLine(line) {
   );
 }
 
-function isLooseFileHeaderLine(line) {
-  return (
-    line.startsWith("*** ") &&
-    !line.startsWith("*** Begin Patch") &&
-    !line.startsWith("*** End Patch") &&
-    !line.startsWith("*** End of File") &&
-    !line.startsWith("*** Update File:") &&
-    !line.startsWith("*** Add File:") &&
-    !line.startsWith("*** Delete File:") &&
-    !line.startsWith("*** Move to:")
-  );
+function assertNoUnifiedDiffHeaderInsideStructuredPatch(line) {
+  if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+    throw new Error(
+      [
+        `Unexpected unified diff header inside structured patch: ${line}.`,
+        "Do not mix patch formats.",
+        "Structured patch format: *** Begin Patch / *** Update File: <path> / @@ / -old / +new / *** End Patch.",
+        "Unified diff format: --- a/file / +++ b/file / @@ / -old / +new, without *** Begin Patch or *** End Patch."
+      ].join(" ")
+    );
+  }
 }
 
 function parseStructuredPatch(patch) {
@@ -137,23 +153,15 @@ function parseStructuredPatch(patch) {
   }
 
   for (const rawLine of lines) {
-    const line = rawLine;
+    const line = normalizePatchHeaderLine(rawLine);
 
-    if (isLooseFileHeaderLine(line)) {
-      finalizeStructuredBlock(current, blocks);
-      current = {
-        type: "update",
-        filePath: line.slice(4).trim(),
-        moveTo: "",
-        hunks: []
-      };
-      currentHunk = [];
-      continue;
-    }
+    assertNoUnifiedDiffHeaderInsideStructuredPatch(line);
 
     if (isPatchHeaderLine(line)) {
       if (line.startsWith("*** Update File:")) {
+        pushCurrentHunk();
         finalizeStructuredBlock(current, blocks);
+
         current = {
           type: "update",
           filePath: line.slice("*** Update File: ".length).trim(),
@@ -165,21 +173,27 @@ function parseStructuredPatch(patch) {
       }
 
       if (line.startsWith("*** Add File: ")) {
+        pushCurrentHunk();
         finalizeStructuredBlock(current, blocks);
+
         current = {
           type: "add",
           filePath: line.slice("*** Add File: ".length).trim(),
           contentLines: []
         };
+        currentHunk = null;
         continue;
       }
 
       if (line.startsWith("*** Delete File: ")) {
+        pushCurrentHunk();
         finalizeStructuredBlock(current, blocks);
+
         current = {
           type: "delete",
           filePath: line.slice("*** Delete File: ".length).trim()
         };
+        currentHunk = null;
         continue;
       }
 
@@ -195,22 +209,14 @@ function parseStructuredPatch(patch) {
       continue;
     }
 
-    if (line.startsWith("@@")) {
-      if (!current || current.type !== "update") {
-        continue;
-      }
-
-      pushCurrentHunk();
-      currentHunk = [];
-      continue;
-    }
-
     if (!current) {
       if (line.trim().length === 0) {
         continue;
       }
 
-      throw new Error(`Unexpected patch content: ${line}`);
+      throw new Error(
+        `Unexpected patch content: ${line}. Structured patches must use headers like "*** Begin Patch", "*** Update File: <path>", and "*** End Patch". Do not use unified diff headers inside structured patches.`
+      );
     }
 
     if (current.type === "add") {
@@ -249,6 +255,12 @@ function buildStructuredBlockReplacement(hunkLines) {
   const newLines = [];
 
   for (const line of hunkLines) {
+    // Structured patch hunk marker. It is only a visual separator here.
+    // Unlike unified diff, this custom format does not use line numbers.
+    if (line.startsWith("@@")) {
+      continue;
+    }
+
     if (line.startsWith("+")) {
       newLines.push(line.slice(1));
       continue;
@@ -269,13 +281,45 @@ function buildStructuredBlockReplacement(hunkLines) {
     if (line.trim().length === 0) {
       oldLines.push("");
       newLines.push("");
+      continue;
     }
+
+    throw new Error(
+      `Invalid structured patch line: ${line}. Update hunk lines must start with ' ', '+', '-', or '@@'.`
+    );
   }
 
   return {
     oldText: oldLines.join("\n"),
     newText: newLines.join("\n")
   };
+}
+
+function findUniqueMatchIndex(content, oldText, filePath) {
+  const firstIndex = content.indexOf(oldText);
+
+  if (firstIndex < 0) {
+    const preview = oldText.slice(0, 240);
+    throw new Error(
+      `Structured patch context not found in ${filePath}. Missing block starts with: ${JSON.stringify(preview)}`
+    );
+  }
+
+  const secondIndex = content.indexOf(oldText, firstIndex + oldText.length);
+
+  if (secondIndex >= 0) {
+    const preview = oldText.slice(0, 240);
+    throw new Error(
+      [
+        `Structured patch context is ambiguous in ${filePath}.`,
+        "The old block appears more than once.",
+        `Ambiguous block starts with: ${JSON.stringify(preview)}`,
+        "Add more unchanged surrounding context lines to make the match unique."
+      ].join(" ")
+    );
+  }
+
+  return firstIndex;
 }
 
 async function writeUtf8File(filePath, content) {
@@ -314,6 +358,7 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
     }
 
     const content = block.contentLines.join("\n");
+
     if (!checkOnly) {
       await fs.mkdir(path.dirname(resolvedFilePath), { recursive: true });
       await writeUtf8File(resolvedFilePath, content);
@@ -339,6 +384,7 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
   }
 
   const currentContent = await fs.readFile(resolvedFilePath, "utf8");
+
   if (!Array.isArray(block.hunks) || block.hunks.length === 0) {
     if (!block.moveTo) {
       return {
@@ -352,9 +398,7 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
   let nextContent = currentContent;
 
   for (const hunk of block.hunks ?? []) {
-    const replacement = buildStructuredBlockReplacement(hunk);
-    const oldText = replacement.oldText;
-    const newText = replacement.newText;
+    const { oldText, newText } = buildStructuredBlockReplacement(hunk);
 
     if (oldText.length === 0 && newText.length === 0) {
       continue;
@@ -365,16 +409,16 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
       continue;
     }
 
-    const matchIndex = nextContent.indexOf(oldText);
-    if (matchIndex < 0) {
-      const preview = oldText.slice(0, 240);
-      throw new Error(
-        `Structured patch context not found in ${resolvedFilePath}. Missing block starts with: ${JSON.stringify(preview)}`
-      );
-    }
+    const matchIndex = findUniqueMatchIndex(
+      nextContent,
+      oldText,
+      resolvedFilePath
+    );
 
     nextContent =
-      nextContent.slice(0, matchIndex) + newText + nextContent.slice(matchIndex + oldText.length);
+      nextContent.slice(0, matchIndex) +
+      newText +
+      nextContent.slice(matchIndex + oldText.length);
   }
 
   if (nextContent === currentContent && !block.moveTo) {
@@ -386,7 +430,9 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
   }
 
   const targetPath = block.moveTo
-    ? (path.isAbsolute(block.moveTo) ? path.resolve(block.moveTo) : resolveTargetPath(block.moveTo, cwd))
+    ? path.isAbsolute(block.moveTo)
+      ? path.resolve(block.moveTo)
+      : resolveTargetPath(block.moveTo, cwd)
     : resolvedFilePath;
 
   if (block.moveTo) {
@@ -399,6 +445,7 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
   if (!checkOnly) {
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await writeUtf8File(targetPath, nextContent);
+
     if (targetPath !== resolvedFilePath) {
       await fs.unlink(resolvedFilePath);
     }
@@ -502,7 +549,7 @@ function buildGitApplyError(result) {
     `git apply failed with code ${result.exitCode}.`,
     result.stderr ? `STDERR:\n${result.stderr}` : "",
     result.stdout ? `STDOUT:\n${result.stdout}` : "",
-    "If this was meant to be a structured patch, use *** Begin Patch / *** Update File syntax or read the target file first."
+    "Use exactly one patch format. For structured patches, use '*** Begin Patch', '*** Update File: <path>', and '*** End Patch'. For unified diff patches, do not wrap them with structured patch headers."
   ]
     .filter(Boolean)
     .join("\n");
@@ -518,7 +565,7 @@ export default {
       patch: {
         type: "string",
         description:
-          "Structured patch text starting with *** Begin Patch, or a unified diff patch."
+          "Patch text. Choose exactly one format and never mix formats. Format 1: structured patch. It may use exact headers like '*** Begin Patch' / '*** End Patch' or tolerated trailing-star headers like '*** Begin Patch ***' / '*** End Patch ***'. Structured patches must use file headers such as '*** Update File: <path>', '*** Add File: <path>', or '*** Delete File: <path>'. Do not put unified-diff headers like '--- a/file' or '+++ b/file' inside a structured patch. Format 2: unified diff. Unified diff patches must use '--- a/file', '+++ b/file', and '@@' hunks, and must not be wrapped with '*** Begin Patch' or '*** End Patch'."
       },
       cwd: {
         type: "string",
@@ -531,7 +578,7 @@ export default {
       },
       timeoutMs: {
         type: "integer",
-        description: "Optional timeout in milliseconds (1000-300000)."
+        description: "Optional timeout in milliseconds, clamped to 1000-300000."
       }
     },
     required: ["patch"],
@@ -576,7 +623,7 @@ export default {
         throw new Error(
           [
             `Structured patch failed: ${error?.message || "unknown error"}`,
-            "Suggestion: re-read the target file and keep the patch block smaller."
+            "Suggestion: use exactly one patch format. For structured patches, use *** Update File: <path> and do not include ---/+++ unified diff headers. For unified diff patches, do not wrap them with *** Begin Patch. Re-read the target file and keep the patch block smaller."
           ].join("\n")
         );
       }

@@ -2441,9 +2441,14 @@ export function useChatSession(runtimeConfig = {}) {
       return;
     }
 
-    const isPersistedConversation = !isDraftConversationActive;
+    const isPersistedConversation =
+      !isDraftConversationActive &&
+      !isDraftConversationId(activeConversationId) &&
+      conversationListRef.current.some(
+        (item) => String(item?.id ?? "").trim() === String(activeConversationId ?? "").trim()
+      );
 
-    if (!isPersistedConversation && messages.length === 0) {
+    if (!isPersistedConversation) {
       return;
     }
 
@@ -4258,7 +4263,23 @@ export function useChatSession(runtimeConfig = {}) {
       });
 
       updateTargetMessages((prev) => {
-        const nextList = [...prev];
+        const pendingToolCallId = String(event?.toolCallId ?? "").trim();
+        const nextList = prev.filter((message) => {
+          const normalized = normalizeChatMessage(message);
+          if (
+            normalized.role !== "assistant" ||
+            String(normalized.content ?? "").trim() ||
+            String(normalized.reasoningContent ?? "").trim() ||
+            !Array.isArray(normalized.toolCalls) ||
+            normalized.toolCalls.length === 0
+          ) {
+            return true;
+          }
+
+          return !normalized.toolCalls.some(
+            (toolCall) => String(toolCall?.id ?? "").trim() === pendingToolCallId
+          );
+        });
         const targetIndex = findToolMessageIndex(nextList, event);
 
         if (targetIndex >= 0) {

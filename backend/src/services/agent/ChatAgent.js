@@ -1338,6 +1338,11 @@ export class ChatAgent {
           approvalRules: resolvedApprovalRules
         });
 
+        const assistantMessageIndex = conversation.lastIndexOf(assistantRound.assistantMessage);
+        if (assistantMessageIndex >= 0) {
+          conversation.splice(assistantMessageIndex, 1);
+        }
+
         onEvent?.({
           type: "tool_pending_approval",
           approvalId: approvalRecord.id,

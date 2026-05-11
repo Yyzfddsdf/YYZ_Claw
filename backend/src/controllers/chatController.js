@@ -1085,6 +1085,61 @@ function createCompressionInProgressError(action = "message") {
   return error;
 }
 
+function appendCompressionSummaryMessage(historyStore, conversationId, compressionResult) {
+  if (!compressionResult?.compressed || !compressionResult?.summaryMessage) {
+    return historyStore.getConversation(conversationId);
+  }
+
+  return historyStore.appendMessages(conversationId, [compressionResult.summaryMessage], {
+    updatedAt: Number(compressionResult.summaryMessage.timestamp ?? Date.now())
+  });
+}
+
+function normalizeApprovedToolCallMessages(pendingApproval, messages = []) {
+  const assistantToolCallIds = new Set(
+    (Array.isArray(pendingApproval?.toolCalls) ? pendingApproval.toolCalls : [])
+      .map((toolCall) => String(toolCall?.id ?? "").trim())
+      .filter(Boolean)
+  );
+  const assistantMessage = pendingApproval?.assistantMessage &&
+    typeof pendingApproval.assistantMessage === "object" &&
+    !Array.isArray(pendingApproval.assistantMessage)
+      ? pendingApproval.assistantMessage
+      : null;
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  const firstResultIndex = sourceMessages.findIndex((message) => {
+    if (String(message?.role ?? "").trim() !== "tool") {
+      return false;
+    }
+
+    const toolCallId = String(message?.toolCallId ?? message?.tool_call_id ?? "").trim();
+    return toolCallId && assistantToolCallIds.has(toolCallId);
+  });
+  const resultMessages = firstResultIndex >= 0 ? sourceMessages.slice(firstResultIndex) : [];
+
+  if (!assistantMessage || assistantToolCallIds.size === 0 || resultMessages.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      id: `assistant_tool_call_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      role: "assistant",
+      content: String(assistantMessage.content ?? ""),
+      reasoningContent: String(
+        assistantMessage.reasoningContent ?? assistantMessage.reasoning_content ?? ""
+      ),
+      timestamp: Date.now(),
+      toolCalls: Array.isArray(pendingApproval.toolCalls) ? pendingApproval.toolCalls : [],
+      meta: {
+        kind: "approved_tool_call",
+        approvalId: String(pendingApproval.id ?? "")
+      }
+    },
+    ...resultMessages
+  ];
+}
+
 export function createChatController({
   chatAgent,
   toolRegistry,
@@ -2132,28 +2187,11 @@ export function createChatController({
         throw error;
       }
 
-      const nextMessages = Array.isArray(compressionResult?.messages)
-        ? compressionResult.messages
-        : validation.data.messages;
-
-      let history = historyStore.upsertConversation({
+      let history = appendCompressionSummaryMessage(
+        historyStore,
         conversationId,
-        title: existing.title,
-        workplacePath: existing.workplacePath,
-        parentConversationId: existing.parentConversationId,
-        source: existing.source,
-        model: existing.model,
-        modelProfileId: existing.modelProfileId,
-        thinkingMode: existing.thinkingMode,
-        approvalMode: existing.approvalMode,
-        goal: existing.goal,
-        skills: existing.skills,
-        plugins: existing.plugins,
-        disabledTools: existing.disabledTools,
-        personaId: existing.personaId,
-        developerPrompt: existing.developerPrompt,
-        messages: nextMessages
-      });
+        compressionResult
+      );
 
       if (compressionResult?.compressed) {
         const snapshot = buildCompressionTokenSnapshot(compressionResult);
@@ -2319,7 +2357,7 @@ export function createChatController({
         messages: validation.data.messages
       };
       let history = validation.data.replaceMessages
-        ? historyStore.upsertConversation(conversationPayload)
+        ? historyStore.replaceConversationMessagePrefix(conversationPayload)
         : historyStore.mergeConversation(conversationPayload);
 
       if (firstUserMessage && !history.workplaceLocked) {
@@ -2770,22 +2808,20 @@ export function createChatController({
         });
 
         const nextMessages = recorder.getMessages();
-        let updatedResumedHistory = historyStore.mergeConversation({
-          conversationId: resolvedPendingApproval.conversationId,
-          title: resumedHistory?.title,
-          workplacePath: resumedHistory?.workplacePath,
-          parentConversationId: resumedHistory?.parentConversationId,
-          source: resumedHistory?.source,
-          model: runtimeModel || resumedHistory?.model,
-          approvalMode: resumedHistory?.approvalMode,
-          goal: resumedHistory?.goal,
-          skills: resumedHistory?.skills,
-          plugins: resumedHistory?.plugins,
-          disabledTools: resumedHistory?.disabledTools,
-          personaId: resumedHistory?.personaId,
-          developerPrompt: resumedHistory?.developerPrompt,
-          messages: nextMessages
-        });
+        const approvedToolCallMessages = normalizeApprovedToolCallMessages(
+          resolvedPendingApproval,
+          nextMessages
+        );
+        let updatedResumedHistory =
+          approvedToolCallMessages.length > 0
+            ? historyStore.appendMessages(
+                resolvedPendingApproval.conversationId,
+                approvedToolCallMessages,
+                {
+                  updatedAt: Number(approvedToolCallMessages.at(-1)?.timestamp ?? Date.now())
+                }
+              )
+            : historyStore.getConversation(resolvedPendingApproval.conversationId);
 
         if (executionContext?.goalState?.submitted) {
           updatedResumedHistory = historyStore.updateConversationGoal(
@@ -3291,25 +3327,12 @@ export function createChatController({
             trigger: "auto"
           });
 
-          if (compressionResult?.compressed && Array.isArray(compressionResult.messages)) {
-            let updatedHistory = historyStore.upsertConversation({
+          if (compressionResult?.compressed && compressionResult.summaryMessage) {
+            let updatedHistory = appendCompressionSummaryMessage(
+              historyStore,
               conversationId,
-              title: existingConversation?.title,
-              workplacePath: existingConversation?.workplacePath,
-              parentConversationId: existingConversation?.parentConversationId,
-              source: existingConversation?.source,
-              model: existingConversation?.model,
-              modelProfileId: existingConversation?.modelProfileId,
-              thinkingMode: existingConversation?.thinkingMode,
-              approvalMode: existingConversation?.approvalMode,
-              goal: existingConversation?.goal,
-              skills: existingConversation?.skills,
-              plugins: existingConversation?.plugins,
-              disabledTools: existingConversation?.disabledTools,
-              personaId: existingConversation?.personaId,
-              developerPrompt: existingConversation?.developerPrompt,
-              messages: compressionResult.messages
-            });
+              compressionResult
+            );
 
             const compressionSnapshot = buildCompressionTokenSnapshot(compressionResult);
             if (compressionSnapshot) {

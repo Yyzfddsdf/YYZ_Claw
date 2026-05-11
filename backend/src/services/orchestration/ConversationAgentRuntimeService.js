@@ -26,6 +26,16 @@ function normalizeText(value) {
   return String(value ?? "").trim();
 }
 
+function appendCompressionSummaryMessage(historyStore, conversationId, compressionResult) {
+  if (!compressionResult?.compressed || !compressionResult?.summaryMessage) {
+    return historyStore.getConversation(conversationId);
+  }
+
+  return historyStore.appendMessages(conversationId, [compressionResult.summaryMessage], {
+    updatedAt: Number(compressionResult.summaryMessage.timestamp ?? Date.now())
+  });
+}
+
 function normalizeToolCalls(toolCalls) {
   return Array.isArray(toolCalls)
     ? toolCalls
@@ -239,27 +249,11 @@ export class ConversationAgentRuntimeService {
       trigger: "manual"
     });
 
-    const nextMessages = Array.isArray(compressionResult?.messages)
-      ? compressionResult.messages
-      : effectiveMessages;
-    let updatedHistory = this.historyStore.upsertConversation({
-      conversationId: normalizedConversationId,
-      title: existingConversation?.title,
-      workplacePath: existingConversation?.workplacePath,
-      parentConversationId: existingConversation?.parentConversationId,
-      source: existingConversation?.source,
-      model: existingConversation?.model,
-      modelProfileId: existingConversation?.modelProfileId,
-      thinkingMode: existingConversation?.thinkingMode,
-      approvalMode: existingConversation?.approvalMode,
-      goal: existingConversation?.goal,
-      planState: existingConversation?.planState,
-      skills: existingConversation?.skills,
-      disabledTools: existingConversation?.disabledTools,
-      personaId: existingConversation?.personaId,
-      developerPrompt: existingConversation?.developerPrompt,
-      messages: nextMessages
-    });
+    let updatedHistory = appendCompressionSummaryMessage(
+      this.historyStore,
+      normalizedConversationId,
+      compressionResult
+    );
 
     if (compressionResult?.compressed) {
       const snapshot = buildCompressionTokenSnapshot(compressionResult);
@@ -345,23 +339,12 @@ export class ConversationAgentRuntimeService {
         trigger: "auto"
       });
 
-      if (compressionResult?.compressed && Array.isArray(compressionResult.messages)) {
-        let updatedHistory = this.historyStore.upsertConversation({
+      if (compressionResult?.compressed && compressionResult.summaryMessage) {
+        let updatedHistory = appendCompressionSummaryMessage(
+          this.historyStore,
           conversationId,
-          title: existingConversation?.title,
-          workplacePath: existingConversation?.workplacePath,
-          parentConversationId: existingConversation?.parentConversationId,
-          source: existingConversation?.source,
-          model: existingConversation?.model,
-          modelProfileId: existingConversation?.modelProfileId,
-          thinkingMode: existingConversation?.thinkingMode,
-          approvalMode: existingConversation?.approvalMode,
-          goal: existingConversation?.goal,
-          skills: existingConversation?.skills,
-          disabledTools: existingConversation?.disabledTools,
-          developerPrompt: existingConversation?.developerPrompt,
-          messages: compressionResult.messages
-        });
+          compressionResult
+        );
 
         const compressionSnapshot = buildCompressionTokenSnapshot(compressionResult);
         if (compressionSnapshot) {

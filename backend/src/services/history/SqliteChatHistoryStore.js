@@ -434,6 +434,39 @@ function mergeMessageSnapshots(baseMessages, overlayMessages) {
   return merged.map((message, index) => normalizeMessage(message, index));
 }
 
+function areMessagesPersistentlyEqual(left, right) {
+  const normalizedLeft = normalizeMessage(left, Number(left?.sortIndex ?? 0));
+  const normalizedRight = normalizeMessage(right, Number(right?.sortIndex ?? 0));
+
+  return (
+    normalizedLeft.role === normalizedRight.role &&
+    normalizedLeft.content === normalizedRight.content &&
+    normalizedLeft.reasoningContent === normalizedRight.reasoningContent &&
+    normalizedLeft.toolCallId === normalizedRight.toolCallId &&
+    normalizedLeft.toolName === normalizedRight.toolName &&
+    normalizedLeft.timestamp === normalizedRight.timestamp &&
+    JSON.stringify(normalizedLeft.toolCalls) === JSON.stringify(normalizedRight.toolCalls) &&
+    JSON.stringify(normalizedLeft.meta) === JSON.stringify(normalizedRight.meta) &&
+    JSON.stringify(normalizedLeft.tokenUsage) === JSON.stringify(normalizedRight.tokenUsage)
+  );
+}
+
+function isPrefixReplacement(existingMessages = [], replacementMessages = []) {
+  if (!Array.isArray(existingMessages) || !Array.isArray(replacementMessages)) {
+    return false;
+  }
+
+  if (replacementMessages.length === 0 || replacementMessages.length > existingMessages.length) {
+    return false;
+  }
+
+  return replacementMessages.every((message, index) => {
+    const nextId = String(message?.id ?? "").trim();
+    const existingId = String(existingMessages[index]?.id ?? "").trim();
+    return nextId && existingId && nextId === existingId;
+  });
+}
+
 function normalizeConversationTokenSnapshot(value) {
   if (!value || typeof value !== "object") {
     return null;
@@ -1925,6 +1958,7 @@ export class SqliteChatHistoryStore {
   }
 
   mergeConversation(payload) {
+    const db = this.ensureDb();
     const conversationId = String(payload?.conversationId ?? "").trim();
     if (!conversationId) {
       throw new Error("conversationId is required");
@@ -1935,33 +1969,272 @@ export class SqliteChatHistoryStore {
       return this.upsertConversation(payload);
     }
 
-    return this.upsertConversation({
-      conversationId,
-      title: payload.title ?? existing.title,
-      workplacePath: payload.workplacePath ?? existing.workplacePath,
-      parentConversationId: payload.parentConversationId ?? existing.parentConversationId,
-      source: payload.source ?? existing.source,
-      model: payload.model ?? existing.model,
-      modelProfileId: payload.modelProfileId ?? existing.modelProfileId,
-      thinkingMode: payload.thinkingMode ?? existing.thinkingMode,
-      approvalMode: payload.approvalMode ?? existing.approvalMode,
-      goal: payload.goal ?? existing.goal,
-      planState: Object.prototype.hasOwnProperty.call(payload, "planState")
-        ? payload.planState
-        : existing.planState,
-      skills: payload.skills ?? existing.skills,
-      plugins: payload.plugins ?? existing.plugins,
-      disabledTools: payload.disabledTools ?? existing.disabledTools,
-      personaId: payload.personaId ?? existing.personaId,
-      developerPrompt: payload.developerPrompt ?? existing.developerPrompt,
-      memorySummaryPrompt:
-        Object.prototype.hasOwnProperty.call(payload, "memorySummaryPrompt")
-          ? payload.memorySummaryPrompt
-          : existing.memorySummaryPrompt,
-      createdAt: payload.createdAt ?? existing.createdAt,
-      updatedAt: payload.updatedAt,
-      messages: mergeMessageSnapshots(existing.messages, payload.messages)
+    const mergedMessages = mergeMessageSnapshots(existing.messages, payload.messages);
+    const existingById = new Map(
+      existing.messages
+        .map((message) => [String(message?.id ?? "").trim(), message])
+        .filter(([messageId]) => messageId)
+    );
+    const changedMessages = mergedMessages.filter((message) => {
+      const messageId = String(message?.id ?? "").trim();
+      const existingMessage = messageId ? existingById.get(messageId) : null;
+      return !existingMessage || !areMessagesPersistentlyEqual(existingMessage, message);
     });
+
+    const requestedWorkplacePath = String(payload.workplacePath ?? "").trim();
+    const workplacePath = requestedWorkplacePath || existing.workplacePath || this.defaultWorkplacePath;
+    const title = String(payload.title ?? "").trim() || existing.title || "新会话";
+    const parentConversationId = normalizeConversationParentId(
+      payload.parentConversationId ?? existing.parentConversationId
+    );
+    const source = normalizeConversationSource(payload.source ?? existing.source);
+    const model = String(payload.model ?? existing.model ?? "").trim();
+    const modelProfileId = String(payload.modelProfileId ?? existing.modelProfileId ?? "").trim();
+    const thinkingMode = normalizeThinkingMode(payload.thinkingMode ?? existing.thinkingMode);
+    const approvalMode = normalizeApprovalMode(payload.approvalMode ?? existing.approvalMode);
+    const goal = normalizeGoalText(payload.goal ?? existing.goal);
+    const planStateJson = Object.prototype.hasOwnProperty.call(payload, "planState")
+      ? serializePlanState(payload.planState)
+      : serializePlanState(existing.planState);
+    const skills = normalizeSkillNames(payload.skills ?? existing.skills);
+    const plugins = normalizePluginNames(payload.plugins ?? existing.plugins);
+    const disabledTools = normalizeToolNames(payload.disabledTools ?? existing.disabledTools);
+    const personaId = String(payload.personaId ?? existing.personaId ?? "").trim();
+    const developerPrompt = String(payload.developerPrompt ?? existing.developerPrompt ?? "").trim();
+    const memorySummaryPrompt =
+      Object.prototype.hasOwnProperty.call(payload, "memorySummaryPrompt")
+        ? payload.memorySummaryPrompt == null
+          ? null
+          : String(payload.memorySummaryPrompt ?? "")
+        : existing.memorySummaryPrompt == null
+          ? null
+          : String(existing.memorySummaryPrompt ?? "");
+    const now = Date.now();
+    const updatedAt = Number(
+      payload.updatedAt ?? changedMessages.at(-1)?.timestamp ?? mergedMessages.at(-1)?.timestamp ?? now
+    );
+
+    db.prepare(
+      `
+        UPDATE conversations
+        SET
+          title = ?,
+          workplace_path = ?,
+          parent_conversation_id = ?,
+          source = ?,
+          model = ?,
+          model_profile_id = ?,
+          thinking_mode = ?,
+          approval_mode = ?,
+          goal_text = ?,
+          plan_state_json = ?,
+          skills_json = ?,
+          plugins_json = ?,
+          disabled_tools_json = ?,
+          persona_id = ?,
+          developer_prompt = ?,
+          memory_summary_prompt = ?,
+          updated_at = ?
+        WHERE id = ?
+      `
+    ).run(
+      title,
+      workplacePath,
+      parentConversationId,
+      source,
+      model,
+      modelProfileId,
+      thinkingMode,
+      approvalMode,
+      goal,
+      planStateJson,
+      JSON.stringify(skills),
+      JSON.stringify(plugins),
+      JSON.stringify(disabledTools),
+      personaId,
+      developerPrompt,
+      memorySummaryPrompt,
+      updatedAt,
+      conversationId
+    );
+
+    if (changedMessages.length === 0) {
+      return this.getConversation(conversationId);
+    }
+
+    return this.appendMessages(conversationId, changedMessages, { updatedAt });
+  }
+
+  replaceConversationMessagePrefix(payload) {
+    const db = this.ensureDb();
+    const conversationId = String(payload?.conversationId ?? "").trim();
+    if (!conversationId) {
+      throw new Error("conversationId is required");
+    }
+
+    const existing = this.getConversation(conversationId);
+    if (!existing) {
+      return this.upsertConversation(payload);
+    }
+
+    if (!isPrefixReplacement(existing.messages, payload.messages)) {
+      return this.upsertConversation(payload);
+    }
+
+    const normalizedMessages = filterOrphanToolMessages(payload.messages, existing.messages);
+    if (!isPrefixReplacement(existing.messages, normalizedMessages)) {
+      return this.upsertConversation(payload);
+    }
+
+    const now = Date.now();
+    const updatedAt = Number(payload.updatedAt ?? normalizedMessages.at(-1)?.timestamp ?? now);
+    const cutoffIndex = normalizedMessages.length - 1;
+    const cutoffSortIndex = Number(existing.messages[cutoffIndex]?.sortIndex ?? cutoffIndex);
+
+    const requestedWorkplacePath = String(payload.workplacePath ?? "").trim();
+    const workplacePath = requestedWorkplacePath || existing.workplacePath || this.defaultWorkplacePath;
+    const title = String(payload.title ?? "").trim() || existing.title || "新会话";
+    const source = normalizeConversationSource(payload.source ?? existing.source);
+    const model = String(payload.model ?? existing.model ?? "").trim();
+    const modelProfileId = String(payload.modelProfileId ?? existing.modelProfileId ?? "").trim();
+    const thinkingMode = normalizeThinkingMode(payload.thinkingMode ?? existing.thinkingMode);
+    const approvalMode = normalizeApprovalMode(payload.approvalMode ?? existing.approvalMode);
+    const goal = normalizeGoalText(payload.goal ?? existing.goal);
+    const planStateJson = Object.prototype.hasOwnProperty.call(payload, "planState")
+      ? serializePlanState(payload.planState)
+      : serializePlanState(existing.planState);
+    const skills = normalizeSkillNames(payload.skills ?? existing.skills);
+    const plugins = normalizePluginNames(payload.plugins ?? existing.plugins);
+    const disabledTools = normalizeToolNames(payload.disabledTools ?? existing.disabledTools);
+    const parentConversationId = normalizeConversationParentId(
+      payload.parentConversationId ?? existing.parentConversationId
+    );
+    const personaId = String(payload.personaId ?? existing.personaId ?? "").trim();
+    const developerPrompt = String(payload.developerPrompt ?? existing.developerPrompt ?? "").trim();
+    const memorySummaryPrompt =
+      Object.prototype.hasOwnProperty.call(payload, "memorySummaryPrompt")
+        ? payload.memorySummaryPrompt == null
+          ? null
+          : String(payload.memorySummaryPrompt ?? "")
+        : existing.memorySummaryPrompt == null
+          ? null
+          : String(existing.memorySummaryPrompt ?? "");
+
+    const updateMessageStmt = db.prepare(
+      `
+        UPDATE conversation_messages
+        SET
+          role = ?,
+          content = ?,
+          reasoning_content = ?,
+          tool_call_id = ?,
+          tool_name = ?,
+          tool_calls_json = ?,
+          meta_json = ?,
+          token_usage_json = ?,
+          timestamp = ?,
+          sort_index = ?
+        WHERE conversation_id = ? AND id = ?
+      `
+    );
+    const selectMessageSeqStmt = db.prepare(
+      `
+        SELECT seq
+        FROM conversation_messages
+        WHERE conversation_id = ? AND id = ?
+        ORDER BY seq DESC
+        LIMIT 1
+      `
+    );
+
+    db.exec("BEGIN TRANSACTION");
+
+    try {
+      db.prepare(
+        `
+          UPDATE conversations
+          SET
+            title = ?,
+            workplace_path = ?,
+            parent_conversation_id = ?,
+            source = ?,
+            model = ?,
+            model_profile_id = ?,
+            thinking_mode = ?,
+            approval_mode = ?,
+            goal_text = ?,
+            plan_state_json = ?,
+            skills_json = ?,
+            plugins_json = ?,
+            disabled_tools_json = ?,
+            persona_id = ?,
+            developer_prompt = ?,
+            memory_summary_prompt = ?,
+            updated_at = ?
+          WHERE id = ?
+        `
+      ).run(
+        title,
+        workplacePath,
+        parentConversationId,
+        source,
+        model,
+        modelProfileId,
+        thinkingMode,
+        approvalMode,
+        goal,
+        planStateJson,
+        JSON.stringify(skills),
+        JSON.stringify(plugins),
+        JSON.stringify(disabledTools),
+        personaId,
+        developerPrompt,
+        memorySummaryPrompt,
+        updatedAt,
+        conversationId
+      );
+
+      normalizedMessages.forEach((message, index) => {
+        updateMessageStmt.run(
+          message.role,
+          message.content,
+          message.reasoningContent,
+          message.toolCallId,
+          message.toolName,
+          message.toolCalls.length > 0 ? JSON.stringify(message.toolCalls) : "",
+          Object.keys(message.meta).length > 0 ? JSON.stringify(message.meta) : "",
+          message.tokenUsage ? JSON.stringify(message.tokenUsage) : "",
+          message.timestamp,
+          index,
+          conversationId,
+          message.id
+        );
+
+        const row = selectMessageSeqStmt.get(conversationId, message.id);
+        upsertConversationMessageFtsRow(db, Number(row?.seq ?? 0), {
+          conversationId,
+          role: message.role,
+          content: message.content,
+          meta: message.meta
+        });
+      });
+
+      db.prepare(
+        `
+          DELETE FROM conversation_messages
+          WHERE conversation_id = ?
+            AND sort_index > ?
+        `
+      ).run(conversationId, cutoffSortIndex);
+
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+
+    this.rebuildConversationMessageSearchIndex();
+    return this.getConversation(conversationId);
   }
 
   appendMessages(conversationId, messages = [], options = {}) {

@@ -4068,6 +4068,7 @@ export function useChatSession(runtimeConfig = {}) {
         return nextMessages;
       });
       clearResolvedPendingInsertions(normalizedTargetConversationId, incomingMessages);
+      streamState.activeAssistantMessageId = null;
       return true;
     }
 

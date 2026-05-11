@@ -86,6 +86,18 @@ function splitPatchLines(patch) {
   return patch.replace(/\r\n/g, "\n").split("\n");
 }
 
+function detectLineEnding(content) {
+  return content.includes("\r\n") ? "\r\n" : "\n";
+}
+
+function applyLineEnding(text, lineEnding) {
+  if (!text) {
+    return text;
+  }
+
+  return text.replace(/\n/g, lineEnding);
+}
+
 function finalizeStructuredBlock(current, blocks) {
   if (!current) {
     return;
@@ -137,6 +149,28 @@ function assertNoUnifiedDiffHeaderInsideStructuredPatch(line) {
   }
 }
 
+function assertNoTrailingStarsOnFileHeader(line) {
+  const trimmed = line.trim();
+
+  if (
+    (trimmed.startsWith("*** Update File:") ||
+      trimmed.startsWith("*** Add File:") ||
+      trimmed.startsWith("*** Delete File:") ||
+      trimmed.startsWith("*** Move to:")) &&
+    trimmed.endsWith(" ***")
+  ) {
+    throw new Error(
+      [
+        `Invalid structured patch file header: ${line}.`,
+        "Only wrapper headers may use trailing stars: *** Begin Patch *** and *** End Patch ***.",
+        "File operation headers must not use trailing stars.",
+        "Write: *** Update File: <path>",
+        "Do not write: *** Update File: <path> ***"
+      ].join(" ")
+    );
+  }
+}
+
 function parseStructuredPatch(patch) {
   const lines = splitPatchLines(patch);
   const blocks = [];
@@ -156,6 +190,7 @@ function parseStructuredPatch(patch) {
     const line = normalizePatchHeaderLine(rawLine);
 
     assertNoUnifiedDiffHeaderInsideStructuredPatch(line);
+    assertNoTrailingStarsOnFileHeader(line);
 
     if (isPatchHeaderLine(line)) {
       if (line.startsWith("*** Update File:")) {
@@ -255,8 +290,6 @@ function buildStructuredBlockReplacement(hunkLines) {
   const newLines = [];
 
   for (const line of hunkLines) {
-    // Structured patch hunk marker. It is only a visual separator here.
-    // Unlike unified diff, this custom format does not use line numbers.
     if (line.startsWith("@@")) {
       continue;
     }
@@ -384,6 +417,7 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
   }
 
   const currentContent = await fs.readFile(resolvedFilePath, "utf8");
+  const lineEnding = detectLineEnding(currentContent);
 
   if (!Array.isArray(block.hunks) || block.hunks.length === 0) {
     if (!block.moveTo) {
@@ -398,7 +432,10 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
   let nextContent = currentContent;
 
   for (const hunk of block.hunks ?? []) {
-    const { oldText, newText } = buildStructuredBlockReplacement(hunk);
+    const replacement = buildStructuredBlockReplacement(hunk);
+
+    const oldText = applyLineEnding(replacement.oldText, lineEnding);
+    const newText = applyLineEnding(replacement.newText, lineEnding);
 
     if (oldText.length === 0 && newText.length === 0) {
       continue;
@@ -558,14 +595,14 @@ function buildGitApplyError(result) {
 export default {
   name: "Edit",
   description:
-    "Apply a structured patch block or a unified diff patch to modify files. Use checkOnly=true to validate without writing files.",
+    "Apply an OpenAI apply_patch-style structured patch or a standard unified diff patch to modify files. Use checkOnly=true to validate without writing files.",
   parameters: {
     type: "object",
     properties: {
       patch: {
         type: "string",
         description:
-          "Patch text. Choose exactly one format and never mix formats. Format 1: structured patch. It may use exact headers like '*** Begin Patch' / '*** End Patch' or tolerated trailing-star headers like '*** Begin Patch ***' / '*** End Patch ***'. Structured patches must use file headers such as '*** Update File: <path>', '*** Add File: <path>', or '*** Delete File: <path>'. Do not put unified-diff headers like '--- a/file' or '+++ b/file' inside a structured patch. Format 2: unified diff. Unified diff patches must use '--- a/file', '+++ b/file', and '@@' hunks, and must not be wrapped with '*** Begin Patch' or '*** End Patch'."
+          "Patch text. Choose exactly one format and never mix formats. Format 1: apply_patch-style structured patch. It may use wrapper headers '*** Begin Patch' / '*** End Patch' or tolerated trailing-star wrapper headers '*** Begin Patch ***' / '*** End Patch ***'. Structured patches must use file operation headers such as '*** Update File: <path>', '*** Add File: <path>', or '*** Delete File: <path>'. File operation headers must not use trailing stars: write '*** Update File: <path>', not '*** Update File: <path> ***'. Structured patch update hunks may use '@@' as a visual separator, followed by lines starting with ' ' for unchanged context, '-' for removed lines, and '+' for added lines. Do not put unified-diff headers like '--- a/file' or '+++ b/file' inside a structured patch. Format 2: standard unified diff. Unified diff patches must use '--- a/file', '+++ b/file', and '@@' hunks, and must not be wrapped with '*** Begin Patch' or '*** End Patch'."
       },
       cwd: {
         type: "string",
@@ -623,7 +660,7 @@ export default {
         throw new Error(
           [
             `Structured patch failed: ${error?.message || "unknown error"}`,
-            "Suggestion: use exactly one patch format. For structured patches, use *** Update File: <path> and do not include ---/+++ unified diff headers. For unified diff patches, do not wrap them with *** Begin Patch. Re-read the target file and keep the patch block smaller."
+            "Suggestion: use exactly one patch format. For structured patches, use *** Update File: <path> and do not include ---/+++ unified diff headers. Do not add trailing stars to file operation headers. For unified diff patches, do not wrap them with *** Begin Patch. Re-read the target file and keep the patch block smaller."
           ].join("\n")
         );
       }

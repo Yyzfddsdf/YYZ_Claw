@@ -1165,7 +1165,7 @@ export class ChatAgent {
             checkpoint: "stop_continuation"
           });
           emptyFinalResponseCount = 0;
-          continue;
+                    continue;
         }
 
         return {
@@ -1183,25 +1183,38 @@ export class ChatAgent {
       for (const toolCall of assistantRound.toolCalls) {
         const toolName = String(toolCall?.function?.name ?? "").trim();
         const toolInput = parseToolArgumentsForHook(toolCall?.function?.arguments);
-        const preToolHookResult = await this.runHookEvent(
-          "PreToolUse",
-          {
-            turn_id: turnId,
-            tool_name: toolName,
-            tool_use_id: String(toolCall?.id ?? "").trim(),
-            tool_input: toolInput
-          },
-          executionContext
-        );
-        this.appendHookMessages({
-          messages: preToolHookResult.messages,
-          conversation,
-          executionContext,
-          onEvent,
-          checkpoint: "pre_tool_use"
-        });
 
-        if (preToolHookResult.permissionDecision === "deny") {
+        let preToolDecision = null;
+        let preToolDenyReason = "";
+        try {
+          const preToolHookResult = await this.runHookEvent(
+            "PreToolUse",
+            {
+              turn_id: turnId,
+              tool_name: toolName,
+              tool_use_id: String(toolCall?.id ?? "").trim(),
+              tool_input: toolInput
+            },
+            executionContext
+          );
+          this.appendHookMessages({
+            messages: preToolHookResult.messages,
+            conversation,
+            executionContext,
+            onEvent,
+            checkpoint: "pre_tool_use"
+          });
+          preToolDecision = preToolHookResult.permissionDecision;
+          preToolDenyReason = preToolHookResult.permissionDecisionReason || "";
+        } catch (hookErr) {
+          if (isAbortError(hookErr)) {
+            throw hookErr;
+          }
+          // Hook failure → treat as error but don't lose the tool pair
+          preToolDecision = null;
+        }
+
+        if (preToolDecision === "deny") {
           onEvent?.({
             type: "tool_call",
             toolName,
@@ -1210,7 +1223,7 @@ export class ChatAgent {
           });
           const deniedToolResult = this.createDeniedToolResult(
             toolCall,
-            preToolHookResult.permissionDecisionReason || `工具 ${toolName} 被拒绝执行`
+            preToolDenyReason || `工具 ${toolName} 被拒绝执行`
           );
           assembler.appendToolResult(
             deniedToolResult.name,
@@ -1234,26 +1247,37 @@ export class ChatAgent {
         }
 
         if (this.requiresApproval(toolCall, approvalMode, resolvedApprovalRules)) {
-          const permissionHookResult = await this.runHookEvent(
-            "PermissionRequest",
-            {
-              turn_id: turnId,
-              tool_name: toolName,
-              tool_use_id: String(toolCall?.id ?? "").trim(),
-              tool_input: toolInput,
-              tool_input_description: toolName
-            },
-            executionContext
-          );
-          this.appendHookMessages({
-            messages: permissionHookResult.messages,
-            conversation,
-            executionContext,
-            onEvent,
-            checkpoint: "permission_request"
-          });
+          let permissionDecision = null;
+          let permissionDenyReason = "";
+          try {
+            const permissionHookResult = await this.runHookEvent(
+              "PermissionRequest",
+              {
+                turn_id: turnId,
+                tool_name: toolName,
+                tool_use_id: String(toolCall?.id ?? "").trim(),
+                tool_input: toolInput,
+                tool_input_description: toolName
+              },
+              executionContext
+            );
+            this.appendHookMessages({
+              messages: permissionHookResult.messages,
+              conversation,
+              executionContext,
+              onEvent,
+              checkpoint: "permission_request"
+            });
+            permissionDecision = permissionHookResult.permissionDecision;
+            permissionDenyReason = permissionHookResult.permissionDecisionReason || "";
+          } catch (hookErr) {
+            if (isAbortError(hookErr)) {
+              throw hookErr;
+            }
+            permissionDecision = null;
+          }
 
-          if (permissionHookResult.permissionDecision === "deny") {
+          if (permissionDecision === "deny") {
             onEvent?.({
               type: "tool_call",
               toolName,
@@ -1262,7 +1286,7 @@ export class ChatAgent {
             });
             const deniedToolResult = this.createDeniedToolResult(
               toolCall,
-              permissionHookResult.permissionDecisionReason || `工具 ${toolName} 未通过审批`
+              permissionDenyReason || `工具 ${toolName} 未通过审批`
             );
             assembler.appendToolResult(
               deniedToolResult.name,
@@ -1285,7 +1309,7 @@ export class ChatAgent {
             continue;
           }
 
-          if (permissionHookResult.permissionDecision !== "allow") {
+          if (permissionDecision !== "allow") {
             pendingApprovalToolCalls.push(toolCall);
             continue;
           }
@@ -1352,40 +1376,54 @@ export class ChatAgent {
         });
 
         let toolResult = await this.executeToolCall(toolCall, executionContext);
-        const postToolHookResult = await this.runHookEvent(
-          "PostToolUse",
-          {
-            turn_id: turnId,
-            tool_name: toolResult.name,
-            tool_use_id: String(toolCall?.id ?? "").trim(),
-            tool_input: parseToolArgumentsForHook(toolCall?.function?.arguments),
-            tool_response: toolResult.content
-          },
-          executionContext
-        );
-        this.appendHookMessages({
-          messages: postToolHookResult.messages,
-          conversation,
-          executionContext,
-          onEvent,
-          checkpoint: "post_tool_use"
-        });
-        if (postToolHookResult.postToolDecision === "block" && postToolHookResult.postToolReason) {
-          toolResult = {
-            ...toolResult,
-            modelContent: postToolHookResult.postToolReason
-          };
-        }
-        this.recordRuntimeToolEvent(executionContext, {
-          phase: "result",
-          toolCallId: toolCall.id,
-          toolName: toolResult.name,
-          isError: toolResult.isError,
-          content: toolResult.content,
-          metadata: {
-            hooks: Array.isArray(toolResult.hooks) ? toolResult.hooks.length : 0
+
+        // Guarantee atomic pairing: once we have a toolResult, the tool_result
+        // event and conversation.push MUST execute regardless of hook/record errors.
+        let deferredError = null;
+        try {
+          const postToolHookResult = await this.runHookEvent(
+            "PostToolUse",
+            {
+              turn_id: turnId,
+              tool_name: toolResult.name,
+              tool_use_id: String(toolCall?.id ?? "").trim(),
+              tool_input: parseToolArgumentsForHook(toolCall?.function?.arguments),
+              tool_response: toolResult.content
+            },
+            executionContext
+          );
+          this.appendHookMessages({
+            messages: postToolHookResult.messages,
+            conversation,
+            executionContext,
+            onEvent,
+            checkpoint: "post_tool_use"
+          });
+          if (postToolHookResult.postToolDecision === "block" && postToolHookResult.postToolReason) {
+            toolResult = {
+              ...toolResult,
+              modelContent: postToolHookResult.postToolReason
+            };
           }
-        });
+        } catch (hookError) {
+          if (isAbortError(hookError)) {
+            deferredError = hookError;
+          }
+        }
+
+        try {
+          this.recordRuntimeToolEvent(executionContext, {
+            phase: "result",
+            toolCallId: toolCall.id,
+            toolName: toolResult.name,
+            isError: toolResult.isError,
+            content: toolResult.content,
+            metadata: {
+              hooks: Array.isArray(toolResult.hooks) ? toolResult.hooks.length : 0
+            }
+          });
+        } catch {}
+
         assembler.appendToolResult(
           toolResult.name,
           toolResult.modelContent ?? toolResult.content
@@ -1415,6 +1453,10 @@ export class ChatAgent {
           onEvent,
           assembler
         });
+
+        if (deferredError) {
+          throw deferredError;
+        }
       }
 
       const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({

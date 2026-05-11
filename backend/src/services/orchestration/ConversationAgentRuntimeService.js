@@ -181,7 +181,12 @@ export class ConversationAgentRuntimeService {
       };
     }
 
-    const definition = this.subagentDefinitionRegistry?.get?.(agentRecord?.agentType ?? "") ?? null;
+    const definition =
+      typeof this.subagentDefinitionRegistry?.resolve === "function"
+        ? await this.subagentDefinitionRegistry.resolve(agentRecord?.agentType ?? "", {
+            selectedPluginNames: activePluginNames
+          })
+        : this.subagentDefinitionRegistry?.get?.(agentRecord?.agentType ?? "") ?? null;
     if (!definition) {
       throw new Error(`subagent definition not found for ${agentRecord?.agentType ?? "unknown"}`);
     }

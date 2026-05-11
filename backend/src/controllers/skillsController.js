@@ -50,7 +50,6 @@ export function createSkillsController({ skillCatalog, skillValidator, pluginCat
       const pluginSkills =
         pluginCatalog && typeof pluginCatalog.collectPluginSkills === "function"
           ? (await pluginCatalog.collectPluginSkills({
-              enabledOnly: true,
               selectedPluginNames
             })).map((skill) => ({
               scope: skill.scope,

@@ -132,20 +132,42 @@ export class SubagentDefinitionRegistry {
       this.definitionMap.set(definition.agentType, definition);
     }
 
-    const pluginAgents =
-      this.pluginCatalog && typeof this.pluginCatalog.collectPluginAgents === "function"
-        ? await this.pluginCatalog.collectPluginAgents({ enabledOnly: true })
-        : [];
-    for (const pluginAgent of pluginAgents) {
-      const definition = normalizePluginAgentDefinition(pluginAgent);
-      if (!definition) {
-        continue;
-      }
+    return this.list();
+  }
 
-      this.definitionMap.set(definition.agentType, definition);
+  async listPluginDefinitions(options = {}) {
+    const selectedPluginNames = Array.isArray(options.selectedPluginNames)
+      ? options.selectedPluginNames.map((item) => normalizeText(item)).filter(Boolean)
+      : [];
+    if (
+      selectedPluginNames.length === 0 ||
+      !this.pluginCatalog ||
+      typeof this.pluginCatalog.collectPluginAgents !== "function"
+    ) {
+      return [];
     }
 
-    return this.list();
+    const pluginAgents = await this.pluginCatalog.collectPluginAgents({
+      selectedPluginNames
+    });
+    return pluginAgents
+      .map((pluginAgent) => normalizePluginAgentDefinition(pluginAgent))
+      .filter(Boolean);
+  }
+
+  async resolve(agentType, options = {}) {
+    const normalizedAgentType = normalizeAgentType(agentType);
+    if (!normalizedAgentType) {
+      return null;
+    }
+
+    const localDefinition = this.definitionMap.get(normalizedAgentType);
+    if (localDefinition) {
+      return localDefinition;
+    }
+
+    const pluginDefinitions = await this.listPluginDefinitions(options);
+    return pluginDefinitions.find((definition) => definition.agentType === normalizedAgentType) ?? null;
   }
 
   get(agentType) {
@@ -158,6 +180,23 @@ export class SubagentDefinitionRegistry {
 
   list() {
     return Array.from(this.definitionMap.values()).map((item) => ({
+      agentType: item.agentType,
+      displayName: item.displayName,
+      description: item.description,
+      metadata: { ...item.metadata }
+    }));
+  }
+
+  async listAvailable(options = {}) {
+    const definitionsByType = new Map();
+    for (const definition of this.definitionMap.values()) {
+      definitionsByType.set(definition.agentType, definition);
+    }
+    for (const definition of await this.listPluginDefinitions(options)) {
+      definitionsByType.set(definition.agentType, definition);
+    }
+
+    return Array.from(definitionsByType.values()).map((item) => ({
       agentType: item.agentType,
       displayName: item.displayName,
       description: item.description,

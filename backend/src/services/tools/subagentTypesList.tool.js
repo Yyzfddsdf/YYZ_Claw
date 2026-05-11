@@ -11,7 +11,10 @@ export default {
   },
   async execute(_args = {}, executionContext = {}) {
     const supervisor = getOrchestratorSupervisor(executionContext);
-    const subagentTypes = supervisor.listAvailableSubagentTypes();
+    const subagentTypes = await supervisor.listAvailableSubagentTypes({
+      conversationId: executionContext?.conversationId,
+      selectedPluginNames: executionContext?.activePluginNames
+    });
 
     return {
       subagentTypes,

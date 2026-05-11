@@ -9,12 +9,3 @@ export function refreshPlugins() {
     method: "POST"
   });
 }
-
-export function setPluginEnabled(pluginName, enabled) {
-  return requestJson(`/plugins/${encodeURIComponent(pluginName)}/enabled`, {
-    method: "POST",
-    body: {
-      enabled: Boolean(enabled)
-    }
-  });
-}

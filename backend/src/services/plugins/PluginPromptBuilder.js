@@ -1,6 +1,7 @@
 const MAX_RULE_CHARS_PER_PLUGIN = 1200;
 const MAX_PLUGIN_CONTEXT_CHARS = 8000;
 const MAX_PLUGIN_SKILLS_PER_PLUGIN = 20;
+const MAX_PLUGIN_SUBAGENTS_PER_PLUGIN = 20;
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -50,11 +51,28 @@ function buildPluginSkillLines(skills) {
     });
 }
 
+function buildPluginSubagentLines(agents) {
+  return (Array.isArray(agents) ? agents : [])
+    .slice(0, MAX_PLUGIN_SUBAGENTS_PER_PLUGIN)
+    .map((agent) => {
+      const agentType = normalizeText(agent.agentType);
+      const name = normalizeText(agent.displayName || agent.name);
+      const description = normalizeText(agent.description);
+      if (!agentType && !name) {
+        return "";
+      }
+
+      return `- ${agentType || name}${name && name !== agentType ? ` (name: ${name})` : ""}${description ? ` - ${description}` : ""}`;
+    })
+    .filter(Boolean);
+}
+
 function buildPluginBlock(plugin) {
   const description = buildPluginDescription(plugin);
   const rules = buildPluginRules(plugin);
   const skillLines = buildPluginSkillLines(plugin.skills);
-  if (!description && !rules && skillLines.length === 0) {
+  const subagentLines = buildPluginSubagentLines(plugin.agents);
+  if (!description && !rules && skillLines.length === 0 && subagentLines.length === 0) {
     return "";
   }
 
@@ -75,6 +93,13 @@ function buildPluginBlock(plugin) {
     lines.push("Use the full plugin skillKey when calling skill_view.");
     lines.push(...skillLines);
     lines.push("</skills>");
+  }
+  if (subagentLines.length > 0) {
+    lines.push("<subagents>");
+    lines.push("Plugin subagents are available only when this plugin is enabled in the current conversation.");
+    lines.push("Use subagent_types_list to confirm available agentType values, then create one with subagent_create.");
+    lines.push(...subagentLines);
+    lines.push("</subagents>");
   }
   lines.push("</plugin>");
   return lines.join("\n");
@@ -101,7 +126,10 @@ export class PluginPromptBuilder {
     const enabledPlugins = (await this.pluginCatalog.read()).plugins
       .filter((plugin) => selectedPluginNameSet.has(normalizeText(plugin.name).toLowerCase()));
     const pluginSkills = typeof this.pluginCatalog.collectPluginSkills === "function"
-      ? await this.pluginCatalog.collectPluginSkills({ enabledOnly: true, selectedPluginNames })
+      ? await this.pluginCatalog.collectPluginSkills({ selectedPluginNames })
+      : [];
+    const pluginAgents = typeof this.pluginCatalog.collectPluginAgents === "function"
+      ? await this.pluginCatalog.collectPluginAgents({ selectedPluginNames })
       : [];
     const skillsByPluginName = new Map();
     pluginSkills.forEach((skill) => {
@@ -110,11 +138,19 @@ export class PluginPromptBuilder {
       existing.push(skill);
       skillsByPluginName.set(pluginName, existing);
     });
+    const agentsByPluginName = new Map();
+    pluginAgents.forEach((agent) => {
+      const pluginName = normalizeText(agent.pluginName);
+      const existing = agentsByPluginName.get(pluginName) ?? [];
+      existing.push(agent);
+      agentsByPluginName.set(pluginName, existing);
+    });
 
     const pluginBlocks = enabledPlugins
       .map((plugin) => buildPluginBlock({
         ...plugin,
-        skills: skillsByPluginName.get(plugin.name) ?? []
+        skills: skillsByPluginName.get(plugin.name) ?? [],
+        agents: agentsByPluginName.get(plugin.name) ?? []
       }))
       .filter(Boolean);
     if (pluginBlocks.length === 0) {
@@ -127,6 +163,7 @@ export class PluginPromptBuilder {
         "只使用当前会话已启用的 plugins；未启用的 plugin 不可默认可见。",
         "plugin skills 不在普通 skills 列表中显示；它们随插件整体启用，不能单独开关。",
         "需要查看某个已启用 plugin skill 的完整内容时，直接调用 skill_view，并使用完整 plugin skillKey。",
+        "如果已启用 plugin 提供 subagents，它们只在当前会话内可用；先调用 subagent_types_list 查看 agentType，再用 subagent_create 创建。",
         "<plugins>",
         ...pluginBlocks,
         "</plugins>",

@@ -6,10 +6,8 @@ function createValidationError(message, statusCode = 400) {
 
 export function createPluginsController({
   pluginCatalog,
-  pluginSettingsStore,
   mcpManager,
-  subagentDefinitionRegistry,
-  agentRuntimeFactory
+  subagentDefinitionRegistry
 }) {
   function ensurePluginCatalog() {
     if (!pluginCatalog || typeof pluginCatalog.listPlugins !== "function") {
@@ -24,15 +22,15 @@ export function createPluginsController({
       const plugins = await pluginCatalog.listPlugins();
       const pluginSkills =
         typeof pluginCatalog.collectPluginSkills === "function"
-          ? await pluginCatalog.collectPluginSkills({ enabledOnly: false })
+          ? await pluginCatalog.collectPluginSkills()
           : [];
       const pluginCommands =
         typeof pluginCatalog.collectPluginCommands === "function"
-          ? await pluginCatalog.collectPluginCommands({ enabledOnly: false })
+          ? await pluginCatalog.collectPluginCommands()
           : [];
       const pluginAgents =
         typeof pluginCatalog.collectPluginAgents === "function"
-          ? await pluginCatalog.collectPluginAgents({ enabledOnly: false })
+          ? await pluginCatalog.collectPluginAgents()
           : [];
       const skillCountByPlugin = new Map();
       const skillsByPlugin = new Map();
@@ -139,39 +137,6 @@ export function createPluginsController({
         refreshed: true,
         pluginCount: plugins.length,
         plugins
-      });
-    },
-
-    setPluginEnabled: async (req, res) => {
-      ensurePluginCatalog();
-      const pluginName = String(req.params.pluginName ?? "").trim();
-      if (!pluginName) {
-        throw createValidationError("pluginName is required");
-      }
-
-      if (!pluginSettingsStore || typeof pluginSettingsStore.setPluginEnabled !== "function") {
-        throw createValidationError("plugin settings store is not available", 500);
-      }
-
-      await pluginSettingsStore.setPluginEnabled(pluginName, req.body?.enabled !== false);
-      await pluginCatalog.refresh();
-      if (mcpManager && typeof mcpManager.refresh === "function") {
-        await mcpManager.refresh();
-      }
-      if (subagentDefinitionRegistry && typeof subagentDefinitionRegistry.load === "function") {
-        await subagentDefinitionRegistry.load();
-      }
-      if (agentRuntimeFactory && typeof agentRuntimeFactory.clear === "function") {
-        agentRuntimeFactory.clear();
-      }
-      const plugins = await pluginCatalog.listPlugins();
-      const plugin = plugins.find((item) => item.name === pluginName);
-      if (!plugin) {
-        throw createValidationError("plugin not found", 404);
-      }
-
-      res.json({
-        plugin
       });
     },
 

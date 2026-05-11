@@ -17,6 +17,16 @@ function normalizeLineList(value) {
     .filter(Boolean);
 }
 
+function normalizePluginNames(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => normalizeText(item))
+    .filter(Boolean);
+}
+
 export class OrchestratorSupervisorService {
   constructor(options = {}) {
     this.historyStore = options.historyStore ?? null;
@@ -67,19 +77,37 @@ export class OrchestratorSupervisorService {
     };
   }
 
-  createSubagent(options = {}) {
+  resolveRootConversation(conversationId) {
+    const { sessionId, primaryAgentId, conversation } = this.ensureSession(conversationId);
+    return {
+      sessionId,
+      primaryAgentId,
+      conversation,
+      rootConversation: this.historyStore.getConversation(sessionId) ?? conversation
+    };
+  }
+
+  async resolveSubagentDefinition(agentType, rootConversation) {
+    const selectedPluginNames = normalizePluginNames(rootConversation?.plugins);
+    if (typeof this.subagentDefinitionRegistry?.resolve === "function") {
+      return this.subagentDefinitionRegistry.resolve(agentType, { selectedPluginNames });
+    }
+    return this.subagentDefinitionRegistry?.get?.(agentType) ?? null;
+  }
+
+  async createSubagent(options = {}) {
     const conversationId = normalizeText(options.conversationId);
     const agentType = normalizeText(options.agentType).toLowerCase();
     if (!conversationId || !agentType) {
       throw new Error("conversationId and agentType are required");
     }
 
-    const definition = this.subagentDefinitionRegistry.get(agentType);
+    const { sessionId, conversation, rootConversation } = this.resolveRootConversation(conversationId);
+    const definition = await this.resolveSubagentDefinition(agentType, rootConversation);
     if (!definition) {
       throw new Error(`unknown subagent type: ${agentType}`);
     }
 
-    const { sessionId, conversation } = this.ensureSession(conversationId);
     const activeSubagents = this.orchestratorStore.listAgents(sessionId, { includePrimary: false });
     if (activeSubagents.length >= 5) {
       throw new Error("subagent limit reached for this conversation");
@@ -149,8 +177,20 @@ export class OrchestratorSupervisorService {
     };
   }
 
-  listAvailableSubagentTypes() {
-    return (this.subagentDefinitionRegistry?.list?.() ?? []).map((definition) => ({
+  async listAvailableSubagentTypes(options = {}) {
+    const conversationId = normalizeText(options.conversationId);
+    let selectedPluginNames = normalizePluginNames(options.selectedPluginNames);
+    if (selectedPluginNames.length === 0 && conversationId) {
+      const { rootConversation } = this.resolveRootConversation(conversationId);
+      selectedPluginNames = normalizePluginNames(rootConversation?.plugins);
+    }
+
+    const definitions =
+      typeof this.subagentDefinitionRegistry?.listAvailable === "function"
+        ? await this.subagentDefinitionRegistry.listAvailable({ selectedPluginNames })
+        : this.subagentDefinitionRegistry?.list?.() ?? [];
+
+    return definitions.map((definition) => ({
       agentType: normalizeText(definition?.agentType).toLowerCase(),
       displayName: normalizeText(definition?.displayName),
       description: normalizeText(definition?.description),

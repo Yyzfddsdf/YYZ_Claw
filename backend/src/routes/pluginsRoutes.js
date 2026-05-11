@@ -10,7 +10,6 @@ export function createPluginsRoutes(services) {
   router.get("/plugins", asyncHandler(controller.listPlugins));
   router.get("/plugins/:pluginName/assets", asyncHandler(controller.getPluginAsset));
   router.post("/plugins/refresh", asyncHandler(controller.refreshPlugins));
-  router.post("/plugins/:pluginName/enabled", asyncHandler(controller.setPluginEnabled));
 
   return router;
 }

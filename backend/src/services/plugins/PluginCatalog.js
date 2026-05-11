@@ -417,7 +417,6 @@ function normalizeAgentRecord(plugin, agentFilePath, parsed, stats) {
 export class PluginCatalog {
   constructor(options = {}) {
     this.rootDir = path.resolve(String(options.rootDir ?? ""));
-    this.settingsStore = options.settingsStore ?? null;
     this.cache = null;
   }
 
@@ -425,16 +424,7 @@ export class PluginCatalog {
     await fs.mkdir(this.rootDir, { recursive: true });
   }
 
-  async readSettings() {
-    if (!this.settingsStore || typeof this.settingsStore.read !== "function") {
-      return {
-        plugins: {}
-      };
-    }
-    return this.settingsStore.read();
-  }
-
-  async discoverPlugin(pluginRootDir, settings) {
+  async discoverPlugin(pluginRootDir) {
     const fallbackName = path.basename(pluginRootDir);
     const foundManifest = await findManifest(pluginRootDir);
     if (!foundManifest) {
@@ -443,8 +433,6 @@ export class PluginCatalog {
 
     const rawManifest = JSON.parse(await fs.readFile(foundManifest.manifestPath, "utf8"));
     const manifest = normalizeManifest(rawManifest, fallbackName);
-    const pluginSettings = settings.plugins[manifest.name] ?? settings.plugins[manifest.normalizedName] ?? {};
-    const enabled = pluginSettings.enabled !== false;
     const skillsRootDir = resolvePluginPath(pluginRootDir, manifest.skills, "./skills");
     const commandsRootDir = resolvePluginPath(pluginRootDir, manifest.commands, "./commands");
     const agentsRootDir = resolvePluginPath(pluginRootDir, "./agents", "./agents");
@@ -458,10 +446,8 @@ export class PluginCatalog {
       manifestPath: foundManifest.manifestPath,
       manifestKind: foundManifest.manifestKind,
       relativeManifestPath: safeRelativePath(pluginRootDir, foundManifest.manifestPath),
-      enabled,
-      settings: {
-        enabled
-      },
+      enabled: true,
+      settings: {},
       skillsRootDir,
       commandsRootDir,
       agentsRootDir,
@@ -486,7 +472,6 @@ export class PluginCatalog {
     }
 
     await this.ensureDirectory();
-    const settings = await this.readSettings();
     const entries = await fs.readdir(this.rootDir, { withFileTypes: true }).catch(() => []);
     const plugins = [];
     const errors = [];
@@ -494,7 +479,7 @@ export class PluginCatalog {
     for (const entry of entries.filter((item) => item.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
       const pluginRootDir = path.join(this.rootDir, entry.name);
       try {
-        plugins.push(await this.discoverPlugin(pluginRootDir, settings));
+        plugins.push(await this.discoverPlugin(pluginRootDir));
       } catch (error) {
         errors.push({
           name: entry.name,
@@ -527,7 +512,6 @@ export class PluginCatalog {
       version: plugin.version,
       description: plugin.description,
       author: plugin.author,
-      enabled: plugin.enabled,
       manifestKind: plugin.manifestKind,
       interface: plugin.interface,
       components: {
@@ -545,11 +529,6 @@ export class PluginCatalog {
     }));
   }
 
-  async listEnabledPlugins() {
-    const catalog = await this.read();
-    return catalog.plugins.filter((plugin) => plugin.enabled);
-  }
-
   async findPlugin(identifier) {
     const normalizedIdentifier = normalizeName(identifier);
     if (!normalizedIdentifier) {
@@ -565,12 +544,11 @@ export class PluginCatalog {
   }
 
   async collectPluginSkills(options = {}) {
-    const enabledOnly = options.enabledOnly !== false;
     const catalog = await this.read();
     const selectedPluginNames = Array.isArray(options.selectedPluginNames)
       ? new Set(options.selectedPluginNames.map((item) => normalizeName(item)).filter(Boolean))
       : null;
-    const plugins = (enabledOnly ? catalog.plugins : catalog.plugins)
+    const plugins = catalog.plugins
       .filter((plugin) => !selectedPluginNames || selectedPluginNames.has(plugin.normalizedName));
     const skills = [];
 
@@ -596,13 +574,11 @@ export class PluginCatalog {
   }
 
   async collectPluginCommands(options = {}) {
-    const enabledOnly = options.enabledOnly !== false;
     const catalog = await this.read();
     const selectedPluginNames = Array.isArray(options.selectedPluginNames)
       ? new Set(options.selectedPluginNames.map((item) => normalizeName(item)).filter(Boolean))
       : null;
     const plugins = catalog.plugins.filter((plugin) =>
-      (!enabledOnly || plugin.enabled) &&
       (!selectedPluginNames || selectedPluginNames.has(plugin.normalizedName))
     );
     const commands = [];
@@ -643,13 +619,11 @@ export class PluginCatalog {
   }
 
   async collectPluginAgents(options = {}) {
-    const enabledOnly = options.enabledOnly !== false;
     const catalog = await this.read();
     const selectedPluginNames = Array.isArray(options.selectedPluginNames)
       ? new Set(options.selectedPluginNames.map((item) => normalizeName(item)).filter(Boolean))
       : null;
     const plugins = catalog.plugins.filter((plugin) =>
-      (!enabledOnly || plugin.enabled) &&
       (!selectedPluginNames || selectedPluginNames.has(plugin.normalizedName))
     );
     const agents = [];
@@ -699,7 +673,6 @@ export class PluginCatalog {
     }
 
     const commands = await this.collectPluginCommands({
-      enabledOnly: true,
       selectedPluginNames: options.selectedPluginNames
     });
     if (commands.length === 0) {

@@ -11,7 +11,6 @@ import {
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
   MCP_CONFIG_FILE,
-  PLUGIN_SETTINGS_FILE,
   PLUGINS_DIR,
   REMOTE_CONTROL_CONFIG_FILE,
   MEMORY_SUMMARY_FILE,
@@ -43,7 +42,6 @@ import { HookSettingsStore } from "../services/config/HookSettingsStore.js";
 import { PersonaStore } from "../services/personas/PersonaStore.js";
 import { PluginCatalog } from "../services/plugins/PluginCatalog.js";
 import { PluginPromptBuilder } from "../services/plugins/PluginPromptBuilder.js";
-import { PluginSettingsStore } from "../services/plugins/PluginSettingsStore.js";
 import { McpConfigStore } from "../services/config/McpConfigStore.js";
 import { ConversationCompressionService } from "../services/context/ConversationCompressionService.js";
 import { AttachmentParserService } from "../services/files/AttachmentParserService.js";
@@ -115,11 +113,8 @@ export async function createServices() {
   await feishuConfigStore.ensureFile();
   const remoteControlConfigStore = new RemoteControlConfigStore(REMOTE_CONTROL_CONFIG_FILE);
   await remoteControlConfigStore.ensureFile();
-  const pluginSettingsStore = new PluginSettingsStore(PLUGIN_SETTINGS_FILE);
-  await pluginSettingsStore.ensureFile();
   const pluginCatalog = new PluginCatalog({
-    rootDir: PLUGINS_DIR,
-    settingsStore: pluginSettingsStore
+    rootDir: PLUGINS_DIR
   });
   await pluginCatalog.ensureDirectory();
   await pluginCatalog.read();
@@ -440,7 +435,6 @@ export async function createServices() {
     mcpConfigStore,
     hookSettingsStore,
     pluginCatalog,
-    pluginSettingsStore,
     approvalRulesStore,
     agentsPromptStore,
     memorySummaryStore,

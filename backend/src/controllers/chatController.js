@@ -8,7 +8,9 @@ import {
   chatRequestSchema,
   conversationApprovalModeSchema,
   conversationGoalSchema,
+  conversationEditRerunSchema,
   conversationCompressionSchema,
+  conversationRerunSchema,
   slashCommandSchema
 } from "../schemas/chatSchema.js";
 import { configSchema } from "../schemas/configSchema.js";
@@ -526,6 +528,59 @@ function findLastUserMessage(messages) {
   }
 
   return null;
+}
+
+function getMessageMetaKind(message) {
+  return String(message?.meta?.kind ?? "").trim();
+}
+
+function resolveRerunStartIndex(messages = [], messageId = "") {
+  const normalizedMessageId = String(messageId ?? "").trim();
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  const targetIndex = sourceMessages.findIndex(
+    (message) => String(message?.id ?? "").trim() === normalizedMessageId
+  );
+  if (targetIndex < 0) {
+    return {
+      targetIndex: -1,
+      rerunStartIndex: -1,
+      targetMessage: null
+    };
+  }
+
+  const targetMessage = sourceMessages[targetIndex];
+  const targetRole = String(targetMessage?.role ?? "").trim();
+  if (targetRole === "user") {
+    return {
+      targetIndex,
+      rerunStartIndex: targetIndex,
+      targetMessage
+    };
+  }
+
+  if (targetRole === "assistant") {
+    for (let index = targetIndex - 1; index >= 0; index -= 1) {
+      const candidate = sourceMessages[index];
+      const candidateKind = getMessageMetaKind(candidate);
+      if (
+        String(candidate?.role ?? "").trim() === "user" &&
+        candidateKind !== "runtime_hook_injected" &&
+        candidateKind !== "tool_image_input"
+      ) {
+        return {
+          targetIndex,
+          rerunStartIndex: index,
+          targetMessage
+        };
+      }
+    }
+  }
+
+  return {
+    targetIndex,
+    rerunStartIndex: -1,
+    targetMessage
+  };
 }
 
 function resolveWorkplacePath(inputPath) {
@@ -2199,6 +2254,10 @@ export function createChatController({
         throw createValidationError("conversationId is required");
       }
 
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "replaceMessages")) {
+        throw createValidationError("replaceMessages is not allowed on this endpoint");
+      }
+
       const validation = conversationUpsertSchema.safeParse(req.body);
 
       if (!validation.success) {
@@ -2206,19 +2265,20 @@ export function createChatController({
       }
 
       const existing = historyStore.getConversation(conversationId);
+      if (existing) {
+        const conflictError = createValidationError(
+          "PUT /chat/histories/:conversationId only creates new conversations; use dedicated update/rerun endpoints for existing conversations"
+        );
+        conflictError.statusCode = 409;
+        throw conflictError;
+      }
 
       const requestedWorkplacePath = String(validation.data.workplacePath ?? "").trim();
       const workplacePath = requestedWorkplacePath
         ? await ensureDirectoryPath(requestedWorkplacePath)
         : undefined;
       const personaId =
-        String(existing?.source ?? "").trim().toLowerCase() === "subagent"
-          ? ""
-          : await resolvePersistablePersonaId(
-              personaStore,
-              validation.data.personaId,
-              existing?.personaId
-            );
+        await resolvePersistablePersonaId(personaStore, validation.data.personaId);
       const configValidation = configSchema.safeParse(await configStore.read());
       if (!configValidation.success) {
         throw createValidationError(
@@ -2227,21 +2287,11 @@ export function createChatController({
       }
       const selectedProfile = resolveConversationModelProfile(
         configValidation.data,
-        existing,
+        null,
         validation.data.modelProfileId
       );
 
-      if (
-        existing?.workplaceLocked &&
-        workplacePath &&
-        String(existing.workplacePath) !== workplacePath
-      ) {
-        const lockedError = createValidationError("workplace is locked for this conversation");
-        lockedError.statusCode = 409;
-        throw lockedError;
-      }
-
-      if (!existing && validation.data.messages.length === 0) {
+      if (validation.data.messages.length === 0) {
         const reusableEmptyConversation = historyStore.findLatestEmptyConversation();
         if (reusableEmptyConversation) {
           return res.json({
@@ -2263,10 +2313,6 @@ export function createChatController({
       );
       const firstSentence = extractFirstSentence(firstUserMessage?.content);
 
-      if (isAutoTitleCandidate(title) && !isAutoTitleCandidate(existing?.title)) {
-        title = String(existing.title).trim();
-      }
-
       if (isAutoTitleCandidate(title)) {
         title = DEFAULT_HISTORY_TITLE;
       }
@@ -2275,28 +2321,20 @@ export function createChatController({
         conversationId,
         title,
         workplacePath,
-        parentConversationId: existing?.parentConversationId,
-        source: existing?.source,
         model: selectedProfile.model,
         modelProfileId: selectedProfile.id,
-        thinkingMode: normalizeThinkingMode(
-          validation.data.thinkingMode ?? existing?.thinkingMode
-        ),
+        thinkingMode: normalizeThinkingMode(validation.data.thinkingMode),
         approvalMode: validation.data.approvalMode,
-        goal: validation.data.goal ?? existing?.goal,
-        planState: Object.prototype.hasOwnProperty.call(validation.data, "planState")
-          ? validation.data.planState
-          : existing?.planState,
+        goal: validation.data.goal,
+        planState: validation.data.planState,
         skills: validation.data.skills,
         plugins: validation.data.plugins,
         disabledTools: validation.data.disabledTools,
         personaId,
-        developerPrompt: existing?.developerPrompt,
+        developerPrompt: validation.data.developerPrompt,
         messages: validation.data.messages
       };
-      let history = validation.data.replaceMessages
-        ? historyStore.replaceConversationMessagePrefix(conversationPayload)
-        : historyStore.mergeConversation(conversationPayload);
+      let history = historyStore.mergeConversation(conversationPayload);
 
       if (firstUserMessage && !history.workplaceLocked) {
         history = historyStore.lockConversationWorkplace(conversationId) ?? history;
@@ -2307,9 +2345,125 @@ export function createChatController({
           conversationId,
           firstSentence,
           configStore,
-          historyStore
+          historyStore,
+          onTitleUpdated: (updatedHistory) => {
+            conversationEventBroadcaster?.publishAgentEvent?.(conversationId, {
+              type: "conversation_title_updated",
+              history: enrichHistoryDetail(updatedHistory, orchestratorStore, historyStore)
+            });
+          }
         });
       }
+
+      res.json({ history: enrichHistoryDetail(history, orchestratorStore, historyStore) });
+    },
+
+    rerunHistoryById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationRerunSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const existing = historyStore.getConversation(conversationId);
+      if (!existing) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const { rerunStartIndex } = resolveRerunStartIndex(
+        existing.messages,
+        validation.data.messageId
+      );
+      if (rerunStartIndex < 0) {
+        throw createValidationError("no rerunnable user message found");
+      }
+
+      const truncatedMessages = existing.messages.slice(0, rerunStartIndex + 1);
+      const history = historyStore.replaceConversationMessagePrefix({
+        conversationId,
+        title: existing.title,
+        workplacePath: existing.workplacePath,
+        parentConversationId: existing.parentConversationId,
+        source: existing.source,
+        model: existing.model,
+        modelProfileId: existing.modelProfileId,
+        thinkingMode: existing.thinkingMode,
+        approvalMode: existing.approvalMode,
+        goal: existing.goal,
+        planState: existing.planState,
+        skills: existing.skills,
+        plugins: existing.plugins,
+        disabledTools: existing.disabledTools,
+        personaId: existing.personaId,
+        developerPrompt: existing.developerPrompt,
+        memorySummaryPrompt: existing.memorySummaryPrompt,
+        messages: truncatedMessages
+      });
+
+      res.json({ history: enrichHistoryDetail(history, orchestratorStore, historyStore) });
+    },
+
+    editRerunHistoryById: async (req, res) => {
+      const conversationId = String(req.params.conversationId || "").trim();
+      if (!conversationId) {
+        throw createValidationError("conversationId is required");
+      }
+
+      const validation = conversationEditRerunSchema.safeParse(req.body);
+      if (!validation.success) {
+        throw createValidationError(formatZodError(validation.error));
+      }
+
+      const existing = historyStore.getConversation(conversationId);
+      if (!existing) {
+        const notFoundError = createValidationError("history not found");
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      const messages = Array.isArray(existing.messages) ? existing.messages : [];
+      const targetIndex = messages.findIndex(
+        (message) => String(message?.id ?? "").trim() === validation.data.messageId
+      );
+      const targetMessage = targetIndex >= 0 ? messages[targetIndex] : null;
+      if (!targetMessage || String(targetMessage.role ?? "").trim() !== "user") {
+        throw createValidationError("only user messages can be edited for rerun");
+      }
+
+      const editedMessage = {
+        ...targetMessage,
+        content: validation.data.content
+      };
+      const truncatedMessages = [
+        ...messages.slice(0, targetIndex),
+        editedMessage
+      ];
+      const history = historyStore.replaceConversationMessagePrefix({
+        conversationId,
+        title: existing.title,
+        workplacePath: existing.workplacePath,
+        parentConversationId: existing.parentConversationId,
+        source: existing.source,
+        model: existing.model,
+        modelProfileId: existing.modelProfileId,
+        thinkingMode: existing.thinkingMode,
+        approvalMode: existing.approvalMode,
+        goal: existing.goal,
+        planState: existing.planState,
+        skills: existing.skills,
+        plugins: existing.plugins,
+        disabledTools: existing.disabledTools,
+        personaId: existing.personaId,
+        developerPrompt: existing.developerPrompt,
+        memorySummaryPrompt: existing.memorySummaryPrompt,
+        messages: truncatedMessages
+      });
 
       res.json({ history: enrichHistoryDetail(history, orchestratorStore, historyStore) });
     },
@@ -3235,7 +3389,13 @@ export function createChatController({
               conversationId,
               firstSentence,
               configStore,
-              historyStore
+              historyStore,
+              onTitleUpdated: (updatedHistory) => {
+                conversationEventBroadcaster?.publishAgentEvent?.(conversationId, {
+                  type: "conversation_title_updated",
+                  history: enrichHistoryDetail(updatedHistory, orchestratorStore, historyStore)
+                });
+              }
             });
           }
         }

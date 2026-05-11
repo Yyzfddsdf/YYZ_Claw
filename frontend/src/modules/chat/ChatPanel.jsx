@@ -1344,7 +1344,7 @@ export function ChatPanel({
     !chat.activeConversationId ||
     Boolean(chat.pendingApproval);
   const messageBranchDisabled = messageDeleteDisabled || isSubagentConversation;
-  const messageRerunDisabled = messageDeleteDisabled || isSubagentConversation;
+  const messageRerunDisabled = messageDeleteDisabled;
   const activeConversationRuntimeReplyError =
     chat.activeConversationRuntimeReplyError &&
     typeof chat.activeConversationRuntimeReplyError === "object"
@@ -2329,7 +2329,7 @@ export function ChatPanel({
 
   function handleStartEditMessage(message) {
     const normalizedMessageId = String(message?.id ?? "").trim();
-    if (!normalizedMessageId || messageDeleteDisabled || isSubagentConversation) {
+    if (!normalizedMessageId || messageRerunDisabled) {
       return;
     }
 
@@ -3177,13 +3177,11 @@ export function ChatPanel({
                 message.role === "assistant" &&
                 Boolean(message.id) &&
                 Boolean(rerunAnchorMessageId) &&
-                !isSubagentConversation &&
                 !isCompressionSummary &&
                 !isOrchestratorMessage;
               const canEditMessage =
                 message.role === "user" &&
                 Boolean(message.id) &&
-                !isSubagentConversation &&
                 !isRuntimeHookInjectedMessage &&
                 !isHookPromptMessage &&
                 !isHookStatusMessage &&

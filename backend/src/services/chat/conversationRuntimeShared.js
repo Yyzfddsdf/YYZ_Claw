@@ -149,7 +149,8 @@ export function scheduleAsyncTitleGeneration({
   conversationId,
   firstSentence,
   configStore,
-  historyStore
+  historyStore,
+  onTitleUpdated
 }) {
   if (!conversationId || !firstSentence) {
     return;
@@ -183,7 +184,10 @@ export function scheduleAsyncTitleGeneration({
         return;
       }
 
-      historyStore.updateConversationTitle(conversationId, generatedTitle);
+      const updatedHistory = historyStore.updateConversationTitle(conversationId, generatedTitle);
+      if (updatedHistory && typeof onTitleUpdated === "function") {
+        onTitleUpdated(updatedHistory);
+      }
     } finally {
       titleGenerationLocks.delete(conversationId);
     }

@@ -64,6 +64,15 @@ export const conversationCompressionSchema = z.object({
   trigger: compressionTriggerSchema.default("manual")
 });
 
+export const conversationRerunSchema = z.object({
+  messageId: z.string().trim().min(1, "messageId is required")
+});
+
+export const conversationEditRerunSchema = z.object({
+  messageId: z.string().trim().min(1, "messageId is required"),
+  content: z.string().trim().min(1, "content is required")
+});
+
 export const slashCommandSchema = z.object({
   conversationId: z.string().trim().optional().default(""),
   text: z.string(),

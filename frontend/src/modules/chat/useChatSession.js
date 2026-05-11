@@ -13,6 +13,7 @@ import {
   deleteHistoryById,
   deleteHistoryMessageById,
   deleteHistoryPlanById,
+  editRerunHistoryById,
   fetchHistories,
   fetchHistoryById,
   fetchChatTools,
@@ -23,6 +24,7 @@ import {
   confirmToolApprovalById,
   queueConversationInsertionById,
   rejectToolApprovalById,
+  rerunHistoryById,
   selectWorkplaceBySystemDialog,
   stopConversationRunById,
   subscribeChatEvents,
@@ -2815,22 +2817,6 @@ export function useChatSession(runtimeConfig = {}) {
     }
 
     const targetConversationId = String(activeConversationId).trim();
-    const truncatedMessages = currentMessages.slice(0, rerunStartIndex + 1);
-    const persistPayload = buildConversationUpsertPayload({
-      title: activeConversationTitle || "新会话",
-      workplacePath: activeConversationWorkplace,
-      approvalMode: activeConversationApprovalMode,
-      personaId: activeConversationPersonaId,
-      modelProfileId: activeConversationModelProfileId,
-      thinkingMode,
-      goal: activeConversationGoal,
-      planState: activeConversationPlanState,
-      developerPrompt: "",
-      skills: selectedSkillsRef.current,
-      plugins: selectedPluginsRef.current,
-      messages: toPersistableMessages(truncatedMessages)
-    });
-    persistPayload.replaceMessages = true;
 
     setStatus("loading");
     setError("");
@@ -2839,14 +2825,14 @@ export function useChatSession(runtimeConfig = {}) {
     clearConversationRuntimeReplyError(targetConversationId);
 
     try {
-      const response = await upsertHistoryById(targetConversationId, persistPayload);
+      const response = await rerunHistoryById(targetConversationId, normalizedMessageId);
       const history = response?.history;
       if (!history) {
         throw new Error("重跑前截断会话失败");
       }
 
       const normalizedMessages = applyPersistedHistorySnapshot(targetConversationId, history) ??
-        truncatedMessages;
+        normalizeLoadedMessages(history.messages);
       updateQueuedUserMessageList((prev) =>
         prev.filter(
           (item) => String(item?.conversationId ?? "").trim() !== targetConversationId
@@ -2898,29 +2884,6 @@ export function useChatSession(runtimeConfig = {}) {
     }
 
     const targetConversationId = String(activeConversationId).trim();
-    const editedMessage = {
-      ...targetMessage,
-      content: normalizedContent
-    };
-    const truncatedMessages = [
-      ...currentMessages.slice(0, targetIndex),
-      editedMessage
-    ];
-    const persistPayload = buildConversationUpsertPayload({
-      title: activeConversationTitle || "新会话",
-      workplacePath: activeConversationWorkplace,
-      approvalMode: activeConversationApprovalMode,
-      personaId: activeConversationPersonaId,
-      modelProfileId: activeConversationModelProfileId,
-      thinkingMode,
-      goal: activeConversationGoal,
-      planState: activeConversationPlanState,
-      developerPrompt: "",
-      skills: selectedSkillsRef.current,
-      plugins: selectedPluginsRef.current,
-      messages: toPersistableMessages(truncatedMessages)
-    });
-    persistPayload.replaceMessages = true;
 
     setStatus("loading");
     setError("");
@@ -2929,14 +2892,18 @@ export function useChatSession(runtimeConfig = {}) {
     clearConversationRuntimeReplyError(targetConversationId);
 
     try {
-      const response = await upsertHistoryById(targetConversationId, persistPayload);
+      const response = await editRerunHistoryById(
+        targetConversationId,
+        normalizedMessageId,
+        normalizedContent
+      );
       const history = response?.history;
       if (!history) {
         throw new Error("编辑后截断会话失败");
       }
 
       const normalizedMessages = applyPersistedHistorySnapshot(targetConversationId, history) ??
-        truncatedMessages;
+        normalizeLoadedMessages(history.messages);
       updateQueuedUserMessageList((prev) =>
         prev.filter(
           (item) => String(item?.conversationId ?? "").trim() !== targetConversationId
@@ -4142,6 +4109,13 @@ export function useChatSession(runtimeConfig = {}) {
       });
       clearResolvedPendingInsertions(normalizedTargetConversationId, incomingMessages);
       streamState.activeAssistantMessageId = null;
+      return true;
+    }
+
+    if (event?.type === "conversation_title_updated") {
+      if (event?.history) {
+        applyPersistedHistorySnapshot(normalizedTargetConversationId, event.history);
+      }
       return true;
     }
 

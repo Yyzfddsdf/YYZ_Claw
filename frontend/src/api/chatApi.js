@@ -117,6 +117,20 @@ export function upsertHistoryById(conversationId, payload) {
   });
 }
 
+export function rerunHistoryById(conversationId, messageId) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/rerun`, {
+    method: "POST",
+    body: { messageId }
+  });
+}
+
+export function editRerunHistoryById(conversationId, messageId, content) {
+  return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/edit-rerun`, {
+    method: "POST",
+    body: { messageId, content }
+  });
+}
+
 export function stopConversationRunById(conversationId) {
   return requestJson(`/chat/histories/${encodeURIComponent(conversationId)}/stop`, {
     method: "POST"

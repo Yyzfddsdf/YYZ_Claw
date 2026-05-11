@@ -25,6 +25,14 @@ export function createChatRoutes(services) {
     "/chat/histories/:conversationId/stop",
     asyncHandler(controller.stopRunByConversationId)
   );
+  router.post(
+    "/chat/histories/:conversationId/rerun",
+    asyncHandler(controller.rerunHistoryById)
+  );
+  router.post(
+    "/chat/histories/:conversationId/edit-rerun",
+    asyncHandler(controller.editRerunHistoryById)
+  );
   router.get(
     "/chat/histories/:conversationId/runtime",
     asyncHandler(controller.getRuntimeStatusById)

@@ -65,7 +65,6 @@ export const conversationUpsertSchema = z.object({
   modelProfileId: z.string().trim().max(120).optional(),
   thinkingMode: thinkingModeSchema.optional(),
   developerPrompt: z.string().max(20000).optional(),
-  replaceMessages: z.boolean().optional().default(false),
   messages: z.array(historyMessageSchema)
 });
 

@@ -31,6 +31,8 @@ YYZ_Claw plugins are independent from normal skills.
 my-plugin/
   .plugin/
     plugin.json
+  commands/
+    review.md
   assets/
     icon.png
     logo.png
@@ -74,6 +76,65 @@ Optional placeholders:
 
 - `mcpServers`: path to `.mcp.json`. Use the `_system/mcp` skill for the actual MCP file format and scope rules.
 - `hooks`: path to `hooks/hooks.json`. Use the `_system/hooks` skill for the actual hook file format and script patterns.
+- `commands`: path to the plugin command directory. In YYZ_Claw, plugin commands are simple `/` prompt expanders.
+
+## Plugin Commands
+
+Plugin commands do not need a separate system skill.
+
+The rule is intentionally minimal:
+
+- `name`
+  - the command name itself
+  - do not include `/`
+  - for example `name: review`
+  - the invocation form is `/review`
+
+- `description`
+  - the fully expanded prompt text
+  - when the user types `/review`, the host replaces `/review` with `description`
+
+Recommended location:
+
+```text
+commands/
+  review.md
+```
+
+Recommended file content:
+
+```md
+---
+name: review
+description: |
+  你现在要进行代码审查。
+
+  审查目标：
+  - 找 bug
+  - 找风险
+  - 找回归
+  - 找缺失测试
+
+  输出要求：
+  - 先列问题
+  - 再给修改建议
+  - 最后给简短总结
+---
+```
+
+Current YYZ_Claw command semantics:
+
+- `/name` is only the input trigger
+- before the message reaches the model, the host should replace it with the real prompt text from `description`
+- the model should not keep `/name` as a literal slash command
+
+Important:
+
+- this is a plugin-level component
+- it is not a hook
+- it is not an MCP tool
+- it is not an agent
+- it is not a separate skill system
 
 ## Model Context Rules
 

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { expandCommandsInText as expandPluginCommandsInText } from "./commandExpansion.js";
 import { parseOpenAiYaml, parseSkillMarkdown } from "../skills/skillMarkdown.js";
 
 const MANIFEST_CANDIDATES = [
@@ -98,6 +99,34 @@ async function collectSkillRoots(rootDir) {
     await walk(rootDir);
   }
   return roots.sort((left, right) => left.localeCompare(right));
+}
+
+async function collectMarkdownFiles(rootDir) {
+  const files = [];
+
+  async function walk(currentDir) {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const nextPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith(".")) {
+          continue;
+        }
+        await walk(nextPath);
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+        files.push(nextPath);
+      }
+    }
+  }
+
+  if (rootDir && await fileExists(rootDir)) {
+    await walk(rootDir);
+  }
+
+  return files.sort((left, right) => left.localeCompare(right));
 }
 
 async function readFileStats(filePath) {
@@ -243,11 +272,20 @@ function normalizeManifest(rawManifest, fallbackName) {
     keywords: toStringArray(manifest.keywords),
     author: normalizeAuthor(manifest.author),
     skills: normalizeText(manifest.skills || "./skills"),
+    commands: normalizeText(manifest.commands || "./commands"),
     mcpServers: normalizeText(manifest.mcpServers || manifest.mcp_servers || manifest.mcp || "./.mcp.json"),
     hooks: normalizeText(manifest.hooks || path.join("./hooks", "hooks.json")),
     rules: manifest.rules,
     interface: normalizeInterface(manifest.interface)
   };
+}
+
+function normalizeCommandName(value = "") {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
 
 function normalizeSkillRecord(plugin, skillRootDir, parsed, stats) {
@@ -298,6 +336,33 @@ function normalizeSkillRecord(plugin, skillRootDir, parsed, stats) {
   };
 }
 
+function normalizeCommandRecord(plugin, commandFilePath, parsed, stats) {
+  const relativePath = safeRelativePath(plugin.commandsRootDir, commandFilePath);
+  const rawFrontmatter = isPlainObject(parsed.frontmatter) ? parsed.frontmatter : {};
+  const name = normalizeCommandName(rawFrontmatter.name);
+  const description = normalizeText(rawFrontmatter.description);
+
+  if (!name) {
+    throw new Error(`command name is required: ${relativePath}`);
+  }
+  if (!description) {
+    throw new Error(`command description is required: ${relativePath}`);
+  }
+
+  return {
+    scope: "plugin",
+    pluginName: plugin.name,
+    pluginDisplayName: plugin.displayName,
+    name,
+    normalizedName: normalizeName(name),
+    description,
+    relativePath,
+    filePath: commandFilePath,
+    size: stats.size,
+    mtimeMs: stats.mtimeMs
+  };
+}
+
 export class PluginCatalog {
   constructor(options = {}) {
     this.rootDir = path.resolve(String(options.rootDir ?? ""));
@@ -330,6 +395,7 @@ export class PluginCatalog {
     const pluginSettings = settings.plugins[manifest.name] ?? settings.plugins[manifest.normalizedName] ?? {};
     const enabled = pluginSettings.enabled !== false;
     const skillsRootDir = resolvePluginPath(pluginRootDir, manifest.skills, "./skills");
+    const commandsRootDir = resolvePluginPath(pluginRootDir, manifest.commands, "./commands");
     const mcpPath = resolvePluginPath(pluginRootDir, manifest.mcpServers, "./.mcp.json");
     const hooksPath = resolvePluginPath(pluginRootDir, manifest.hooks, path.join("./hooks", "hooks.json"));
     const rules = await readRules(pluginRootDir, manifest.rules);
@@ -345,9 +411,11 @@ export class PluginCatalog {
         enabled
       },
       skillsRootDir,
+      commandsRootDir,
       mcpPath,
       hooksPath,
       hasSkills: await fileExists(skillsRootDir),
+      hasCommands: await fileExists(commandsRootDir),
       hasMcp: await fileExists(mcpPath),
       hasHooks: await fileExists(hooksPath),
       rules,
@@ -410,11 +478,13 @@ export class PluginCatalog {
       interface: plugin.interface,
       components: {
         skills: plugin.hasSkills,
+        commands: plugin.hasCommands,
         mcp: plugin.hasMcp,
         hooks: plugin.hasHooks,
         rules: plugin.rules.length > 0
       },
       skillCount: 0,
+      commandCount: 0,
       ruleCount: plugin.rules.length,
       errors: plugin.errors
     }));
@@ -468,6 +538,76 @@ export class PluginCatalog {
     }
 
     return skills;
+  }
+
+  async collectPluginCommands(options = {}) {
+    const enabledOnly = options.enabledOnly !== false;
+    const catalog = await this.read();
+    const selectedPluginNames = Array.isArray(options.selectedPluginNames)
+      ? new Set(options.selectedPluginNames.map((item) => normalizeName(item)).filter(Boolean))
+      : null;
+    const plugins = catalog.plugins.filter((plugin) =>
+      (!enabledOnly || plugin.enabled) &&
+      (!selectedPluginNames || selectedPluginNames.has(plugin.normalizedName))
+    );
+    const commands = [];
+
+    for (const plugin of plugins) {
+      if (!plugin.hasCommands) {
+        continue;
+      }
+
+      const commandFiles = await collectMarkdownFiles(plugin.commandsRootDir);
+      for (const commandFilePath of commandFiles) {
+        try {
+          const stats = await readFileStats(commandFilePath);
+          const parsed = parseSkillMarkdown(await fs.readFile(commandFilePath, "utf8"));
+          commands.push(normalizeCommandRecord(plugin, commandFilePath, parsed, stats));
+        } catch (error) {
+          const nextError = {
+            component: "commands",
+            filePath: safeRelativePath(plugin.rootDir, commandFilePath),
+            message: normalizeText(error?.message) || "command failed to load"
+          };
+          const alreadyTracked = Array.isArray(plugin.errors)
+            ? plugin.errors.some(
+                (item) =>
+                  String(item?.component ?? "").trim() === nextError.component &&
+                  String(item?.filePath ?? "").trim() === nextError.filePath &&
+                  String(item?.message ?? "").trim() === nextError.message
+              )
+            : false;
+          if (!alreadyTracked) {
+            plugin.errors.push(nextError);
+          }
+        }
+      }
+    }
+
+    return commands;
+  }
+
+  async expandCommandsInText(text, options = {}) {
+    const normalizedText = String(text ?? "");
+    if (!normalizedText.trim()) {
+      return {
+        text: normalizedText,
+        replacements: []
+      };
+    }
+
+    const commands = await this.collectPluginCommands({
+      enabledOnly: true,
+      selectedPluginNames: options.selectedPluginNames
+    });
+    if (commands.length === 0) {
+      return {
+        text: normalizedText,
+        replacements: []
+      };
+    }
+
+    return expandPluginCommandsInText(normalizedText, commands);
   }
 
   async findPluginSkill(identifier, options = {}) {

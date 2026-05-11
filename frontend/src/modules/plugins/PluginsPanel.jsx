@@ -235,6 +235,7 @@ export function PluginsPanel({ chat, onNavigate }) {
 
                   <div className="plugin-card-components">
                     <ComponentBadge active={components.skills} label={`skills ${plugin.skillCount || 0}`} />
+                    <ComponentBadge active={components.commands} label={`commands ${plugin.commandCount || 0}`} />
                     <ComponentBadge active={components.rules} label={`rules ${plugin.ruleCount || 0}`} />
                     <ComponentBadge active={components.mcp} label="mcp" />
                     <ComponentBadge active={components.hooks} label="hooks" />

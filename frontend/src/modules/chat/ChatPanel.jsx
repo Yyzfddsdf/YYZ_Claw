@@ -1164,6 +1164,21 @@ export function ChatPanel({
     const commandItems = SLASH_COMMANDS.filter((item) =>
       fuzzyMatchText(item.label.replace(/^\//, ""), slashQuery)
     );
+    const pluginCommandItems = (Array.isArray(chat.activeConversationCommands)
+      ? chat.activeConversationCommands
+      : []
+    )
+      .filter((command) =>
+        fuzzyMatchText(String(command?.name ?? "").replace(/^\//, ""), slashQuery)
+      )
+      .slice(0, 12)
+      .map((command) => ({
+        type: "plugin-command",
+        value: String(command?.name ?? "").trim(),
+        label: String(command?.name ?? "").trim(),
+        description: String(command?.description ?? "").trim(),
+        pluginName: String(command?.pluginName ?? "").trim()
+      }));
     const activeSkillKeys = new Set(
       Array.isArray(chat.activeConversationSkills)
         ? chat.activeConversationSkills.map((item) => String(item ?? "").trim())
@@ -1200,8 +1215,15 @@ export function ChatPanel({
       description: "引用工作区文件路径，模型可自行用工具查看"
     }));
 
-    return [...commandItems, ...skillItems, ...pluginItems, ...fileItems].slice(0, 14);
-  }, [chat.activeConversationPlugins, chat.activeConversationSkills, chat.skillCatalog, slashFileMatches, slashQuery]);
+    return [...commandItems, ...pluginCommandItems, ...skillItems, ...pluginItems, ...fileItems].slice(0, 14);
+  }, [
+    chat.activeConversationCommands,
+    chat.activeConversationPlugins,
+    chat.activeConversationSkills,
+    chat.skillCatalog,
+    slashFileMatches,
+    slashQuery
+  ]);
 
   useEffect(() => {
     if (!slashQuery) {
@@ -4027,6 +4049,8 @@ export function ChatPanel({
                       <span className="slash-command-type">
                         {item.type === "command"
                           ? "CMD"
+                          : item.type === "plugin-command"
+                            ? "PLUGIN CMD"
                           : item.type === "skill"
                             ? "SKILL"
                             : item.type === "plugin"

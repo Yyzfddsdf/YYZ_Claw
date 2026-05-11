@@ -20,8 +20,14 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore, mc
         typeof pluginCatalog.collectPluginSkills === "function"
           ? await pluginCatalog.collectPluginSkills({ enabledOnly: false })
           : [];
+      const pluginCommands =
+        typeof pluginCatalog.collectPluginCommands === "function"
+          ? await pluginCatalog.collectPluginCommands({ enabledOnly: false })
+          : [];
       const skillCountByPlugin = new Map();
       const skillsByPlugin = new Map();
+      const commandCountByPlugin = new Map();
+      const commandsByPlugin = new Map();
       for (const skill of pluginSkills) {
         const pluginName = String(skill.pluginName ?? "").trim();
         if (!pluginName) {
@@ -56,13 +62,31 @@ export function createPluginsController({ pluginCatalog, pluginSettingsStore, mc
         });
         skillsByPlugin.set(pluginName, existing);
       }
+      for (const command of pluginCommands) {
+        const pluginName = String(command?.pluginName ?? "").trim();
+        if (!pluginName) {
+          continue;
+        }
+        commandCountByPlugin.set(pluginName, (commandCountByPlugin.get(pluginName) ?? 0) + 1);
+        const existing = commandsByPlugin.get(pluginName) ?? [];
+        existing.push({
+          pluginName: command.pluginName,
+          pluginDisplayName: command.pluginDisplayName,
+          name: command.name,
+          description: command.description,
+          relativePath: command.relativePath
+        });
+        commandsByPlugin.set(pluginName, existing);
+      }
 
       res.json({
         rootDir: catalog.rootDir,
         plugins: plugins.map((plugin) => ({
           ...plugin,
           skillCount: skillCountByPlugin.get(plugin.name) ?? plugin.skillCount ?? 0,
-          skills: skillsByPlugin.get(plugin.name) ?? []
+          skills: skillsByPlugin.get(plugin.name) ?? [],
+          commandCount: commandCountByPlugin.get(plugin.name) ?? plugin.commandCount ?? 0,
+          commands: commandsByPlugin.get(plugin.name) ?? []
         })),
         errors: catalog.errors,
         pluginCount: plugins.length

@@ -40,6 +40,7 @@ import {
 } from "../../api/chatApi";
 import { confirmAction } from "../../shared/feedback";
 import { fetchPersonas } from "../../api/personasApi";
+import { fetchPlugins } from "../../api/pluginsApi";
 import {
   applyToolResultToPayload,
   applyToolPendingApprovalToPayload,
@@ -164,6 +165,91 @@ function normalizeToolCatalog(tools) {
       description: String(tool?.description ?? "").trim()
     }))
     .filter((tool) => tool.name);
+}
+
+function normalizePluginCommandName(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+function normalizePluginCatalog(plugins) {
+  return (Array.isArray(plugins) ? plugins : [])
+    .map((plugin) => ({
+      name: String(plugin?.name ?? "").trim(),
+      displayName: String(plugin?.displayName ?? plugin?.interface?.displayName ?? "").trim(),
+      commands: (Array.isArray(plugin?.commands) ? plugin.commands : [])
+        .map((command) => ({
+          pluginName: String(command?.pluginName ?? plugin?.name ?? "").trim(),
+          pluginDisplayName: String(command?.pluginDisplayName ?? plugin?.displayName ?? "").trim(),
+          name: normalizePluginCommandName(command?.name),
+          description: String(command?.description ?? "").trim(),
+          relativePath: String(command?.relativePath ?? "").trim()
+        }))
+        .filter((command) => command.pluginName && command.name && command.description)
+    }))
+    .filter((plugin) => plugin.name);
+}
+
+function isLeftCommandBoundary(character = "") {
+  return !character || /[\s([{"'“‘【（<,，。；;：!?！？、]/u.test(character);
+}
+
+function isRightCommandBoundary(character = "") {
+  return !character || /[\s)\]}"'”’】）>,，。；;：!?！？、]/u.test(character);
+}
+
+function expandCommandTokenInText(text, trigger, replacement) {
+  const source = String(text ?? "");
+  const normalizedTrigger = String(trigger ?? "").trim();
+  const normalizedReplacement = String(replacement ?? "").trim();
+  if (!source || !normalizedTrigger || !normalizedReplacement) {
+    return source;
+  }
+
+  let nextText = "";
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const foundIndex = source.indexOf(normalizedTrigger, cursor);
+    if (foundIndex < 0) {
+      nextText += source.slice(cursor);
+      break;
+    }
+
+    const leftChar = foundIndex > 0 ? source.slice(foundIndex - 1, foundIndex) : "";
+    const rightIndex = foundIndex + normalizedTrigger.length;
+    const rightChar = source.slice(rightIndex, rightIndex + 1);
+    if (isLeftCommandBoundary(leftChar) && isRightCommandBoundary(rightChar)) {
+      nextText += source.slice(cursor, foundIndex);
+      nextText += normalizedReplacement;
+      cursor = rightIndex;
+      continue;
+    }
+
+    nextText += source.slice(cursor, foundIndex + normalizedTrigger.length);
+    cursor = foundIndex + normalizedTrigger.length;
+  }
+
+  return nextText;
+}
+
+function expandPluginCommandsInText(text, commands = []) {
+  const source = String(text ?? "");
+  if (!source.trim()) {
+    return source;
+  }
+
+  const orderedCommands = [...(Array.isArray(commands) ? commands : [])].sort(
+    (left, right) => String(right?.name ?? "").length - String(left?.name ?? "").length
+  );
+  let nextText = source;
+  for (const command of orderedCommands) {
+    nextText = expandCommandTokenInText(nextText, command?.name, command?.description);
+  }
+  return nextText;
 }
 
 function normalizeThinkingMode(value, fallback = "off") {
@@ -1217,6 +1303,8 @@ export function useChatSession(runtimeConfig = {}) {
   const [skillsDrawerOpen, setSkillsDrawerOpen] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState([]);
   const [skillCatalogLoaded, setSkillCatalogLoaded] = useState(false);
+  const [pluginCatalog, setPluginCatalog] = useState([]);
+  const [pluginCatalogLoaded, setPluginCatalogLoaded] = useState(false);
   const [toolCatalog, setToolCatalog] = useState([]);
   const [toolCatalogLoaded, setToolCatalogLoaded] = useState(false);
   const [personaCatalog, setPersonaCatalog] = useState([]);
@@ -1351,6 +1439,18 @@ export function useChatSession(runtimeConfig = {}) {
   const activeConversationPlugins = useMemo(() => {
     return resolveConversationPlugins(activeConversationId, conversationList, draftConversation);
   }, [conversationList, activeConversationId, draftConversation]);
+
+  const activeConversationCommands = useMemo(() => {
+    const activePluginSet = new Set(
+      (Array.isArray(activeConversationPlugins) ? activeConversationPlugins : [])
+        .map((item) => String(item ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    return pluginCatalog
+      .filter((plugin) => activePluginSet.has(String(plugin?.name ?? "").trim().toLowerCase()))
+      .flatMap((plugin) => (Array.isArray(plugin?.commands) ? plugin.commands : []));
+  }, [pluginCatalog, activeConversationPlugins]);
 
   const activeConversationDisabledTools = useMemo(() => {
     if (draftConversation?.id === activeConversationId) {
@@ -1779,6 +1879,38 @@ export function useChatSession(runtimeConfig = {}) {
       }
     };
   }, [activeConversationWorkplace]);
+
+  async function refreshPluginCatalog() {
+    try {
+      const response = await fetchPlugins();
+      setPluginCatalog(normalizePluginCatalog(response?.plugins));
+    } finally {
+      setPluginCatalogLoaded(true);
+    }
+  }
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadPluginCatalog() {
+      try {
+        const response = await fetchPlugins();
+        if (!mounted) {
+          return;
+        }
+        setPluginCatalog(normalizePluginCatalog(response?.plugins));
+      } finally {
+        if (mounted) {
+          setPluginCatalogLoaded(true);
+        }
+      }
+    }
+
+    loadPluginCatalog();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   async function refreshToolCatalog() {
     try {
@@ -5073,8 +5205,9 @@ export function useChatSession(runtimeConfig = {}) {
 
     const targetConversationId = activeConversationId;
     const shouldPersistDraftConversation = isDraftConversationActive;
+    const expandedText = expandPluginCommandsInText(text, activeConversationCommands);
     const normalizedPayload = {
-      text,
+      text: expandedText,
       imageAttachments,
       parsedFileAttachments
     };
@@ -5401,6 +5534,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationSource,
       activeConversationModelProfileId,
       activeConversationModelProfile,
+      activeConversationCommands,
       modelProfiles,
       activeConversationAgentDisplayName,
       activeConversationSubagents,
@@ -5410,6 +5544,7 @@ export function useChatSession(runtimeConfig = {}) {
       canManualCompress,
       skillCatalog,
       skillCatalogLoaded,
+      pluginCatalogLoaded,
       toolCatalog,
       toolCatalogLoaded,
       personaCatalog,
@@ -5420,6 +5555,7 @@ export function useChatSession(runtimeConfig = {}) {
       skillsDrawerOpen,
       setSkillsDrawerOpen,
       reloadSkillCatalog: refreshSkillCatalog,
+      reloadPluginCatalog: refreshPluginCatalog,
       reloadToolCatalog: refreshToolCatalog,
       reloadPersonaCatalog: refreshPersonaCatalog,
       workplaceSelecting,
@@ -5493,6 +5629,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationSource,
       activeConversationModelProfileId,
       activeConversationModelProfile,
+      activeConversationCommands,
       modelProfiles,
       activeConversationAgentDisplayName,
       activeConversationSubagents,
@@ -5502,6 +5639,7 @@ export function useChatSession(runtimeConfig = {}) {
       canManualCompress,
       skillCatalog,
       skillCatalogLoaded,
+      pluginCatalogLoaded,
       toolCatalog,
       toolCatalogLoaded,
       personaCatalog,
@@ -5512,6 +5650,7 @@ export function useChatSession(runtimeConfig = {}) {
       skillsDrawerOpen,
       setSkillsDrawerOpen,
       refreshSkillCatalog,
+      refreshPluginCatalog,
       refreshToolCatalog,
       refreshPersonaCatalog,
       workplaceSelecting,

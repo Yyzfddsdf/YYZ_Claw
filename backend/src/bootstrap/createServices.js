@@ -298,6 +298,7 @@ export async function createServices() {
   const feishuRuntimeService = new FeishuRuntimeService({
     remoteControlConfigStore,
     historyStore,
+    pluginCatalog,
     feishuOpenApiClient,
     edgeTextToSpeechService,
     defaultWorkplacePath: PROJECT_ROOT,

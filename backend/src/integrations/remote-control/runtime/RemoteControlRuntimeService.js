@@ -125,6 +125,48 @@ function createUserMessage(inbound) {
   };
 }
 
+async function expandInboundContentWithPluginCommands(inbound, pluginCatalog, selectedPluginNames = []) {
+  const content = normalizeText(inbound?.content);
+  if (!content || !pluginCatalog || typeof pluginCatalog.expandCommandsInText !== "function") {
+    return {
+      inbound,
+      replacements: []
+    };
+  }
+
+  const expanded = await pluginCatalog.expandCommandsInText(content, {
+    selectedPluginNames
+  });
+  const nextContent = String(expanded?.text ?? content);
+  if (nextContent === content) {
+    return {
+      inbound,
+      replacements: Array.isArray(expanded?.replacements) ? expanded.replacements : []
+    };
+  }
+
+  return {
+    inbound: {
+      ...inbound,
+      content: nextContent
+    },
+    replacements: Array.isArray(expanded?.replacements) ? expanded.replacements : []
+  };
+}
+
+function buildRemoteCommandExpansionNotice(replacements = []) {
+  const uniqueNames = [...new Set(
+    (Array.isArray(replacements) ? replacements : [])
+      .map((item) => normalizeText(item?.name))
+      .filter(Boolean)
+  )];
+  if (uniqueNames.length === 0) {
+    return "";
+  }
+
+  return `已展开命令：${uniqueNames.join("、")}`;
+}
+
 function parseRemoteSlashCommand(inbound) {
   const content = normalizeText(inbound?.content);
   const hasExtraPayload =
@@ -186,6 +228,7 @@ export class RemoteControlRuntimeService {
     this.platformLabel = normalizeText(options.platformLabel) || this.platformKey;
     this.controlConfigStore = options.controlConfigStore ?? null;
     this.historyStore = options.historyStore ?? null;
+    this.pluginCatalog = options.pluginCatalog ?? null;
     this.runtimeService = options.runtimeService ?? null;
     this.wakeDispatcher = options.wakeDispatcher ?? null;
     this.conversationRunCoordinator = options.conversationRunCoordinator ?? null;
@@ -328,18 +371,32 @@ export class RemoteControlRuntimeService {
 
     const conversation = await this.resolveTargetConversation();
     const conversationId = normalizeText(conversation.id);
-    const slashCommand = parseRemoteSlashCommand(inbound);
+    const commandExpansion = await expandInboundContentWithPluginCommands(
+      inbound,
+      this.pluginCatalog,
+      Array.isArray(conversation?.plugins) ? conversation.plugins : []
+    );
+    const expandedInbound = commandExpansion.inbound;
+    const expansionNotice = buildRemoteCommandExpansionNotice(commandExpansion.replacements);
+    const slashCommand = parseRemoteSlashCommand(expandedInbound);
     if (slashCommand.handled) {
       await this.handleSlashCommand({
         conversation,
         conversationId,
-        inbound,
+        inbound: expandedInbound,
         slashCommand
       });
       return;
     }
 
-    const userMessage = createUserMessage(inbound);
+    if (expansionNotice && expandedInbound.replyTarget) {
+      await this.deliverReplyToChannel({
+        replyTarget: expandedInbound.replyTarget,
+        text: expansionNotice
+      });
+    }
+
+    const userMessage = createUserMessage(expandedInbound);
     let foregroundRun = null;
     let detachConversationBroadcast = () => {};
     let foregroundStatus = "idle";
@@ -389,7 +446,7 @@ export class RemoteControlRuntimeService {
         providerKey: this.platformKey,
         providerLabel: this.platformLabel,
         sourceMessageId: normalizeText(inbound.id),
-        replyTarget: inbound.replyTarget,
+        replyTarget: expandedInbound.replyTarget,
         channel: this
       };
       this.wakeDispatcher?.bindRemoteRuntime?.({
@@ -445,7 +502,7 @@ export class RemoteControlRuntimeService {
 
       if (assistantReplyCount <= 0 && normalizeText(runResult?.outputText)) {
         await this.deliverReplyToChannel({
-          replyTarget: inbound.replyTarget,
+          replyTarget: expandedInbound.replyTarget,
           text: normalizeText(runResult.outputText)
         });
       }
@@ -594,7 +651,13 @@ export class RemoteControlRuntimeService {
       return;
     }
 
-    const userMessage = createUserMessage(inbound);
+    const commandExpansion = await expandInboundContentWithPluginCommands(
+      inbound,
+      this.pluginCatalog,
+      Array.isArray(conversation?.plugins) ? conversation.plugins : []
+    );
+    const expandedInbound = commandExpansion.inbound;
+    const userMessage = createUserMessage(expandedInbound);
     this.historyStore.appendMessages(conversationId, [userMessage], {
       updatedAt: Date.now()
     });

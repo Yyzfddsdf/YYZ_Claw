@@ -70,6 +70,46 @@
 - 已补 MCP 文档：
   - `MCP_STANDARD.md`
   - `docs/mcp.md`
+- 已把 `PLUGIN_COMMAND_STANDARD.md` 压成最简口径：
+  - `name` = 指令名本体，不带 `/`
+  - `description` = 展开后的详细提示词
+  - 用户输入 `/name` 后，宿主直接用 `description` 替换并发送
+  - 当前不再保留额外复杂字段和复杂机制说明
+- 已新增 `docs/command.md`：
+  - 说明 command 的用户文档口径
+  - 明确 `name = xxx`，`/xxx` 只是输入引用形式
+  - `description = 真实提示词`
+  - 明确 command 是插件组件，不是单独 skill 体系
+- 已更新 `plugin_creator` 文档：
+  - 直接在插件文档中说明 plugin command 的写法
+  - 不再需要单独 command skill
+- 已完成 plugin command 的真实实现主链：
+  - `backend/src/services/plugins/PluginCatalog.js`
+    - 新增插件 `commands/` 发现
+    - 解析 frontmatter 里的 `name` 与 `description`
+    - 支持按当前会话启用插件收集 command
+    - 支持把消息正文中的 `/name` 展开成真实提示词
+  - `backend/src/controllers/pluginsController.js`
+    - `/plugins` 现在会返回插件 commands 与 `commandCount`
+  - `frontend/src/modules/chat/useChatSession.js`
+    - 新增插件 command catalog 加载
+    - 当前会话只会拿到已启用插件的 commands
+    - 本地发送前会先展开 plugin commands
+  - `frontend/src/modules/chat/ChatPanel.jsx`
+    - `/` 候选里新增 plugin command 项
+    - 选中后会自动补空格
+  - `backend/src/integrations/remote-control/runtime/RemoteControlRuntimeService.js`
+    - remote 入站消息现在也会按当前目标会话插件做 command 展开
+    - remote 命中 command 替换时，会主动回一条 `已展开命令：/xxx`
+  - `frontend/src/modules/plugins/PluginsPanel.jsx`
+    - 插件中心现在会显示 `commands N`
+- 已把后端 command 核心替换逻辑抽成统一复用：
+  - `backend/src/services/plugins/commandExpansion.js`
+  - 当前 `PluginCatalog.expandCommandsInText(...)` 与 remote 提示链都复用这份替换核心
+- 已给 `novel-writer` 补了一个可直接验证的 plugin command：
+  - `resources/defaults/plugins/novel-writer/commands/continue-scene.md`
+  - `C:\\Users\\HUAWEI\\.yyz\\plugins\\novel-writer\\commands\\continue-scene.md`
+  - command 名为 `/continue-scene`
 - 校验已通过：
   - 两个 `init_plugin.py` 都过了 `python -m py_compile`
   - 当前 `.yyz/hooks/hooks.json` 可正常解析
@@ -97,3 +137,8 @@
 - `resources/defaults` 只会在缺失时复制到 `.yyz`，不会自动覆盖已有用户文件；这次为了立刻生效，已经同步改了当前 `.yyz` 现货。
 - 插件级 hook 这轮没有补真实业务示例，只把默认测试痕迹去掉并统一成标准空结构。
 - 插件级 MCP 当前已经能加载，但还没有单独的前端编辑器；现在主要靠文件配置。
+- command 当前仍未做完的只剩一层：
+  - 当前 remote / 普通前台发送 已做 command 展开
+  - 自动化目前**不做** command 展开
+  - 还没有专门给“所有其它潜在消息注入入口”统一抽成一个共用 command 预处理服务
+  - 前端没有现成构建脚本，当前只能做后端语法检查与 command 烟测，不能直接跑 `npm run build`

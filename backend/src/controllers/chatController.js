@@ -834,6 +834,53 @@ function emitRunEvent(run, payload, conversationRunCoordinator, res) {
   }
 }
 
+async function expandMessageTextWithPluginCommands({
+  pluginCatalog,
+  text,
+  selectedPluginNames
+}) {
+  const normalizedText = String(text ?? "");
+  if (!normalizedText.trim()) {
+    return normalizedText;
+  }
+  if (!pluginCatalog || typeof pluginCatalog.expandCommandsInText !== "function") {
+    return normalizedText;
+  }
+
+  const expanded = await pluginCatalog.expandCommandsInText(normalizedText, {
+    selectedPluginNames
+  });
+  return String(expanded?.text ?? normalizedText);
+}
+
+async function expandMessagesWithPluginCommands({
+  pluginCatalog,
+  messages,
+  selectedPluginNames
+}) {
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  const nextMessages = [];
+
+  for (const message of sourceMessages) {
+    const normalizedRole = String(message?.role ?? "").trim();
+    if (normalizedRole !== "user") {
+      nextMessages.push(message);
+      continue;
+    }
+
+    nextMessages.push({
+      ...message,
+      content: await expandMessageTextWithPluginCommands({
+        pluginCatalog,
+        text: message?.content,
+        selectedPluginNames
+      })
+    });
+  }
+
+  return nextMessages;
+}
+
 function conversationHasUserMessages(messages = []) {
   return Array.isArray(messages)
     ? messages.some((message) => String(message?.role ?? "").trim() === "user")
@@ -3083,6 +3130,15 @@ export function createChatController({
         const visionRuntimeConfig = resolveAgentRuntimeConfig(configValidation.data, {
           role: "vision",
           modelProfileId: configValidation.data.defaultVisionModelProfileId
+        });
+        effectiveMessages = await expandMessagesWithPluginCommands({
+          pluginCatalog,
+          messages: effectiveMessages,
+          selectedPluginNames: Array.isArray(resolvedRuntime?.activePluginNames)
+            ? resolvedRuntime.activePluginNames
+            : Array.isArray(existingConversation?.plugins)
+              ? existingConversation.plugins
+              : []
         });
 
         const nextForegroundRun = wakeDispatcher?.beginForegroundRun?.({

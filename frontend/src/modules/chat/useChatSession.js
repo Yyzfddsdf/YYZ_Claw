@@ -1321,6 +1321,7 @@ export function useChatSession(runtimeConfig = {}) {
   const selectedSkillsRef = useRef([]);
   const selectedPluginsRef = useRef([]);
   const messagesRef = useRef([]);
+  const messagesConversationIdRef = useRef("");
   const activeConversationIdRef = useRef("");
   const queuedUserMessagesRef = useRef([]);
   const pendingApprovalsByConversationRef = useRef({});
@@ -1714,7 +1715,7 @@ export function useChatSession(runtimeConfig = {}) {
             skills: [],
             plugins: []
           });
-          setMessages([]);
+          setVisibleMessagesForConversation(draftConversationId, []);
           setTokenUsageRecords([]);
           setPendingApprovalValue(null, { clearAll: true });
           return;
@@ -1772,7 +1773,7 @@ export function useChatSession(runtimeConfig = {}) {
           : [];
 
         writeConversationMessages(initialConversationId, initialMessagesForView);
-        setMessages(initialMessagesForView);
+        setVisibleMessagesForConversation(initialConversationId, initialMessagesForView);
         setTokenUsageRecords(loadedTokenUsageRecords);
         setPendingApprovalValue(null, { clearAll: true });
       } catch (historyError) {
@@ -2021,11 +2022,30 @@ export function useChatSession(runtimeConfig = {}) {
     lastPersistedSignatureRef.current = "";
   }, [activeConversationId]);
 
-  useEffect(() => {
-    messagesRef.current = Array.isArray(messages) ? messages.map(normalizeChatMessage) : [];
-    const normalizedConversationId = String(activeConversationId ?? "").trim();
+  function setVisibleMessagesForConversation(conversationId, nextMessages) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    const normalizedMessages = Array.isArray(nextMessages)
+      ? nextMessages.map((item) => normalizeChatMessage(item))
+      : [];
+
+    messagesRef.current = normalizedMessages;
+    messagesConversationIdRef.current = normalizedConversationId;
     if (normalizedConversationId) {
-      conversationMessageCacheRef.current.set(normalizedConversationId, messagesRef.current);
+      conversationMessageCacheRef.current.set(normalizedConversationId, normalizedMessages);
+    }
+    setMessages(normalizedMessages);
+    return normalizedMessages;
+  }
+
+  useEffect(() => {
+    const normalizedMessages = Array.isArray(messages) ? messages.map(normalizeChatMessage) : [];
+    const normalizedConversationId = String(activeConversationId ?? "").trim();
+    messagesRef.current = normalizedMessages;
+    if (
+      normalizedConversationId &&
+      String(messagesConversationIdRef.current ?? "").trim() === normalizedConversationId
+    ) {
+      conversationMessageCacheRef.current.set(normalizedConversationId, normalizedMessages);
     }
   }, [messages, activeConversationId]);
 
@@ -2164,7 +2184,7 @@ export function useChatSession(runtimeConfig = {}) {
     conversationMessageCacheRef.current.set(normalizedConversationId, normalizedMessages);
 
     if (activeConversationIdRef.current === normalizedConversationId) {
-      setMessages(normalizedMessages);
+      setVisibleMessagesForConversation(normalizedConversationId, normalizedMessages);
     }
 
     return normalizedMessages;
@@ -2582,7 +2602,7 @@ export function useChatSession(runtimeConfig = {}) {
         ? history.tokenUsageRecords.map(normalizeTokenUsageRecord)
         : [];
       conversationMessageCacheRef.current.set(normalizedConversationId, nextMessages);
-      setMessages(nextMessages);
+      setVisibleMessagesForConversation(normalizedConversationId, nextMessages);
       setTokenUsageRecords(nextTokenUsageRecords);
       setConversationList(nextConversationList);
     } catch (loadError) {
@@ -2641,7 +2661,7 @@ export function useChatSession(runtimeConfig = {}) {
     };
     setActiveConversationId(conversationId);
     lastPersistedSignatureRef.current = "";
-    setMessages([]);
+    setVisibleMessagesForConversation(conversationId, []);
     setPendingApprovalValue(null);
     setError("");
   }
@@ -2684,7 +2704,7 @@ export function useChatSession(runtimeConfig = {}) {
       selectedSkillsRef.current = [
         ...resolveConversationSkills(String(history.id), nextConversationList, null)
       ];
-      setMessages(normalizeLoadedMessages(history.messages));
+      setVisibleMessagesForConversation(String(history.id), normalizeLoadedMessages(history.messages));
       setTokenUsageRecords(
         Array.isArray(history.tokenUsageRecords)
           ? history.tokenUsageRecords.map(normalizeTokenUsageRecord)
@@ -2951,7 +2971,7 @@ export function useChatSession(runtimeConfig = {}) {
       if (deletesActiveConversation) {
         activeConversationIdRef.current = "";
         setActiveConversationId("");
-        setMessages([]);
+        setVisibleMessagesForConversation("", []);
         setTokenUsageRecords([]);
       }
 
@@ -3038,8 +3058,9 @@ export function useChatSession(runtimeConfig = {}) {
     }
 
     if (getLocalQueueState(targetMessage) === "queued") {
-      setMessages((prev) =>
-        prev.filter(
+      setVisibleMessagesForConversation(
+        activeConversationId,
+        messagesRef.current.filter(
           (message) => String(normalizeChatMessage(message).id ?? "").trim() !== normalizedMessageId
         )
       );
@@ -3079,7 +3100,7 @@ export function useChatSession(runtimeConfig = {}) {
         ? history.tokenUsageRecords.map(normalizeTokenUsageRecord)
         : [];
 
-      setMessages(normalizedMessages);
+      setVisibleMessagesForConversation(activeConversationId, normalizedMessages);
       setTokenUsageRecords(nextTokenUsageRecords);
       setConversationList((prev) => upsertSummary(prev, toSummary(history)));
       lastPersistedSignatureRef.current = buildPersistenceSignature({
@@ -5297,7 +5318,14 @@ export function useChatSession(runtimeConfig = {}) {
       return;
     }
 
-    const nextMessages = [...messagesRef.current.map(normalizeChatMessage), userMessage];
+    const cachedTargetMessages = readConversationMessages(targetConversationId);
+    const currentScreenBelongsToTarget =
+      String(messagesConversationIdRef.current ?? "").trim() === String(targetConversationId ?? "").trim();
+    const baseMessages =
+      cachedTargetMessages.length > 0 || !currentScreenBelongsToTarget
+        ? cachedTargetMessages
+        : messagesRef.current.map(normalizeChatMessage);
+    const nextMessages = [...baseMessages, userMessage];
     const messagesForApi = normalizeForApi(nextMessages);
 
     if (shouldPersistDraftConversation) {
@@ -5332,7 +5360,7 @@ export function useChatSession(runtimeConfig = {}) {
       }
     }
 
-    setMessages((prev) => [...prev, userMessage]);
+    writeConversationMessages(targetConversationId, nextMessages);
     await runConversationStreamLoop({
       conversationId: targetConversationId,
       messages: messagesForApi,

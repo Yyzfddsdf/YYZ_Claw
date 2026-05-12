@@ -16,6 +16,7 @@ import { MemoryPanel } from "./modules/memory/MemoryPanel";
 import { PersonaPanel } from "./modules/personas/PersonaPanel";
 import { DesktopPet } from "./modules/pets/DesktopPet";
 import { PetPanel } from "./modules/pets/PetPanel";
+import { PluginsPanel } from "./modules/plugins/PluginsPanel";
 import { RemoteControlPanel } from "./modules/remote-control/RemoteControlPanel";
 import { SkillsPanel } from "./modules/skills/SkillsPanel";
 import { SubagentPanel } from "./modules/subagents/SubagentPanel";
@@ -690,6 +691,21 @@ function MainApp({
           <button
             type="button"
             role="tab"
+            aria-selected={activeWorkspace === "plugins"}
+            className={`nav-item ${activeWorkspace === "plugins" ? "active" : ""}`}
+            onClick={() => setActiveWorkspace("plugins")}
+          >
+            <svg className="icon" viewBox="0 0 24 24">
+              <path d="M4 7l8-4l8 4l-8 4z" />
+              <path d="M4 7v10l8 4l8-4V7" />
+              <path d="M12 11v10" />
+            </svg>
+            插件市场
+          </button>
+
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeWorkspace === "pets"}
             className={`nav-item ${activeWorkspace === "pets" ? "active" : ""}`}
             onClick={() => setActiveWorkspace("pets")}
@@ -853,6 +869,12 @@ function MainApp({
         {activeWorkspace === "subagents" && (
           <section className="panel panel-subagents" role="tabpanel" aria-label="subagent workspace">
             <SubagentPanel onNavigate={(nav) => setActiveWorkspace(nav)} />
+          </section>
+        )}
+
+        {activeWorkspace === "plugins" && (
+          <section className="panel panel-plugins" role="tabpanel" aria-label="plugin marketplace workspace">
+            <PluginsPanel chat={chat} onNavigate={(nav) => setActiveWorkspace(nav)} />
           </section>
         )}
 

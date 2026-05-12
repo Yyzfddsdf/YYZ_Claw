@@ -256,7 +256,7 @@ function parseStructuredPatch(patch) {
 
     if (current.type === "add") {
       if (!line.startsWith("+")) {
-        throw new Error("Add File lines must start with '+'.");
+        throw new Error("Add File lines must start with '+'. The line must begin with '+' followed by a space and the content (e.g., '+ hello'), not '+hello' without the space. Do not omit the space between '+' and the content.");
       }
 
       current.contentLines.push(line.slice(1));

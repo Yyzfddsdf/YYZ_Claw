@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-import { GLOBAL_HOOKS_FILE } from "../../config/paths.js";
+import { GLOBAL_HOOKS_FILE, YYZ_DIR } from "../../config/paths.js";
 
 const SUPPORTED_EVENTS = new Set([
   "SessionStart",
@@ -207,19 +207,40 @@ function buildScopeSources(globalHooks, pluginHooks = []) {
     sources.push({
       scopeType: "plugin",
       scopeName: normalizeText(pluginHook.pluginName) || "plugin",
+      pluginRootDir: normalizeText(pluginHook.pluginRootDir),
       hooks: pluginHook.hooks
     });
   }
   return sources;
 }
 
-async function runCommandHandler(command, input, timeoutSeconds, cwd) {
+function expandHookCommandTokens(value, pluginRootDir = "", yyzRootDir = YYZ_DIR) {
+  const normalizedPluginRootDir = normalizeText(pluginRootDir);
+  const normalizedYyzRootDir = normalizeText(yyzRootDir);
+  return String(value ?? "")
+    .replaceAll("${YYZ_ROOT}", normalizedYyzRootDir)
+    .replaceAll("$YYZ_ROOT", normalizedYyzRootDir)
+    .replaceAll("${CLAUDE_PLUGIN_ROOT}", normalizedPluginRootDir)
+    .replaceAll("$CLAUDE_PLUGIN_ROOT", normalizedPluginRootDir)
+    .replaceAll("${PLUGIN_ROOT}", normalizedPluginRootDir)
+    .replaceAll("$PLUGIN_ROOT", normalizedPluginRootDir);
+}
+
+async function runCommandHandler(command, input, timeoutSeconds, cwd, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, {
+    const pluginRootDir = normalizeText(options.pluginRootDir);
+    const yyzRootDir = normalizeText(options.yyzRootDir) || YYZ_DIR;
+    const child = spawn(expandHookCommandTokens(command, pluginRootDir, yyzRootDir), {
       cwd: cwd || process.cwd(),
       shell: true,
       stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true
+      windowsHide: true,
+      env: {
+        ...process.env,
+        YYZ_ROOT: yyzRootDir,
+        CLAUDE_PLUGIN_ROOT: pluginRootDir,
+        PLUGIN_ROOT: pluginRootDir
+      }
     });
     let stdout = "";
     let stderr = "";
@@ -364,6 +385,7 @@ export class HookExecutionService {
         const hooks = await readHookConfigFile(hooksPath);
         pluginHooks.push({
           pluginName: plugin.name,
+          pluginRootDir: plugin.rootDir,
           hooks
         });
       }
@@ -399,6 +421,7 @@ export class HookExecutionService {
               ...handler,
               scopeType: source.scopeType,
               scopeName: source.scopeName,
+              pluginRootDir: source.pluginRootDir,
               matcher: group.matcher
             });
           }
@@ -457,7 +480,10 @@ export class HookExecutionService {
         handler.command,
         input,
         handler.timeoutSeconds,
-        normalizeText(input.cwd)
+        normalizeText(input.cwd),
+        {
+          pluginRootDir: handler.pluginRootDir
+        }
       );
       const parsedStdout = parseHookStdout(commandResult.stdout);
       if (parsedStdout.kind === "json") {

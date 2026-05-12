@@ -1,11 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { fetchPlugins, refreshPlugins } from "../../api/pluginsApi";
+import {
+  addPluginMarketplace,
+  fetchMarketplacePlugins,
+  fetchPluginMarketplaces,
+  fetchPlugins,
+  installMarketplacePlugin,
+  refreshPlugins
+} from "../../api/pluginsApi";
 import "./plugins.css";
 
 function normalizePluginsResponse(response) {
   return {
     rootDir: String(response?.rootDir ?? ""),
+    plugins: Array.isArray(response?.plugins) ? response.plugins : [],
+    errors: Array.isArray(response?.errors) ? response.errors : []
+  };
+}
+
+function normalizeMarketplaceResponse(response) {
+  return {
+    marketplaces: Array.isArray(response?.marketplaces) ? response.marketplaces : [],
     plugins: Array.isArray(response?.plugins) ? response.plugins : [],
     errors: Array.isArray(response?.errors) ? response.errors : []
   };
@@ -84,18 +99,41 @@ function PluginIcon({ plugin }) {
   );
 }
 
+function getMarketplaceKey(marketplace) {
+  return String(marketplace?.id || marketplace?.name || marketplace?.source || "unknown").trim();
+}
+
+function getMarketplaceLabel(marketplace) {
+  return String(marketplace?.displayName || marketplace?.name || marketplace?.id || "未知市场").trim();
+}
+
+function pluginMatchesSearch(plugin, query) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+  return [
+    plugin?.name,
+    plugin?.displayName,
+    plugin?.description,
+    plugin?.version,
+    plugin?.marketplace?.displayName,
+    plugin?.marketplace?.name
+  ]
+    .map((value) => String(value ?? "").toLowerCase())
+    .some((value) => value.includes(normalizedQuery));
+}
+
 export function PluginsPanel({ chat, onNavigate }) {
   const [state, setState] = useState(() => normalizePluginsResponse(null));
   const [loading, setLoading] = useState(true);
-  const [savingPluginName, setSavingPluginName] = useState("");
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [installingPluginName, setInstallingPluginName] = useState("");
   const [error, setError] = useState("");
-  const activeConversationPlugins = Array.isArray(chat?.activeConversationPlugins)
-    ? chat.activeConversationPlugins
-    : [];
-  const activeConversationPluginSet = useMemo(
-    () => new Set(activeConversationPlugins.map((item) => String(item ?? "").trim().toLowerCase())),
-    [activeConversationPlugins]
-  );
+  const [marketplaceState, setMarketplaceState] = useState(() => normalizeMarketplaceResponse(null));
+  const [marketplaceSource, setMarketplaceSource] = useState("");
+  const [marketplaceSearch, setMarketplaceSearch] = useState("");
+  const [expandedMarketplaces, setExpandedMarketplaces] = useState(() => new Set());
 
   async function loadPlugins() {
     setLoading(true);
@@ -109,16 +147,31 @@ export function PluginsPanel({ chat, onNavigate }) {
     }
   }
 
+  async function loadMarketplace() {
+    setMarketLoading(true);
+    try {
+      const [marketplacesResponse, pluginsResponse] = await Promise.all([
+        fetchPluginMarketplaces(),
+        fetchMarketplacePlugins()
+      ]);
+      setMarketplaceState({
+        marketplaces: Array.isArray(marketplacesResponse?.marketplaces)
+          ? marketplacesResponse.marketplaces
+          : [],
+        plugins: Array.isArray(pluginsResponse?.plugins) ? pluginsResponse.plugins : [],
+        errors: Array.isArray(pluginsResponse?.errors) ? pluginsResponse.errors : []
+      });
+    } catch (loadError) {
+      setError(loadError?.message || "加载插件市场失败");
+    } finally {
+      setMarketLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadPlugins();
+    loadMarketplace();
   }, []);
-
-  const enabledCount = useMemo(
-    () => state.plugins.filter((plugin) =>
-      activeConversationPluginSet.has(String(plugin.name ?? "").trim().toLowerCase())
-    ).length,
-    [state.plugins, activeConversationPluginSet]
-  );
 
   async function handleRefresh() {
     setLoading(true);
@@ -126,6 +179,7 @@ export function PluginsPanel({ chat, onNavigate }) {
     try {
       await refreshPlugins();
       setState(normalizePluginsResponse(await fetchPlugins()));
+      await loadMarketplace();
     } catch (refreshError) {
       setError(refreshError?.message || "刷新插件失败");
     } finally {
@@ -133,27 +187,71 @@ export function PluginsPanel({ chat, onNavigate }) {
     }
   }
 
-  async function togglePlugin(plugin) {
+  async function handleAddMarketplace(event) {
+    event.preventDefault();
+    const source = marketplaceSource.trim();
+    if (!source) {
+      return;
+    }
+    setError("");
+    try {
+      await addPluginMarketplace({ source });
+      setMarketplaceSource("");
+      await loadMarketplace();
+    } catch (addError) {
+      setError(addError?.message || "添加市场失败");
+    }
+  }
+
+  async function handleInstallMarketplacePlugin(plugin) {
     const pluginName = String(plugin?.name ?? "").trim();
     if (!pluginName) {
       return;
     }
-
-    setSavingPluginName(pluginName);
+    setInstallingPluginName(pluginName);
     setError("");
     try {
-      const currentlyEnabled = activeConversationPluginSet.has(pluginName.toLowerCase());
-      const nextPlugins = currentlyEnabled
-        ? activeConversationPlugins.filter((item) => String(item ?? "").trim().toLowerCase() !== pluginName.toLowerCase())
-        : [...activeConversationPlugins, pluginName];
-      await chat?.setConversationPlugins?.(nextPlugins);
-      await chat?.reloadSkillCatalog?.();
-    } catch (saveError) {
-      setError(saveError?.message || "更新插件失败");
+      await installMarketplacePlugin(plugin);
+      setState(normalizePluginsResponse(await fetchPlugins()));
+      await chat?.refreshPluginCatalog?.();
+    } catch (installError) {
+      setError(installError?.message || "安装插件失败");
     } finally {
-      setSavingPluginName("");
+      setInstallingPluginName("");
     }
   }
+
+  function toggleMarketplaceCollapse(marketplaceKey) {
+    setExpandedMarketplaces((previous) => {
+      const next = new Set(previous);
+      if (next.has(marketplaceKey)) {
+        next.delete(marketplaceKey);
+      } else {
+        next.add(marketplaceKey);
+      }
+      return next;
+    });
+  }
+
+  const installedPluginNameSet = new Set(
+    state.plugins.map((item) => String(item?.name ?? "").trim().toLowerCase()).filter(Boolean)
+  );
+  const marketplaceGroups = marketplaceState.marketplaces.map((marketplace) => {
+    const marketplaceKey = getMarketplaceKey(marketplace);
+    const plugins = marketplaceState.plugins.filter(
+      (plugin) => getMarketplaceKey(plugin?.marketplace) === marketplaceKey
+    );
+    const filteredPlugins = plugins.filter((plugin) => pluginMatchesSearch(plugin, marketplaceSearch));
+    return {
+      marketplace,
+      marketplaceKey,
+      plugins,
+      filteredPlugins
+    };
+  });
+  const visibleMarketplaceGroups = marketplaceGroups.filter((group) =>
+    marketplaceSearch.trim() ? group.filteredPlugins.length > 0 : true
+  );
 
   return (
     <div className="plugins-panel">
@@ -173,7 +271,7 @@ export function PluginsPanel({ chat, onNavigate }) {
         </div>
         <div className="plugins-panel-header-right">
           <span className="plugins-count">
-            当前会话已启用: {enabledCount} / {state.plugins.length}
+            已安装插件: {state.plugins.length}
           </span>
           <button
             type="button"
@@ -189,6 +287,113 @@ export function PluginsPanel({ chat, onNavigate }) {
       <main className="plugins-panel-content">
         {error && <div className="plugins-error">{error}</div>}
 
+        <section className="marketplace-section">
+          <div className="marketplace-section-header">
+            <div>
+              <h3>插件市场</h3>
+              <p>市场是插件目录索引，安装后插件才会进入本地插件中心。</p>
+            </div>
+            <span>{marketplaceState.marketplaces.length} 个市场</span>
+          </div>
+
+          <form className="marketplace-add-form" onSubmit={handleAddMarketplace}>
+            <input
+              value={marketplaceSource}
+              onChange={(event) => setMarketplaceSource(event.target.value)}
+              placeholder="GitHub 市场，如 anthropics/claude-plugins-official，或本地 marketplace 根目录"
+            />
+            <button type="submit" className="mode-pill" disabled={!marketplaceSource.trim()}>
+              添加市场
+            </button>
+          </form>
+
+          <div className="marketplace-toolbar">
+            <input
+              value={marketplaceSearch}
+              onChange={(event) => setMarketplaceSearch(event.target.value)}
+              placeholder="搜索插件名称、描述或市场"
+            />
+            <span>
+              {visibleMarketplaceGroups.reduce((sum, group) => sum + group.filteredPlugins.length, 0)}
+              {" / "}
+              {marketplaceState.plugins.length}
+            </span>
+          </div>
+
+          {marketLoading ? (
+            <div className="empty-note">正在加载市场...</div>
+          ) : marketplaceState.plugins.length === 0 ? (
+            <div className="empty-note">暂无市场插件。添加 marketplace 后刷新。</div>
+          ) : visibleMarketplaceGroups.length === 0 ? (
+            <div className="empty-note">没有匹配的插件。</div>
+          ) : (
+            <div className="marketplace-group-list">
+              {visibleMarketplaceGroups.map(({ marketplace, marketplaceKey, plugins, filteredPlugins }) => {
+                const expanded = marketplaceSearch.trim() || expandedMarketplaces.has(marketplaceKey);
+                return (
+                  <section key={marketplaceKey} className="marketplace-group">
+                    <button
+                      type="button"
+                      className="marketplace-group-header"
+                      onClick={() => toggleMarketplaceCollapse(marketplaceKey)}
+                      aria-expanded={expanded}
+                    >
+                      <div>
+                        <strong>{getMarketplaceLabel(marketplace)}</strong>
+                        <span>{marketplace.source}</span>
+                      </div>
+                      <em>
+                        {filteredPlugins.length} / {plugins.length}
+                        <span>{expanded ? "收起" : "展开"}</span>
+                      </em>
+                    </button>
+                    {expanded && (
+                      <div className="marketplace-plugin-list">
+                        {filteredPlugins.map((plugin) => {
+                          const pluginName = String(plugin?.name ?? "").trim();
+                          const installed = installedPluginNameSet.has(pluginName.toLowerCase());
+                          const canInstall = Boolean(plugin?.path || plugin?.localPath || plugin?.source);
+                          const installing = installingPluginName === pluginName;
+                          return (
+                            <article key={`${plugin?.marketplace?.id}-${plugin.entry}`} className="marketplace-plugin-card">
+                              <div>
+                                <h4>{plugin.displayName || pluginName}</h4>
+                                <p>{plugin.description || "暂无描述"}</p>
+                                <span>
+                                  {pluginName} {plugin.version ? `· v${plugin.version}` : ""}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                className="mode-pill"
+                                disabled={installed || installing || !canInstall}
+                                onClick={() => handleInstallMarketplacePlugin(plugin)}
+                              >
+                                {installed ? "已安装" : installing ? "安装中" : canInstall ? "安装" : "暂不支持"}
+                              </button>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+
+          {marketplaceState.errors.length > 0 && (
+            <div className="plugins-load-errors">
+              {marketplaceState.errors.map((item) => (
+                <div key={`${item.marketplaceId}-${item.source}`} className="plugins-load-error">
+                  <strong>{item.marketplaceName || item.marketplaceId}</strong>
+                  <span>{item.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {loading ? (
           <div className="empty-note">正在加载插件...</div>
         ) : state.plugins.length === 0 ? (
@@ -202,13 +407,10 @@ export function PluginsPanel({ chat, onNavigate }) {
                 plugin.interface?.shortDescription || plugin.description || "暂无描述";
               const authorName = plugin.author?.name || plugin.interface?.developerName || "";
               const brandColor = normalizeBrandColor(plugin.interface?.brandColor);
-              const isEnabled = activeConversationPluginSet.has(String(plugin.name ?? "").trim().toLowerCase());
-              const isSaving = savingPluginName === plugin.name;
-
               return (
                 <article
                   key={plugin.name}
-                  className={`plugin-card ${isEnabled ? "is-enabled" : ""}`}
+                  className="plugin-card"
                   style={brandColor ? { "--plugin-brand": brandColor } : undefined}
                 >
                   <div className="plugin-card-top">
@@ -221,14 +423,6 @@ export function PluginsPanel({ chat, onNavigate }) {
                         </span>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className={`plugin-toggle ${isEnabled ? "is-on" : ""}`}
-                      onClick={() => togglePlugin(plugin)}
-                      disabled={isSaving || !chat?.activeConversationId}
-                    >
-                      {isEnabled ? "会话启用" : "会话关闭"}
-                    </button>
                   </div>
 
                   <p className="plugin-card-description">{description}</p>

@@ -11,6 +11,8 @@ import {
   HOOKS_DIR,
   RUNTIME_BLOCKS_DIR,
   MCP_CONFIG_FILE,
+  KNOWN_MARKETPLACES_FILE,
+  LOCAL_MARKETPLACE_FILE,
   PLUGINS_DIR,
   REMOTE_CONTROL_CONFIG_FILE,
   MEMORY_SUMMARY_FILE,
@@ -27,7 +29,8 @@ import {
   SUBAGENT_ASSETS_DIR,
   SUBAGENT_RUNTIME_DIR,
   TASKS_DIR,
-  TOOLS_DIR
+  TOOLS_DIR,
+  YYZ_DIR
 } from "../config/paths.js";
 import { ensureYyzHome } from "../config/ensureYyzHome.js";
 import { ChatAgent } from "../services/agent/ChatAgent.js";
@@ -40,6 +43,7 @@ import { AgentsPromptStore } from "../services/config/AgentsPromptStore.js";
 import { MemorySummaryStore } from "../services/config/MemorySummaryStore.js";
 import { HookSettingsStore } from "../services/config/HookSettingsStore.js";
 import { PersonaStore } from "../services/personas/PersonaStore.js";
+import { MarketplaceStore } from "../services/plugins/MarketplaceStore.js";
 import { PluginCatalog } from "../services/plugins/PluginCatalog.js";
 import { PluginPromptBuilder } from "../services/plugins/PluginPromptBuilder.js";
 import { McpConfigStore } from "../services/config/McpConfigStore.js";
@@ -118,6 +122,14 @@ export async function createServices() {
   });
   await pluginCatalog.ensureDirectory();
   await pluginCatalog.read();
+  const marketplaceStore = new MarketplaceStore({
+    filePath: KNOWN_MARKETPLACES_FILE,
+    localMarketplaceRootDir: YYZ_DIR,
+    localMarketplaceFilePath: LOCAL_MARKETPLACE_FILE,
+    projectRootDir: PROJECT_ROOT,
+    pluginInstallDir: PLUGINS_DIR
+  });
+  await marketplaceStore.ensureFile();
   const backgroundStore = new BackgroundStore({
     rootDir: BACKGROUNDS_DIR
   });
@@ -435,6 +447,7 @@ export async function createServices() {
     feishuConfigStore,
     mcpConfigStore,
     hookSettingsStore,
+    marketplaceStore,
     pluginCatalog,
     approvalRulesStore,
     agentsPromptStore,

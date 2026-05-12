@@ -348,7 +348,8 @@ function normalizeSkillRecord(plugin, skillRootDir, parsed, stats) {
 function normalizeCommandRecord(plugin, commandFilePath, parsed, stats) {
   const relativePath = safeRelativePath(plugin.commandsRootDir, commandFilePath);
   const rawFrontmatter = isPlainObject(parsed.frontmatter) ? parsed.frontmatter : {};
-  const name = normalizeCommandName(rawFrontmatter.name);
+  const fallbackName = path.basename(commandFilePath, path.extname(commandFilePath));
+  const name = normalizeCommandName(rawFrontmatter.name || fallbackName);
   const description = normalizeText(rawFrontmatter.description);
 
   if (!name) {
@@ -365,6 +366,7 @@ function normalizeCommandRecord(plugin, commandFilePath, parsed, stats) {
     name,
     normalizedName: normalizeName(name),
     description,
+    metadata: rawFrontmatter,
     relativePath,
     filePath: commandFilePath,
     size: stats.size,

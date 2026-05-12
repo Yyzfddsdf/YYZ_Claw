@@ -1,0 +1,59 @@
+{
+  "marketplaces": [
+    {
+      "id": "anthropic-official",
+      "name": "anthropic-official",
+      "displayName": "Anthropic 官方插件市场",
+      "description": "Official Claude Code plugins marketplace from Anthropic.",
+      "source": "anthropics/claude-plugins-official",
+      "sourceType": "remote",
+      "addedAt": 0,
+      "updatedAt": 0,
+      "error": ""
+    },
+    {
+      "id": "anthropic-claude-code",
+      "name": "anthropic-claude-code",
+      "displayName": "Anthropic Claude Code 插件市场",
+      "description": "Claude Code repository marketplace catalog.",
+      "source": "anthropics/claude-code",
+      "sourceType": "remote",
+      "addedAt": 0,
+      "updatedAt": 0,
+      "error": ""
+    },
+    {
+      "id": "hyperskill-marketplace",
+      "name": "hyperskill-marketplace",
+      "displayName": "Hyperskill Claude Code Marketplace",
+      "description": "Hyperskill Claude Code plugin marketplace.",
+      "source": "hyperskill/claude-code-marketplace",
+      "sourceType": "remote",
+      "addedAt": 0,
+      "updatedAt": 0,
+      "error": ""
+    },
+    {
+      "id": "dustywalker-marketplace",
+      "name": "dustywalker-marketplace",
+      "displayName": "DustyWalker Claude Code Marketplace",
+      "description": "DustyWalker Claude Code plugin marketplace.",
+      "source": "DustyWalker/claude-code-marketplace",
+      "sourceType": "remote",
+      "addedAt": 0,
+      "updatedAt": 0,
+      "error": ""
+    },
+    {
+      "id": "marcusabu-docs-marketplace",
+      "name": "marcusabu-docs-marketplace",
+      "displayName": "Marcus Abu Claude Docs Marketplace",
+      "description": "Claude Code docs plugin marketplace by marcusabu.",
+      "source": "marcusabu/claude-code-docs-plugin",
+      "sourceType": "remote",
+      "addedAt": 0,
+      "updatedAt": 0,
+      "error": ""
+    }
+  ]
+}

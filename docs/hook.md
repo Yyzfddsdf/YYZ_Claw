@@ -138,13 +138,41 @@ Hook 是一套 **事件驱动的拦截和注入机制**。
 
 全局 hook 配置文件位置：
 
-- `C:\Users\HUAWEI\.yyz\hooks\hooks.json`
+- `<home>/.yyz/hooks/hooks.json`
 
 全局 hook 脚本通常也放在同目录：
 
-- `C:\Users\HUAWEI\.yyz\hooks\*.ps1`
+- `<home>/.yyz/hooks/*.ps1`
 - 或 `*.py`
 - 或其他可执行脚本
+
+全局 command hook 支持 `.yyz` 根目录便捷访问：
+
+- `${YYZ_ROOT}` 会在 `command` 字符串中展开为当前用户的 `.yyz` 根目录。
+- `$YYZ_ROOT` 是同义写法。
+- 执行脚本时会注入环境变量 `YYZ_ROOT`。
+- `YYZ_ROOT` 来自运行时 `YYZ_DIR`：如果设置了 `YYZ_CLAW_HOME` 就使用该目录，否则使用当前用户主目录下的 `.yyz`。
+
+示例：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -ExecutionPolicy Bypass -File \"${YYZ_ROOT}/hooks/pre_tool_use.ps1\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ### 插件级 Hook
 
@@ -153,6 +181,35 @@ Hook 是一套 **事件驱动的拦截和注入机制**。
 - `<plugin-root>/hooks/hooks.json`
 
 插件 hook 只会在对应插件启用时生效。
+
+插件级 command hook 支持插件根目录便捷访问：
+
+- `${CLAUDE_PLUGIN_ROOT}` 会在 `command` 字符串中展开为当前插件根目录。
+- `${PLUGIN_ROOT}` 是同义别名，也会展开为当前插件根目录。
+- 执行脚本时会同时注入环境变量 `CLAUDE_PLUGIN_ROOT` 和 `PLUGIN_ROOT`。
+- `${YYZ_ROOT}` 在插件级 command hook 中也可用，仍指向当前用户的 `.yyz` 根目录。
+- `cwd` 仍然表示当前工作区目录，不等于插件目录；需要访问插件内脚本、配置或资源时，优先使用上述占位符。
+
+示例：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/check_write.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ---
 

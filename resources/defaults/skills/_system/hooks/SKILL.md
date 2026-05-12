@@ -48,6 +48,22 @@ Global hook enable/disable state:
 
 - `<home>/.yyz/config/hook-settings.json`
 
+Global command hooks can use the `.yyz` root shortcut:
+
+- `${YYZ_ROOT}` or `$YYZ_ROOT` inside `command` expands to the current user `.yyz` root
+- command hook processes receive the `YYZ_ROOT` environment variable
+- `YYZ_ROOT` comes from runtime `YYZ_DIR`: `YYZ_CLAW_HOME` if set, otherwise `<home>/.yyz`
+
+Example global hook command:
+
+```json
+{
+  "type": "command",
+  "command": "powershell.exe -ExecutionPolicy Bypass -File \"${YYZ_ROOT}/hooks/pre_tool_use.ps1\"",
+  "timeout": 10
+}
+```
+
 ### Plugin hooks
 
 Plugin hook config:
@@ -64,6 +80,20 @@ Important:
 
 - global hook enable/disable settings only affect **global** hooks
 - plugin hooks are **not** controlled by the global hook-settings file
+- plugin command hooks can use `${CLAUDE_PLUGIN_ROOT}` or `${PLUGIN_ROOT}` inside `command`; both expand to the current plugin root
+- plugin command hooks can also use `${YYZ_ROOT}` or `$YYZ_ROOT` for the current user `.yyz` root
+- plugin command hooks also receive `CLAUDE_PLUGIN_ROOT`, `PLUGIN_ROOT`, and `YYZ_ROOT` environment variables
+- `cwd` remains the current workspace directory; use the plugin-root placeholders when a hook needs files inside the plugin
+
+Example plugin hook command:
+
+```json
+{
+  "type": "command",
+  "command": "python ${CLAUDE_PLUGIN_ROOT}/hooks/security_reminder_hook.py",
+  "timeout": 10
+}
+```
 
 ---
 
@@ -815,6 +845,7 @@ When authoring plugin hooks:
 - do not invent a different file format
 - reuse the exact same `hooks/hooks.json` structure
 - keep plugin-specific scripts inside the plugin `hooks/` folder
+- reference plugin-local files with `${CLAUDE_PLUGIN_ROOT}` or `${PLUGIN_ROOT}` instead of absolute paths
 - use global hooks only for behavior that should apply everywhere
 
 Plugin hooks are the same mechanism.

@@ -3855,21 +3855,13 @@ export function useChatSession(runtimeConfig = {}) {
   function applyAgentEvent(event, streamState, targetConversationId, options = {}) {
     const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
     const source = String(options?.source ?? "direct").trim().toLowerCase();
-    const eventType = String(event?.type ?? "").trim();
-    const isForegroundAssistantStreamEvent =
+    const isForegroundConversationExternalEvent =
       source === "external" &&
       (
         isConversationForegroundStreaming(normalizedTargetConversationId) ||
         foregroundStreamLoopConversationIdsRef.current.has(normalizedTargetConversationId)
-      ) &&
-      (
-        eventType === "assistant_token" ||
-        eventType === "assistant_reasoning_token" ||
-        eventType === "assistant_message_end" ||
-        eventType === "final" ||
-        eventType === "usage"
       );
-    if (isForegroundAssistantStreamEvent) {
+    if (isForegroundConversationExternalEvent) {
       return true;
     }
 

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { YYZ_DIR } from "../../config/paths.js";
 import { McpClient } from "./McpClient.js";
 
 function isPlainObject(value) {
@@ -83,26 +84,48 @@ function normalizeServerDefinition(rawServer = {}, fallbackName = "server") {
   };
 }
 
-function expandPluginRootToken(value, pluginRootDir) {
-  return String(value ?? "").replaceAll("${PLUGIN_ROOT}", String(pluginRootDir ?? "").trim());
+function expandRootTokens(value, { pluginRootDir = "", yyzRootDir = YYZ_DIR } = {}) {
+  const normalizedPluginRootDir = String(pluginRootDir ?? "").trim();
+  const normalizedYyzRootDir = String(yyzRootDir ?? "").trim();
+  return String(value ?? "")
+    .replaceAll("${YYZ_ROOT}", normalizedYyzRootDir)
+    .replaceAll("$YYZ_ROOT", normalizedYyzRootDir)
+    .replaceAll("${CLAUDE_PLUGIN_ROOT}", normalizedPluginRootDir)
+    .replaceAll("$CLAUDE_PLUGIN_ROOT", normalizedPluginRootDir)
+    .replaceAll("${PLUGIN_ROOT}", normalizedPluginRootDir)
+    .replaceAll("$PLUGIN_ROOT", normalizedPluginRootDir);
+}
+
+function expandServerDefinitionTokens(server, options = {}) {
+  const expandedEnv = Object.fromEntries(
+    Object.entries(normalizeServerEnv(server.env)).map(([key, value]) => [
+      key,
+      expandRootTokens(value, options)
+    ])
+  );
+  if (!Object.prototype.hasOwnProperty.call(expandedEnv, "YYZ_ROOT")) {
+    expandedEnv.YYZ_ROOT = String(options.yyzRootDir ?? YYZ_DIR).trim();
+  }
+  if (options.pluginRootDir && !Object.prototype.hasOwnProperty.call(expandedEnv, "PLUGIN_ROOT")) {
+    expandedEnv.PLUGIN_ROOT = String(options.pluginRootDir ?? "").trim();
+  }
+  if (options.pluginRootDir && !Object.prototype.hasOwnProperty.call(expandedEnv, "CLAUDE_PLUGIN_ROOT")) {
+    expandedEnv.CLAUDE_PLUGIN_ROOT = String(options.pluginRootDir ?? "").trim();
+  }
+  return {
+    ...server,
+    command: expandRootTokens(server.command, options),
+    args: Array.isArray(server.args)
+      ? server.args.map((item) => expandRootTokens(item, options))
+      : [],
+    cwd: expandRootTokens(server.cwd, options),
+    env: expandedEnv,
+    url: expandRootTokens(server.url, options)
+  };
 }
 
 function expandPluginServerDefinition(server, pluginRootDir) {
-  return {
-    ...server,
-    command: expandPluginRootToken(server.command, pluginRootDir),
-    args: Array.isArray(server.args)
-      ? server.args.map((item) => expandPluginRootToken(item, pluginRootDir))
-      : [],
-    cwd: expandPluginRootToken(server.cwd, pluginRootDir),
-    env: Object.fromEntries(
-      Object.entries(normalizeServerEnv(server.env)).map(([key, value]) => [
-        key,
-        expandPluginRootToken(value, pluginRootDir)
-      ])
-    ),
-    url: expandPluginRootToken(server.url, pluginRootDir)
-  };
+  return expandServerDefinitionTokens(server, { pluginRootDir });
 }
 
 function normalizePluginNameSet(activePluginNames) {
@@ -240,7 +263,7 @@ export class McpManager {
     const globalConfig = await this.configStore.read();
     const globalServers = (Array.isArray(globalConfig?.servers) ? globalConfig.servers : [])
       .map((server, index) => ({
-        ...normalizeServerDefinition(server, `server_${index + 1}`),
+        ...expandServerDefinitionTokens(normalizeServerDefinition(server, `server_${index + 1}`)),
         sourceType: "global",
         pluginName: "",
         pluginDisplayName: "",

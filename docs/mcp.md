@@ -46,6 +46,35 @@
 - 整个项目都要用的 MCP
 - 不属于某个插件的 MCP
 
+全局 MCP 支持 `.yyz` 根目录便捷访问：
+
+- `${YYZ_ROOT}` 会在 `command`、`args`、`cwd`、`env`、`url` 中展开为当前用户的 `.yyz` 根目录。
+- `$YYZ_ROOT` 是同义写法。
+- MCP 进程环境变量会自动注入 `YYZ_ROOT`。
+- `YYZ_ROOT` 来自运行时 `YYZ_DIR`：如果设置了 `YYZ_CLAW_HOME` 就使用该目录，否则使用当前用户主目录下的 `.yyz`。
+- 全局 MCP 只有一个共享的 `${YYZ_ROOT}`，没有插件根目录。
+- 插件级 MCP 可以有多个插件根目录，每个启用插件各自展开自己的 `${PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_ROOT}`。
+
+示例：
+
+```json
+{
+  "servers": [
+    {
+      "name": "local-memory",
+      "transport": "stdio",
+      "command": "node",
+      "args": ["${YYZ_ROOT}/mcp/local-memory/server.js"],
+      "cwd": "${YYZ_ROOT}/mcp/local-memory",
+      "env": {
+        "DATA_DIR": "${YYZ_ROOT}/memory"
+      },
+      "enabled": true
+    }
+  ]
+}
+```
+
 ---
 
 ## 2. 插件级 MCP
@@ -107,13 +136,19 @@
 - `args` 必须是数组
 - `cwd` 是工作目录
 - `env` 是进程环境变量
-- `${PLUGIN_ROOT}` 会在运行时展开成插件根目录
+- `${YYZ_ROOT}` 会在运行时展开成当前用户的 `.yyz` 根目录
+- `${PLUGIN_ROOT}` 会在插件级 MCP 中展开成插件根目录
+- `${CLAUDE_PLUGIN_ROOT}` 是插件级 MCP 的兼容别名，含义同 `${PLUGIN_ROOT}`
 
-### `${PLUGIN_ROOT}` 应该怎么用
+### `${YYZ_ROOT}`、`${PLUGIN_ROOT}` 和 `${CLAUDE_PLUGIN_ROOT}` 应该怎么用
 
-`${PLUGIN_ROOT}` 代表**当前插件的根目录**。
+`${YYZ_ROOT}` 代表**当前用户的 `.yyz` 根目录**，全局 MCP 和插件级 MCP 都可以使用。
 
-它是宿主提供的一个路径占位符，用来避免把插件里的路径写死成绝对路径。
+`${PLUGIN_ROOT}` 代表**当前插件的根目录**，只适用于插件级 MCP。
+
+`${CLAUDE_PLUGIN_ROOT}` 是兼容 Claude 插件格式的别名，含义同 `${PLUGIN_ROOT}`，也只适用于插件级 MCP。
+
+它们都是宿主提供的路径占位符，用来避免把路径写死成绝对路径。
 
 适合填写在这些位置：
 
@@ -155,7 +190,7 @@
 - `env.DATA_DIR`
   - 告诉 server 它的数据目录在插件根目录下的 `data/`
 
-如果你的 MCP server 不在插件目录里，也可以完全不用 `${PLUGIN_ROOT}`，直接写：
+如果你的 MCP server 不在插件目录里，也可以完全不用 `${PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_ROOT}`，直接写：
 
 - 系统命令
 - `npx` 包

@@ -117,6 +117,34 @@ Example:
 
 - `mcp__filesystem__read_file`
 
+Global MCP supports the `.yyz` root shortcut:
+
+- `${YYZ_ROOT}` or `$YYZ_ROOT` can be used in `command`, `args`, `cwd`, `env`, and `url`
+- MCP server processes receive the `YYZ_ROOT` environment variable
+- `YYZ_ROOT` comes from runtime `YYZ_DIR`: `YYZ_CLAW_HOME` if set, otherwise `<home>/.yyz`
+- global MCP has one shared `${YYZ_ROOT}` and no plugin root
+- plugin-level MCP may have many plugin roots, one per enabled plugin, via `${PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_ROOT}`
+
+Example:
+
+```json
+{
+  "servers": [
+    {
+      "name": "local-memory",
+      "transport": "stdio",
+      "command": "node",
+      "args": ["${YYZ_ROOT}/mcp/local-memory/server.js"],
+      "cwd": "${YYZ_ROOT}/mcp/local-memory",
+      "env": {
+        "DATA_DIR": "${YYZ_ROOT}/memory"
+      },
+      "enabled": true
+    }
+  ]
+}
+```
+
 ---
 
 ## 3. Plugin-level MCP format
@@ -200,11 +228,21 @@ Do not assume plugin-level MCP is the right place for a project-wide shared serv
 
 ---
 
-## 4. `${PLUGIN_ROOT}`
+## 4. `${YYZ_ROOT}`, `${PLUGIN_ROOT}`, and `${CLAUDE_PLUGIN_ROOT}`
+
+`${YYZ_ROOT}` means:
+
+- the current user `.yyz` root
+- available in global MCP and plugin-level MCP
+- resolved from `YYZ_CLAW_HOME` if set, otherwise `<home>/.yyz`
 
 `${PLUGIN_ROOT}` means:
 
 - the root directory of the current plugin
+
+`${CLAUDE_PLUGIN_ROOT}` is a Claude plugin compatibility alias for `${PLUGIN_ROOT}`.
+
+Plugin-level MCP server processes receive both `PLUGIN_ROOT` and `CLAUDE_PLUGIN_ROOT` environment variables.
 
 It is a host-provided convenience placeholder.
 
@@ -385,7 +423,7 @@ When creating or updating MCP config, check these in order:
 4. Is `args` an array?
 5. Does `cwd` make sense?
 6. Are environment variables in `env`?
-7. If this is plugin-level MCP, should paths use `${PLUGIN_ROOT}`?
+7. If this is plugin-level MCP, should paths use `${PLUGIN_ROOT}` or `${CLAUDE_PLUGIN_ROOT}`?
 8. If this is plugin-level MCP, is the plugin manifest pointing to `./.mcp.json`?
 9. If this is plugin-level MCP, should the tools really be plugin-scoped rather than global?
 

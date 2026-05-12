@@ -1,0 +1,59 @@
+{
+  "plugins": [
+    {
+      "displayName": "Documents",
+      "name": "documents",
+      "version": "26.430.10722",
+      "description": "Create, edit, redline, and verify document artifacts.",
+      "source": "./plugins/documents",
+      "category": "documents",
+      "author": {
+        "email": "support@openai.com",
+        "name": "OpenAI",
+        "url": "https://openai.com/"
+      }
+    },
+    {
+      "displayName": "Novel Writer",
+      "name": "novel-writer",
+      "version": "1.0.0",
+      "description": "Write, outline, edit, and manage novel-length fiction with chapter and character support.",
+      "source": "./plugins/novel-writer",
+      "category": "writing",
+      "author": {
+        "email": "",
+        "name": "YYZ_Claw",
+        "url": ""
+      }
+    },
+    {
+      "displayName": "Presentations",
+      "name": "presentations",
+      "version": "26.430.10722",
+      "description": "Create, edit, render, verify, and export presentation slide decks.",
+      "source": "./plugins/presentations",
+      "category": "presentations",
+      "author": {
+        "email": "support@openai.com",
+        "name": "OpenAI",
+        "url": "https://openai.com/"
+      }
+    },
+    {
+      "displayName": "Spreadsheets",
+      "name": "spreadsheets",
+      "version": "26.430.10722",
+      "description": "Create, edit, analyze, visualize, render, and export spreadsheets.",
+      "source": "./plugins/spreadsheets",
+      "category": "spreadsheets",
+      "author": {
+        "email": "support@openai.com",
+        "name": "OpenAI",
+        "url": "https://openai.com/"
+      }
+    }
+  ],
+  "description": "Local marketplace rooted at .yyz; bundled plugins live under .yyz/plugins.",
+  "name": "yyz-local",
+  "displayName": "YYZ 本地插件市场"
+}

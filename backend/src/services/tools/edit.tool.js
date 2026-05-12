@@ -178,7 +178,7 @@ function parseStructuredPatch(patch) {
   let currentHunk = null;
 
   function pushCurrentHunk() {
-    if (!current || current.type !== "update" || !currentHunk) {
+    if (!current || current.type !== "update" || !currentHunk || currentHunk.length === 0) {
       return;
     }
 
@@ -264,6 +264,12 @@ function parseStructuredPatch(patch) {
     }
 
     if (current.type === "update") {
+      if (line.startsWith("@@")) {
+        pushCurrentHunk();
+        currentHunk = [line];
+        continue;
+      }
+
       if (!currentHunk) {
         currentHunk = [];
       }
@@ -602,7 +608,7 @@ export default {
       patch: {
         type: "string",
         description:
-          "Patch text. Choose exactly one format and never mix formats. Format 1: apply_patch-style structured patch. It may use wrapper headers '*** Begin Patch' / '*** End Patch' or tolerated trailing-star wrapper headers '*** Begin Patch ***' / '*** End Patch ***'. Structured patches must use file operation headers such as '*** Update File: <path>', '*** Add File: <path>', or '*** Delete File: <path>'. File operation headers must not use trailing stars: write '*** Update File: <path>', not '*** Update File: <path> ***'. Structured patch update hunks may use '@@' as a visual separator, followed by lines starting with ' ' for unchanged context, '-' for removed lines, and '+' for added lines. Do not put unified-diff headers like '--- a/file' or '+++ b/file' inside a structured patch. Format 2: standard unified diff. Unified diff patches must use '--- a/file', '+++ b/file', and '@@' hunks, and must not be wrapped with '*** Begin Patch' or '*** End Patch'."
+          "Patch text. Choose exactly one format and never mix formats. Format 1: apply_patch-style structured patch. It may use wrapper headers '*** Begin Patch' / '*** End Patch' or tolerated trailing-star wrapper headers '*** Begin Patch ***' / '*** End Patch ***'. Structured patches must use file operation headers such as '*** Update File: <path>', '*** Add File: <path>', or '*** Delete File: <path>'. File operation headers must not use trailing stars: write '*** Update File: <path>', not '*** Update File: <path> ***'. In structured Update File blocks, '@@' starts a new hunk. Multiple hunks in the same Update File block are applied in order, and each hunk matches against the content produced by earlier hunks. Hunk lines must start with ' ' for unchanged context, '-' for removed lines, or '+' for added lines. Do not put unified-diff headers like '--- a/file' or '+++ b/file' inside a structured patch. Format 2: standard unified diff. Unified diff patches must use '--- a/file', '+++ b/file', and '@@' hunks, and must not be wrapped with '*** Begin Patch' or '*** End Patch'."
       },
       cwd: {
         type: "string",

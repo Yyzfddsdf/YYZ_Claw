@@ -1619,10 +1619,8 @@ export function createChatController({
         conversationRunCoordinator?.getRunByConversationId?.(conversationId) ??
         conversationRunCoordinator?.getRunByAgent?.(sessionInfo.sessionId, targetAgentId) ??
         null;
-      if (isCompressionActiveRun(activeRun)) {
-        throw createCompressionInProgressError("message insertion");
-      }
       const activeRunStatus = String(activeRun?.status ?? "").trim();
+      const compressionActive = isCompressionActiveRun(activeRun);
 
       const insertionMessage = {
         id: `msg_${Date.now()}_${randomUUID()}`,
@@ -1653,7 +1651,8 @@ export function createChatController({
 
       let flushedInsertions = [];
       const shouldFlushImmediately =
-        !activeRun || activeRunStatus === "waiting_approval";
+        !compressionActive &&
+        (!activeRun || activeRunStatus === "waiting_approval");
       if (shouldFlushImmediately) {
         flushedInsertions = orchestratorSchedulerService.flushReadyInsertions(
           sessionInfo.sessionId,
@@ -1680,7 +1679,7 @@ export function createChatController({
         if (!activeRun && flushedInsertions.length > 0) {
           void wakeDispatcher?.startBackgroundRun?.(sessionInfo.sessionId, targetAgentId);
         }
-      } else {
+      } else if (!compressionActive) {
         await wakeDispatcher?.wakeAgentIfNeeded?.({
           sessionId: sessionInfo.sessionId,
           agentId: targetAgentId
@@ -2097,6 +2096,12 @@ export function createChatController({
         notFoundError.statusCode = 404;
         throw notFoundError;
       }
+      const sessionInfo = orchestratorSupervisorService?.ensureSession?.(conversationId) ?? {
+        sessionId: conversationId,
+        primaryAgentId: ""
+      };
+      const agentRecord = orchestratorStore?.findAgentByConversationId?.(conversationId) ?? null;
+      const targetAgentId = String(agentRecord?.agentId ?? sessionInfo.primaryAgentId ?? "").trim();
 
       const configValidation = configSchema.safeParse(await configStore.read());
       if (!configValidation.success) {
@@ -2196,6 +2201,12 @@ export function createChatController({
       if (manualReplayRunContext.ownsRun && manualReplayRunContext.run) {
         conversationRunCoordinator.finishRun?.(manualReplayRunContext.run, {
           status: "idle"
+        });
+      }
+      if (targetAgentId) {
+        await wakeDispatcher?.wakeAgentIfNeeded?.({
+          sessionId: sessionInfo.sessionId,
+          agentId: targetAgentId
         });
       }
 

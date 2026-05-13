@@ -40,6 +40,48 @@ function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function findBraceGroupEnd(pattern, startIndex) {
+  let depth = 0;
+  for (let index = startIndex; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return -1;
+}
+
+function splitBraceGroup(pattern) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}" && depth > 0) {
+      depth -= 1;
+    }
+    current += char;
+  }
+
+  parts.push(current);
+  return parts;
+}
+
 function globToRegExp(glob) {
   const normalized = String(glob ?? "")
     .replace(/\\/g, "/")
@@ -69,6 +111,22 @@ function globToRegExp(glob) {
       continue;
     }
 
+    if (char === "{") {
+      const endIndex = findBraceGroupEnd(normalized, index);
+      if (endIndex > index) {
+        const inner = normalized.slice(index + 1, endIndex);
+        const variants = splitBraceGroup(inner)
+          .map((part) => globToRegExp(part))
+          .filter(Boolean)
+          .map((regex) => regex.source.replace(/^\^/, "").replace(/\$$/, ""));
+        if (variants.length > 0) {
+          pattern += `(?:${variants.join("|")})`;
+          index = endIndex;
+          continue;
+        }
+      }
+    }
+
     pattern += escapeRegExp(char);
   }
 
@@ -90,7 +148,7 @@ function compilePattern(pattern) {
     }
   }
 
-  if (/[\\^$+?.()[\]{}|]/.test(normalized)) {
+  if (/[\\^$+.()[\]|]/.test(normalized)) {
     try {
       return new RegExp(normalized, "i");
     } catch {
@@ -154,13 +212,13 @@ function matchesFilePattern(filePath, rootPath, regex) {
 export default {
   name: "Glob",
   description:
-    "Find files based on glob or regex pattern under the current workspace. Returns matching file paths, not file contents.",
+    "Find files by path/name under the current workspace. Supports glob wildcards (`*`, `?`, `**`), brace extension lists like `*.{png,jpg,jpeg}`, or regex wrapped as `/.../`. Returns matching file paths, not file contents.",
   parameters: {
     type: "object",
     properties: {
       pattern: {
         type: "string",
-        description: "Glob or regex for matching files."
+        description: "Path/name matcher. Supports glob (`*.js`, `**/*.png`), brace lists (`*.{png,jpg,jpeg}`), or regex wrapped as `/.../`."
       },
       path: {
         type: "string",

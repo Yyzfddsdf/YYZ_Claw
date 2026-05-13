@@ -63,6 +63,48 @@ function escapeRegExp(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function findBraceGroupEnd(pattern, startIndex) {
+  let depth = 0;
+  for (let index = startIndex; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return -1;
+}
+
+function splitBraceGroup(pattern) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}" && depth > 0) {
+      depth -= 1;
+    }
+    current += char;
+  }
+
+  parts.push(current);
+  return parts;
+}
+
 function globToRegExp(glob) {
   const normalized = String(glob ?? "")
     .replace(/\\/g, "/")
@@ -92,6 +134,22 @@ function globToRegExp(glob) {
       continue;
     }
 
+    if (char === "{") {
+      const endIndex = findBraceGroupEnd(normalized, index);
+      if (endIndex > index) {
+        const inner = normalized.slice(index + 1, endIndex);
+        const variants = splitBraceGroup(inner)
+          .map((part) => globToRegExp(part))
+          .filter(Boolean)
+          .map((regex) => regex.source.replace(/^\^/, "").replace(/\$$/, ""));
+        if (variants.length > 0) {
+          pattern += `(?:${variants.join("|")})`;
+          index = endIndex;
+          continue;
+        }
+      }
+    }
+
     pattern += escapeRegExp(char);
   }
 
@@ -107,7 +165,7 @@ function compileFileMatcher(pattern) {
 
   const looksLikeRegex =
     (normalized.startsWith("/") && normalized.endsWith("/") && normalized.length > 1) ||
-    /[\\^$+?.()[\]{}|]/.test(normalized);
+    /[\\^$+.()[\]|]/.test(normalized);
 
   if (normalized.startsWith("/") && normalized.endsWith("/") && normalized.length > 1) {
     try {
@@ -267,7 +325,8 @@ export default {
       },
       file_glob: {
         type: "string",
-        description: "Optional glob filter for content search."
+        description:
+          "Optional path/name matcher to limit searched files. Supports glob (`*.js`, `**/*.png`), brace lists (`*.{png,jpg,jpeg}`), or regex wrapped as `/.../`."
       },
       limit: {
         type: "integer",

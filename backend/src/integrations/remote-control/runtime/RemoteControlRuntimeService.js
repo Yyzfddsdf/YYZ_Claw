@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveSlashCommandRuntime } from "../../../services/chat/slashCommandRuntime.js";
+import { resolveAgentRuntimeConfig } from "../../../services/chat/conversationRuntimeShared.js";
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -258,6 +259,27 @@ function resolveWorkingDirectory(executionContext = {}) {
   return candidate ? path.resolve(candidate) : process.cwd();
 }
 
+async function conversationSupportsVision(runtime, conversation = {}) {
+  const configStore =
+    runtime?.runtimeService?.configStore && typeof runtime.runtimeService.configStore.read === "function"
+      ? runtime.runtimeService.configStore
+      : null;
+  if (!configStore) {
+    return true;
+  }
+
+  try {
+    const config = await configStore.read();
+    const runtimeConfig = resolveAgentRuntimeConfig(config, {
+      isSubagent: String(conversation?.source ?? "").trim().toLowerCase() === "subagent",
+      modelProfileId: String(conversation?.modelProfileId ?? "").trim()
+    });
+    return runtimeConfig?.supportsVision !== false;
+  } catch {
+    return true;
+  }
+}
+
 export class RemoteControlRuntimeService {
   constructor(options = {}) {
     this.platformKey = normalizeText(options.platformKey).toLowerCase() || "remote";
@@ -433,6 +455,18 @@ export class RemoteControlRuntimeService {
 
     const conversation = await this.resolveTargetConversation();
     const conversationId = normalizeText(conversation.id);
+    const hasImageAttachments =
+      Array.isArray(inbound?.attachments) &&
+      inbound.attachments.some((attachment) =>
+        String(attachment?.mimeType ?? "").trim().toLowerCase().startsWith("image/")
+      );
+    if (hasImageAttachments && !(await conversationSupportsVision(this, conversation))) {
+      await this.deliverReplyToChannel({
+        replyTarget: inbound.replyTarget,
+        text: "当前会话使用的模型不支持图片识别，已拦截这次图片消息。请先切换到支持视觉的模型。"
+      });
+      return;
+    }
     const commandExpansion = await expandInboundContentWithPluginCommands(
       inbound,
       resolvePluginCatalog(this),

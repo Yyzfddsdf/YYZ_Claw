@@ -3217,10 +3217,6 @@ export function createChatController({
           ? chatValidation.data.messages
           : [];
 
-        if (hasImageInputMessages(effectiveMessages) && historyRuntimeConfig.supportsVision === false) {
-          throw createValidationError("selected model profile does not support image input");
-        }
-
         const sessionInfo =
           orchestratorSupervisorService?.ensureSession?.(conversationId) ?? null;
         resolvedRuntime =

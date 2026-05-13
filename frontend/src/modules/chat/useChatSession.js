@@ -1841,13 +1841,17 @@ export function useChatSession(runtimeConfig = {}) {
     };
   }, []);
 
-  async function refreshSkillCatalog(workspacePath = activeConversationWorkplace) {
+  async function refreshSkillCatalog(
+    workspacePath = activeConversationWorkplace,
+    selectedPluginNames = activeConversationPlugins
+  ) {
     try {
       const response = await fetchSkills({
         workspacePath,
         includeGlobal: true,
         includeProject: true,
-        includeSystem: true
+        includeSystem: true,
+        selectedPluginNames
       });
 
       const nextSkillCatalog = normalizeSkillCatalog(
@@ -1869,7 +1873,7 @@ export function useChatSession(runtimeConfig = {}) {
     let timerId = null;
 
     async function loadSkillCatalog() {
-      await refreshSkillCatalog(activeConversationWorkplace);
+      await refreshSkillCatalog(activeConversationWorkplace, activeConversationPlugins);
       if (!mounted) {
         return;
       }
@@ -1884,7 +1888,7 @@ export function useChatSession(runtimeConfig = {}) {
         clearInterval(timerId);
       }
     };
-  }, [activeConversationWorkplace]);
+  }, [activeConversationWorkplace, activeConversationPlugins]);
 
   async function refreshPluginCatalog() {
     try {

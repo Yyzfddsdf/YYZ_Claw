@@ -41,11 +41,37 @@ const SLASH_COMMANDS = [
     description: "设置目标，不入库也不发送给模型"
   }
 ];
+const SLASH_CATEGORY_ALIASES = {
+  command: ["command", "cmd", "命令"],
+  pluginCommand: ["plugin command", "plugin-command", "plugin_command", "plugin cmd", "插件命令"],
+  skill: ["skill", "技能"],
+  pluginSkill: ["plugin skill", "plugin-skill", "plugin_skill", "插件技能", "插件skill"],
+  plugin: ["plugin", "plugins", "插件"],
+  file: ["file", "files", "文件"]
+};
 
 function fuzzyMatchText(value, query) {
   const target = String(value ?? "").toLowerCase();
   const needle = String(query ?? "").toLowerCase();
-  return Boolean(needle && target) && target.includes(needle);
+  if (!needle || !target) {
+    return false;
+  }
+
+  if (target.includes(needle)) {
+    return true;
+  }
+
+  const compactTarget = target.replace(/[\s_-]+/g, "");
+  const compactNeedle = needle.replace(/[\s_-]+/g, "");
+  return Boolean(compactNeedle && compactTarget) && compactTarget.includes(compactNeedle);
+}
+
+function matchesSlashCategory(query, aliases = []) {
+  return (Array.isArray(aliases) ? aliases : []).some((alias) => fuzzyMatchText(alias, query));
+}
+
+function matchesSlashFields(query, values = []) {
+  return (Array.isArray(values) ? values : []).some((value) => fuzzyMatchText(value, query));
 }
 
 function getActiveSlashSegment(value) {
@@ -1162,15 +1188,30 @@ export function ChatPanel({
     }
 
     const commandItems = SLASH_COMMANDS.filter((item) =>
-      fuzzyMatchText(item.label.replace(/^\//, ""), slashQuery)
+      matchesSlashCategory(slashQuery, SLASH_CATEGORY_ALIASES.command) ||
+      matchesSlashFields(slashQuery, [
+        item.label.replace(/^\//, ""),
+        item.value,
+        item.description
+      ])
     );
     const pluginCommandItems = (Array.isArray(chat.activeConversationCommands)
       ? chat.activeConversationCommands
       : []
     )
-      .filter((command) =>
-        fuzzyMatchText(String(command?.name ?? "").replace(/^\//, ""), slashQuery)
-      )
+      .filter((command) => {
+        const pluginName = String(command?.pluginName ?? "").trim();
+        const pluginDisplayName = String(command?.pluginDisplayName ?? "").trim();
+        return (
+          matchesSlashCategory(slashQuery, SLASH_CATEGORY_ALIASES.pluginCommand) ||
+          matchesSlashFields(slashQuery, [
+            String(command?.name ?? "").replace(/^\//, ""),
+            String(command?.description ?? "").trim(),
+            pluginName,
+            pluginDisplayName
+          ])
+        );
+      })
       .slice(0, 12)
       .map((command) => ({
         type: "plugin-command",
@@ -1198,19 +1239,42 @@ export function ChatPanel({
           activeSkillKeys.has(skillKey) || (isPluginSkill && pluginName && activePluginNames.has(pluginName));
         return (
           enabledByConversation &&
-          (fuzzyMatchText(skill?.name, slashQuery) || fuzzyMatchText(skill?.displayName, slashQuery))
+          (
+            matchesSlashCategory(
+              slashQuery,
+              isPluginSkill
+                ? SLASH_CATEGORY_ALIASES.pluginSkill
+                : SLASH_CATEGORY_ALIASES.skill
+            ) ||
+            matchesSlashFields(slashQuery, [
+              skill?.name,
+              skill?.displayName,
+              skill?.description,
+              skill?.shortDescription,
+              isPluginSkill ? skill?.pluginName : "",
+              isPluginSkill ? skill?.pluginDisplayName : ""
+            ])
+          )
         );
+      })
+      .sort((left, right) => {
+        const leftIsPlugin = String(left?.pluginName ?? "").trim().length > 0;
+        const rightIsPlugin = String(right?.pluginName ?? "").trim().length > 0;
+        if (leftIsPlugin === rightIsPlugin) {
+          return 0;
+        }
+        return leftIsPlugin ? 1 : -1;
       })
       .slice(0, 8)
       .map((skill) => ({
-        type: "skill",
+        type: String(skill?.pluginName ?? "").trim() ? "plugin-skill" : "skill",
         value: `/${String(skill?.name ?? "").trim()}`,
         label: `/${String(skill?.name ?? "").trim()}`,
         description: String(
           skill?.shortDescription ||
             skill?.description ||
             (String(skill?.pluginDisplayName ?? "").trim()
-              ? `提示模型使用 ${String(skill.pluginDisplayName).trim()} 提供的 skill`
+              ? `Plugin · ${String(skill.pluginDisplayName).trim()}`
               : "提示模型使用这个 skill")
         ).trim()
       }));
@@ -1218,7 +1282,19 @@ export function ChatPanel({
       ? chat.activeConversationPlugins
       : []
     )
-      .filter((pluginName) => fuzzyMatchText(pluginName, slashQuery))
+      .filter((pluginName) => {
+        const plugin = (Array.isArray(chat.pluginCatalog) ? chat.pluginCatalog : []).find(
+          (item) => String(item?.name ?? "").trim() === String(pluginName ?? "").trim()
+        );
+        return (
+          matchesSlashCategory(slashQuery, SLASH_CATEGORY_ALIASES.plugin) ||
+          matchesSlashFields(slashQuery, [
+            pluginName,
+            plugin?.displayName,
+            ...(Array.isArray(plugin?.commands) ? plugin.commands.map((command) => command?.name) : [])
+          ])
+        );
+      })
       .slice(0, 8)
       .map((pluginName) => ({
       type: "plugin",
@@ -1226,18 +1302,28 @@ export function ChatPanel({
       label: `/${String(pluginName ?? "").trim()}`,
       description: "提示模型使用当前会话已启用的 plugin"
     }));
-    const fileItems = slashFileMatches.slice(0, 8).map((file) => ({
-      type: "file",
-      value: `/${String(file?.path ?? "").trim()}`,
-      label: `/${String(file?.path ?? "").trim()}`,
-      description: "引用工作区文件路径，模型可自行用工具查看"
-    }));
+    const fileItems = slashFileMatches
+      .filter((file) =>
+        matchesSlashCategory(slashQuery, SLASH_CATEGORY_ALIASES.file) ||
+        matchesSlashFields(slashQuery, [
+          String(file?.path ?? "").trim(),
+          String(file?.name ?? "").trim()
+        ])
+      )
+      .slice(0, 8)
+      .map((file) => ({
+        type: "file",
+        value: `/${String(file?.path ?? "").trim()}`,
+        label: `/${String(file?.path ?? "").trim()}`,
+        description: "引用工作区文件路径，模型可自行用工具查看"
+      }));
 
-    return [...commandItems, ...pluginCommandItems, ...skillItems, ...pluginItems, ...fileItems].slice(0, 14);
+    return [...commandItems, ...skillItems, ...pluginCommandItems, ...pluginItems, ...fileItems].slice(0, 14);
   }, [
     chat.activeConversationCommands,
     chat.activeConversationPlugins,
     chat.activeConversationSkills,
+    chat.pluginCatalog,
     chat.skillCatalog,
     slashFileMatches,
     slashQuery
@@ -4067,6 +4153,8 @@ export function ChatPanel({
                           ? "CMD"
                           : item.type === "plugin-command"
                             ? "PLUGIN CMD"
+                          : item.type === "plugin-skill"
+                            ? "PLUGIN SKILL"
                           : item.type === "skill"
                             ? "SKILL"
                             : item.type === "plugin"

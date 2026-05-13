@@ -19,7 +19,11 @@ import {
   createHookContinuationMessage
 } from "../hooks/HookExecutionService.js";
 import { ToolCallPreflightService } from "../tools/ToolCallPreflightService.js";
-import { isPlanIncomplete } from "../chat/conversationRuntimeShared.js";
+import {
+  buildCompressionSnapshotMetadata,
+  buildCompressionTokenSnapshot,
+  isPlanIncomplete
+} from "../chat/conversationRuntimeShared.js";
 
 const DEFAULT_APPROVAL_MODE = "confirm";
 const MAX_RUNTIME_TOOL_EVENT_CONTENT_CHARS = 1800;
@@ -48,6 +52,16 @@ function getAssistantContentText(assistantRound) {
 
 function isGoalSubmitted(executionContext = {}) {
   return Boolean(executionContext?.goalState?.submitted);
+}
+
+function appendCompressionSummaryMessage(historyStore, conversationId, compressionResult) {
+  if (!compressionResult?.compressed || !compressionResult?.summaryMessage) {
+    return historyStore?.getConversation?.(conversationId) ?? null;
+  }
+
+  return historyStore.appendMessages(conversationId, [compressionResult.summaryMessage], {
+    updatedAt: Number(compressionResult.summaryMessage.timestamp ?? Date.now())
+  });
 }
 
 function mergeRuntimeStateObject(targetContext = {}, sourceContext = {}, stateKey) {
@@ -293,6 +307,7 @@ export class ChatAgent {
     const baseURL = runtimeConfig?.baseURL?.trim();
     const apiKey = runtimeConfig?.apiKey?.trim();
     const provider = normalizeModelProvider(runtimeConfig?.provider);
+    const maxContextWindow = Number(runtimeConfig?.maxContextWindow ?? 0);
     const providerCapabilities =
       runtimeConfig?.providerCapabilities && typeof runtimeConfig.providerCapabilities === "object"
         ? runtimeConfig.providerCapabilities
@@ -316,6 +331,9 @@ export class ChatAgent {
       apiKey,
       provider,
       providerCapabilities,
+      maxContextWindow: Number.isFinite(maxContextWindow) && maxContextWindow > 0
+        ? Math.trunc(maxContextWindow)
+        : 0,
       enableDeepThinking: enableDeepThinking && supportsThinking,
       reasoningEffort,
       supportsThinking,
@@ -1023,6 +1041,144 @@ export class ChatAgent {
     return normalizedMessages;
   }
 
+  async maybeAutoCompressAfterRound({
+    validatedConfig,
+    conversation,
+    systemMessages = [],
+    executionContext = {},
+    onEvent,
+    checkpoint = "round_end"
+  }) {
+    const compressionService = executionContext?.compressionService;
+    const historyStore = executionContext?.historyStore;
+    const flushRuntimeMessagesToHistory = executionContext?.flushRuntimeMessagesToHistory;
+    const conversationId = String(executionContext?.conversationId ?? "").trim();
+    if (
+      !compressionService ||
+      typeof compressionService.shouldAutoCompress !== "function" ||
+      typeof compressionService.compressConversation !== "function" ||
+      !historyStore ||
+      typeof historyStore.getConversation !== "function" ||
+      typeof flushRuntimeMessagesToHistory !== "function" ||
+      !conversationId
+    ) {
+      return {
+        conversation,
+        compressed: false
+      };
+    }
+
+    const flushedHistory = await flushRuntimeMessagesToHistory({
+      checkpoint,
+      reason: "pre_compression_flush"
+    });
+    const existingConversation =
+      flushedHistory ?? historyStore.getConversation(conversationId);
+    const effectiveMessages = Array.isArray(existingConversation?.messages)
+      ? existingConversation.messages
+      : [];
+    const latestTokenUsage = existingConversation?.tokenUsage ?? null;
+    const shouldAutoCompress = compressionService.shouldAutoCompress({
+      messages: effectiveMessages,
+      maxContextWindow: validatedConfig?.maxContextWindow,
+      latestTokenUsage
+    });
+    if (!shouldAutoCompress) {
+      return {
+        conversation,
+        compressed: false
+      };
+    }
+
+    const runControl =
+      executionContext?.runControl && typeof executionContext.runControl === "object"
+        ? executionContext.runControl
+        : null;
+    if (runControl) {
+      runControl.compressionInProgress = true;
+    }
+
+    onEvent?.({
+      type: "compression_started",
+      trigger: "auto"
+    });
+
+    try {
+      const compressionResult = await compressionService.compressConversation({
+        messages: effectiveMessages,
+        runtimeConfig: validatedConfig,
+        latestTokenUsage,
+        trigger: "auto"
+      });
+
+      if (compressionResult?.compressed && compressionResult.summaryMessage) {
+        let updatedHistory = appendCompressionSummaryMessage(
+          historyStore,
+          conversationId,
+          compressionResult
+        );
+        const compressionSnapshot = buildCompressionTokenSnapshot(compressionResult);
+        if (
+          compressionSnapshot &&
+          typeof historyStore.updateConversationTokenSnapshot === "function"
+        ) {
+          updatedHistory =
+            historyStore.updateConversationTokenSnapshot(
+              conversationId,
+              compressionSnapshot,
+              buildCompressionSnapshotMetadata(compressionResult, existingConversation?.model)
+            ) ?? updatedHistory;
+        }
+
+        const nextMessages = Array.isArray(updatedHistory?.messages)
+          ? updatedHistory.messages
+          : compressionResult.messages;
+
+        onEvent?.({
+          type: "compression_completed",
+          trigger: "auto",
+          history: updatedHistory,
+          compression: {
+            compressed: true,
+            reason: String(compressionResult?.reason ?? ""),
+            usageRatio: Number(compressionResult?.usageRatio ?? 0),
+            estimatedTokensBefore: Number(compressionResult?.estimatedTokensBefore ?? 0),
+            estimatedTokensAfter: Number(compressionResult?.estimatedTokensAfter ?? 0)
+          }
+        });
+
+        return {
+          conversation: [
+            ...systemMessages,
+            ...compressionService.buildModelMessages(nextMessages)
+          ],
+          compressed: true
+        };
+      }
+
+      onEvent?.({
+        type: "compression_completed",
+        trigger: "auto",
+        compression: {
+          compressed: false,
+          reason: String(compressionResult?.reason ?? "auto_compression_skipped"),
+          usageRatio: Number(compressionResult?.usageRatio ?? 0),
+          estimatedTokensBefore: Number(compressionResult?.estimatedTokensBefore ?? 0),
+          estimatedTokensAfter: Number(compressionResult?.estimatedTokensAfter ?? 0)
+        }
+      });
+
+      return {
+        conversation,
+        compressed: false
+      };
+    } finally {
+      if (runControl) {
+        runControl.compressionInProgress = false;
+      }
+    }
+  }
+
   async runConversationLoop({
     validatedConfig,
     conversation,
@@ -1039,6 +1195,9 @@ export class ChatAgent {
     this.resolveLongTermMemoryRecall(executionContext);
     executionContext.approvalMode = normalizeApprovalMode(approvalMode);
     let emptyFinalResponseCount = 0;
+    const systemMessages = conversation.filter(
+      (message) => String(message?.role ?? "").trim() === "system"
+    );
 
     while (true) {
       throwIfAborted(abortSignal);
@@ -1171,9 +1330,30 @@ export class ChatAgent {
             onEvent,
             checkpoint: "stop_continuation"
           });
+          const postRoundCompression = await this.maybeAutoCompressAfterRound({
+            validatedConfig,
+            conversation,
+            systemMessages,
+            executionContext,
+            onEvent,
+            checkpoint: "final_before_continue"
+          });
+          if (postRoundCompression.compressed) {
+            conversation.length = 0;
+            conversation.push(...postRoundCompression.conversation);
+          }
           emptyFinalResponseCount = 0;
-                    continue;
+          continue;
         }
+
+        await this.maybeAutoCompressAfterRound({
+          validatedConfig,
+          conversation,
+          systemMessages,
+          executionContext,
+          onEvent,
+          checkpoint: "final_before_return"
+        });
 
         return {
           status: finalStatus,
@@ -1477,6 +1657,21 @@ export class ChatAgent {
         checkpoint: "tool_results_end"
       });
       if (flushedInsertions.length > 0) {
+        emptyFinalResponseCount = 0;
+        continue;
+      }
+
+      const postRoundCompression = await this.maybeAutoCompressAfterRound({
+        validatedConfig,
+        conversation,
+        systemMessages,
+        executionContext,
+        onEvent,
+        checkpoint: "tool_results_end"
+      });
+      if (postRoundCompression.compressed) {
+        conversation.length = 0;
+        conversation.push(...postRoundCompression.conversation);
         emptyFinalResponseCount = 0;
         continue;
       }

@@ -1160,7 +1160,7 @@ export function ChatPanel({
   const composerButtonDisabled =
     inputDisabled ||
     isParsingFiles ||
-    (!hasComposerPayload && !chat.canStopStream);
+    (shouldPrimaryStop ? chat.isCompressing : (!hasComposerPayload && !chat.canStopStream));
   const personaSelectorDisabled =
     chat.isStreaming ||
     !chat.historyLoaded ||
@@ -4332,8 +4332,18 @@ export function ChatPanel({
                 type={shouldPrimaryStop ? "button" : "submit"}
                 className={`label-text send-action ${isComposerActive ? "is-visible" : ""} ${chat.isStreaming ? "is-streaming" : ""}`}
                 disabled={composerButtonDisabled}
+                aria-disabled={composerButtonDisabled ? "true" : "false"}
                 aria-label={
                   shouldPrimaryStop ? "停止生成" : chat.isStreaming ? "排队发送" : "发送消息"
+                }
+                title={
+                  shouldPrimaryStop && chat.isCompressing
+                    ? "当前正在压缩，暂时不能停止"
+                    : shouldPrimaryStop
+                      ? "停止生成"
+                      : chat.isStreaming
+                        ? "排队发送"
+                        : "发送消息"
                 }
                 onClick={shouldPrimaryStop ? chat.stopStream : undefined}
               >

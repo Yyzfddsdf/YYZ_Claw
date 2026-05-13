@@ -17,7 +17,10 @@ export async function requestJson(path, options = {}) {
   const data = text ? JSON.parse(text) : {};
 
   if (!response.ok) {
-    throw new Error(data?.error || `${method} ${path} failed with ${response.status}`);
+    const error = new Error(data?.error || `${method} ${path} failed with ${response.status}`);
+    error.status = response.status;
+    error.response = data;
+    throw error;
   }
 
   return data;

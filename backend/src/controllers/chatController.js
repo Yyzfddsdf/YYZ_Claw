@@ -1282,6 +1282,12 @@ export function createChatController({
     const sessionId = String(activeRun.sessionId ?? "").trim();
     const agentId = String(activeRun.agentId ?? "").trim();
 
+    if (activeRun.compressionInProgress) {
+      const conflictError = createValidationError("compression in progress, stop rejected");
+      conflictError.statusCode = 409;
+      throw conflictError;
+    }
+
     if (!activeRun.stopRequested) {
       activeRun.stopRequested = true;
       conversationRunCoordinator?.abortRun?.(activeRun, reason);
@@ -2815,6 +2821,7 @@ export function createChatController({
           currentAtomicStepId: foregroundRun?.stepId,
           abortSignal: foregroundRun?.signal ?? null,
           historyStore,
+          compressionService,
           rawConversationMessages: Array.isArray(resumedHistory?.messages)
             ? resumedHistory.messages
             : [],
@@ -2853,6 +2860,16 @@ export function createChatController({
           orchestratorStore,
           orchestratorSchedulerService,
           orchestratorSupervisorService,
+          runControl: foregroundRun,
+          flushRuntimeMessagesToHistory: ({ checkpoint } = {}) =>
+            flushRecorderSnapshotToHistory({
+              conversationId: resolvedPendingApproval.conversationId,
+              recorder,
+              baseHistory: historyStore.getConversation(resolvedPendingApproval.conversationId),
+              runtimeConfig: resolvedPendingApproval.runtimeConfig,
+              thinkingMode: resumedHistory?.thinkingMode,
+              approvalMode: resumedHistory?.approvalMode
+            }),
           flushQueuedInsertions: createForegroundQueuedInsertionFlusher({
             conversationId: resolvedPendingApproval.conversationId,
             sessionId: resolvedRuntime?.sessionId,
@@ -3538,6 +3555,7 @@ export function createChatController({
           workplacePath,
           workingDirectory: workplacePath,
           historyStore,
+          compressionService,
           rawConversationMessages: effectiveMessages,
           runtimeConfig: runtimeExecutionConfig,
           visionRuntimeConfig,
@@ -3564,6 +3582,16 @@ export function createChatController({
           orchestratorStore,
           orchestratorSchedulerService,
           orchestratorSupervisorService,
+          runControl: foregroundRun,
+          flushRuntimeMessagesToHistory: ({ checkpoint } = {}) =>
+            flushRecorderSnapshotToHistory({
+              conversationId,
+              recorder,
+              baseHistory: historyStore.getConversation(conversationId),
+              runtimeConfig: runtimeExecutionConfig,
+              thinkingMode: thinkingRuntimeOptions.thinkingMode,
+              approvalMode
+            }),
           flushQueuedInsertions: createForegroundQueuedInsertionFlusher({
             conversationId,
             sessionId: resolvedRuntime?.sessionId,

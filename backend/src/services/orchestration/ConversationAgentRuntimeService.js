@@ -501,6 +501,7 @@ export class ConversationAgentRuntimeService {
       workplacePath,
       workingDirectory: workplacePath,
       historyStore: this.historyStore,
+      compressionService: this.compressionService,
       rawConversationMessages: effectiveMessages,
       runtimeConfig,
       goal: normalizeText(existingConversation?.goal),
@@ -523,6 +524,10 @@ export class ConversationAgentRuntimeService {
       orchestratorSchedulerService: this.orchestratorSchedulerService,
       orchestratorStore: this.orchestratorStore,
       orchestratorSupervisorService: this.orchestratorSupervisorService,
+      flushRuntimeMessagesToHistory: ({ checkpoint } = {}) => {
+        syncRecorderToHistory();
+        return this.historyStore.getConversation(conversationId);
+      },
       flushQueuedInsertions: async ({ checkpoint } = {}) => {
         if (!this.orchestratorSchedulerService || !this.historyStore) {
           return [];

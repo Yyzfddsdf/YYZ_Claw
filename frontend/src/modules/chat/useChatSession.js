@@ -2060,14 +2060,56 @@ export function useChatSession(runtimeConfig = {}) {
       [normalizedConversationId]: runtime
     }));
     hydratePendingApprovalFromPayload(runtime.pendingApproval, normalizedConversationId);
-    if (runtime.pendingApproval) {
+    const activeRunStatus = String(runtime?.activeRun?.status ?? "").trim();
+    const currentAgentStatus = String(runtime?.currentAgent?.status ?? "").trim();
+    const shouldWaitApproval =
+      Boolean(runtime.pendingApproval) ||
+      activeRunStatus === "waiting_approval" ||
+      currentAgentStatus === "waiting_approval";
+    const shouldBeRunning =
+      activeRunStatus === "running" ||
+      currentAgentStatus === "running";
+    if (shouldWaitApproval) {
       updateConversationRunStateLocally(normalizedConversationId, {
         agentBusy: false,
         agentStatus: "waiting_approval"
       });
+      activeAgentRunConversationIdsRef.current.delete(normalizedConversationId);
+      setConversationForegroundStreaming(normalizedConversationId, false);
+    } else if (shouldBeRunning) {
+      activeAgentRunConversationIdsRef.current.add(normalizedConversationId);
+      updateConversationRunStateLocally(normalizedConversationId, {
+        agentBusy: true,
+        agentStatus: "running"
+      });
+    } else {
+      markConversationRunEndedLocally(normalizedConversationId, "idle");
     }
 
     return runtime;
+  }
+
+  async function waitForConversationRuntimeToSettle(conversationId, attempts = 6, delayMs = 350) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return null;
+    }
+
+    for (let index = 0; index < attempts; index += 1) {
+      const runtime = await refreshConversationRuntimeStatus(normalizedConversationId).catch(() => null);
+      const activeRunStatus = String(runtime?.activeRun?.status ?? "").trim();
+      const currentAgentStatus = String(runtime?.currentAgent?.status ?? "").trim();
+      const stillRunning = activeRunStatus === "running" || currentAgentStatus === "running";
+      if (!stillRunning) {
+        return runtime;
+      }
+
+      if (index < attempts - 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+      }
+    }
+
+    return null;
   }
 
   function setVisibleMessagesForConversation(conversationId, nextMessages) {
@@ -5615,6 +5657,10 @@ export function useChatSession(runtimeConfig = {}) {
   async function stopStream() {
     setRetryNotice("");
     const targetConversationId = String(activeConversationIdRef.current ?? "").trim();
+    if (isConversationCompressionActive(targetConversationId)) {
+      setError("当前正在压缩，暂时不能停止");
+      return;
+    }
     const activeAbortController = abortControllersByConversationRef.current.get(targetConversationId) ?? null;
     const localRunLikelyActive =
       Boolean(activeAbortController) ||
@@ -5640,7 +5686,12 @@ export function useChatSession(runtimeConfig = {}) {
     try {
       try {
         await stopConversationRunById(targetConversationId);
-      } catch {
+        await waitForConversationRuntimeToSettle(targetConversationId);
+      } catch (stopError) {
+        if (Number(stopError?.status ?? 0) === 409) {
+          setError(stopError?.message || "当前正在压缩，暂时不能停止");
+          return;
+        }
         activeAbortController?.abort();
         if (localRunLikelyActive) {
           abortControllersByConversationRef.current.delete(targetConversationId);

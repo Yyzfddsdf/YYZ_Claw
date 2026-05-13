@@ -4094,6 +4094,22 @@
   box-shadow: inset 0 0 6px rgba(255, 255, 255, 1);
 }
 
+.label-text:disabled,
+.label-text[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+  filter: grayscale(0.18);
+}
+
+.label-text.is-streaming:disabled,
+.label-text.is-streaming[aria-disabled="true"] {
+  opacity: 0.65;
+  visibility: visible;
+  pointer-events: none;
+  transform: translateY(-50%) scale(1);
+}
+
 .ai {
   --z: 0;
   --s: 300px;

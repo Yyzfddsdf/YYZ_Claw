@@ -41,18 +41,18 @@ const STOPWORD_SET = new Set([
 const KEYWORD_SCORE_CONFIG = {
   specific: {
     exactWeight: 10,
-    partialWeight: 4,
-    nameSupportWeight: 3,
-    coreSupportWeight: 2,
-    explanationSupportWeight: 1
+    partialWeight: 4
   },
   general: {
     exactWeight: 4,
-    partialWeight: 1,
-    nameSupportWeight: 1,
-    coreSupportWeight: 1,
-    explanationSupportWeight: 0
+    partialWeight: 1
   }
+};
+
+const FIELD_SIMILARITY_CONFIG = {
+  coreWeight: 0.8,
+  explanationWeight: 0.2,
+  boostWeight: 8
 };
 
 const PREFERENCE_QUERY_PATTERNS = [
@@ -110,6 +110,127 @@ function tokenizeNormalizedText(value) {
     .split(" ")
     .map((token) => token.trim())
     .filter((token) => token.length >= MIN_TOKEN_LENGTH && !STOPWORD_SET.has(token));
+}
+
+function classifySparseChar(char) {
+  if (/[\p{Script=Han}]/u.test(char)) {
+    return "han";
+  }
+  if (/[\p{L}]/u.test(char)) {
+    return "letter";
+  }
+  if (/[\p{N}]/u.test(char)) {
+    return "number";
+  }
+  return "separator";
+}
+
+function splitSparseSegments(value) {
+  const normalized = normalizeForMatching(value);
+  const segments = [];
+  let currentType = "";
+  let currentText = "";
+
+  for (const char of Array.from(normalized)) {
+    const type = classifySparseChar(char);
+    if (type === "separator") {
+      if (currentText) {
+        segments.push({ type: currentType, text: currentText });
+      }
+      currentType = "";
+      currentText = "";
+      continue;
+    }
+
+    if (currentText && type !== currentType) {
+      segments.push({ type: currentType, text: currentText });
+      currentText = "";
+    }
+
+    currentType = type;
+    currentText += char;
+  }
+
+  if (currentText) {
+    segments.push({ type: currentType, text: currentText });
+  }
+
+  return segments;
+}
+
+function tokenizeSparseTerms(value) {
+  const terms = [];
+
+  for (const segment of splitSparseSegments(value)) {
+    const chars = Array.from(segment.text);
+    if (segment.type === "han") {
+      if (chars.length < 2) {
+        continue;
+      }
+      for (let index = 0; index <= chars.length - 2; index += 1) {
+        terms.push(chars.slice(index, index + 2).join(""));
+      }
+      continue;
+    }
+
+    if (segment.text.length >= MIN_TOKEN_LENGTH && !STOPWORD_SET.has(segment.text)) {
+      terms.push(segment.text);
+    }
+  }
+
+  return terms;
+}
+
+function buildSparseTermSet(value) {
+  return new Set(tokenizeSparseTerms(value));
+}
+
+function calculateBinaryCosineSimilarity(leftTerms, rightTerms) {
+  if (!(leftTerms instanceof Set) || !(rightTerms instanceof Set)) {
+    return 0;
+  }
+  if (leftTerms.size === 0 || rightTerms.size === 0) {
+    return 0;
+  }
+
+  let intersectionCount = 0;
+  const [smaller, larger] =
+    leftTerms.size <= rightTerms.size ? [leftTerms, rightTerms] : [rightTerms, leftTerms];
+  for (const term of smaller) {
+    if (larger.has(term)) {
+      intersectionCount += 1;
+    }
+  }
+
+  if (intersectionCount === 0) {
+    return 0;
+  }
+
+  return intersectionCount / Math.sqrt(leftTerms.size * rightTerms.size);
+}
+
+function scoreFieldSimilarity(preparedNode, input) {
+  const queryTerms = input?.sparseTermSet instanceof Set ? input.sparseTermSet : new Set();
+  const coreSimilarity = calculateBinaryCosineSimilarity(
+    queryTerms,
+    preparedNode?.coreMemoryTermSet
+  );
+  const explanationSimilarity = calculateBinaryCosineSimilarity(
+    queryTerms,
+    preparedNode?.explanationTermSet
+  );
+  const similarity =
+    coreSimilarity * FIELD_SIMILARITY_CONFIG.coreWeight +
+    explanationSimilarity * FIELD_SIMILARITY_CONFIG.explanationWeight;
+  const boost = similarity * FIELD_SIMILARITY_CONFIG.boostWeight;
+
+  return {
+    score: boost,
+    similarity,
+    coreSimilarity,
+    explanationSimilarity,
+    boost
+  };
 }
 
 function normalizeKeywordPhrase(value) {
@@ -234,7 +355,8 @@ function buildInputFromMessages(messages = [], maxSourceUserMessages = DEFAULT_M
       text: "",
       normalizedText: "",
       tokens: [],
-      tokenSet: new Set()
+      tokenSet: new Set(),
+      sparseTermSet: new Set()
     };
   }
 
@@ -266,7 +388,8 @@ function buildInputFromMessages(messages = [], maxSourceUserMessages = DEFAULT_M
     text,
     normalizedText,
     tokens,
-    tokenSet: new Set(tokens)
+    tokenSet: new Set(tokens),
+    sparseTermSet: buildSparseTermSet(text)
   };
 }
 
@@ -317,9 +440,6 @@ function buildMemoryContextBlock(matches = []) {
 function scoreKeywordEntries(preparedNode, entries, input, config) {
   let exactHits = 0;
   let partialHits = 0;
-  let nameSupportHits = 0;
-  let coreSupportHits = 0;
-  let explanationSupportHits = 0;
   const matchedKeywords = [];
 
   for (const keyword of entries) {
@@ -327,21 +447,6 @@ function scoreKeywordEntries(preparedNode, entries, input, config) {
     if (exactMatched) {
       exactHits += 1;
       matchedKeywords.push(keyword.raw);
-      if (config.nameSupportWeight > 0 && preparedNode.normalizedName.includes(keyword.phrase)) {
-        nameSupportHits += 1;
-      }
-      if (
-        config.coreSupportWeight > 0 &&
-        preparedNode.normalizedCoreMemory.includes(keyword.phrase)
-      ) {
-        coreSupportHits += 1;
-      }
-      if (
-        config.explanationSupportWeight > 0 &&
-        preparedNode.normalizedExplanation.includes(keyword.phrase)
-      ) {
-        explanationSupportHits += 1;
-      }
       continue;
     }
 
@@ -356,44 +461,17 @@ function scoreKeywordEntries(preparedNode, entries, input, config) {
 
     partialHits += matchedTokenCount;
     matchedKeywords.push(keyword.raw);
-
-    for (const token of keyword.tokens) {
-      if (!input.tokenSet.has(token)) {
-        continue;
-      }
-
-      if (config.nameSupportWeight > 0 && preparedNode.normalizedName.includes(token)) {
-        nameSupportHits += 1;
-      }
-      if (config.coreSupportWeight > 0 && preparedNode.normalizedCoreMemory.includes(token)) {
-        coreSupportHits += 1;
-      }
-      if (
-        config.explanationSupportWeight > 0 &&
-        preparedNode.normalizedExplanation.includes(token)
-      ) {
-        explanationSupportHits += 1;
-      }
-    }
   }
 
   const uniqueMatchedKeywords = Array.from(new Set(matchedKeywords));
-  const score =
-    exactHits * config.exactWeight +
-    partialHits * config.partialWeight +
-    nameSupportHits * config.nameSupportWeight +
-    coreSupportHits * config.coreSupportWeight +
-    explanationSupportHits * config.explanationSupportWeight;
+  const score = exactHits * config.exactWeight + partialHits * config.partialWeight;
 
   return {
     score,
     exactHits,
     partialHits,
     matchedKeywordCount: uniqueMatchedKeywords.length,
-    matchedKeywords: uniqueMatchedKeywords,
-    nameSupportHits,
-    coreSupportHits,
-    explanationSupportHits
+    matchedKeywords: uniqueMatchedKeywords
   };
 }
 
@@ -530,6 +608,8 @@ export class LongTermMemoryRecallService {
       normalizedName: normalizeForMatching(node.name),
       normalizedCoreMemory: normalizeForMatching(node.coreMemory),
       normalizedExplanation: normalizeForMatching(node.explanation),
+      coreMemoryTermSet: buildSparseTermSet(node.coreMemory),
+      explanationTermSet: buildSparseTermSet(node.explanation),
       specificKeywords: normalizedSpecificKeywords,
       generalKeywords: normalizedGeneralKeywords
     };
@@ -587,9 +667,11 @@ export class LongTermMemoryRecallService {
     const matchedKeywords = Array.from(
       new Set([...matchedSpecificKeywords, ...matchedGeneralKeywords])
     );
+    const fieldSimilarityStats = scoreFieldSimilarity(preparedNode, input);
     const preferenceQueryBoost =
       preferenceQuery && preferenceLikeNode && generalStats.exactHits >= 1 ? 3 : 0;
-    const score = specificStats.score + generalStats.score + preferenceQueryBoost;
+    const score =
+      specificStats.score + generalStats.score + preferenceQueryBoost + fieldSimilarityStats.score;
     const qualifiesByPreferenceGeneral =
       preferenceQuery &&
       preferenceLikeNode &&
@@ -626,6 +708,7 @@ export class LongTermMemoryRecallService {
       debugScores: {
         specific: specificStats,
         general: generalStats,
+        fieldSimilarity: fieldSimilarityStats,
         preferenceQuery,
         preferenceLikeNode,
         preferenceQueryBoost

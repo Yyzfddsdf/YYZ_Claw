@@ -5,6 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 
 const DEFAULT_TOPIC_NAMES = ["偏好", "经历", "性格"];
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.8;
+const REVIEW_NODE_SIMILARITY_THRESHOLD = 0.5;
+const RELATED_NODE_PREVIEW_THRESHOLD = 0.5;
+const MAX_RELATED_NODE_PREVIEW_CANDIDATES = 1;
+const MAX_RELATED_NODE_PREVIEW_ITEMS = 5;
 
 function createId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "")}`;
@@ -347,6 +351,105 @@ function calculateNodeDuplicateSimilarity(leftNode, rightNode) {
     calculateNodeFieldSimilarity(leftNode, rightNode, "explanation") * 0.06;
 
   return Math.max(combinedSimilarity, weightedSimilarity);
+}
+
+function classifySparseChar(char) {
+  if (/[\p{Script=Han}]/u.test(char)) {
+    return "han";
+  }
+  if (/[\p{L}]/u.test(char)) {
+    return "letter";
+  }
+  if (/[\p{N}]/u.test(char)) {
+    return "number";
+  }
+  return "separator";
+}
+
+function splitSparseSegments(value) {
+  const normalized = normalizeSearchText(value);
+  const segments = [];
+  let currentType = "";
+  let currentText = "";
+
+  for (const char of Array.from(normalized)) {
+    const type = classifySparseChar(char);
+    if (type === "separator") {
+      if (currentText) {
+        segments.push({ type: currentType, text: currentText });
+      }
+      currentType = "";
+      currentText = "";
+      continue;
+    }
+
+    if (currentText && type !== currentType) {
+      segments.push({ type: currentType, text: currentText });
+      currentText = "";
+    }
+
+    currentType = type;
+    currentText += char;
+  }
+
+  if (currentText) {
+    segments.push({ type: currentType, text: currentText });
+  }
+
+  return segments;
+}
+
+function tokenizeSparseTerms(value) {
+  const terms = [];
+
+  for (const segment of splitSparseSegments(value)) {
+    const chars = Array.from(segment.text);
+    if (segment.type === "han") {
+      if (chars.length < 2) {
+        continue;
+      }
+      for (let index = 0; index <= chars.length - 2; index += 1) {
+        terms.push(chars.slice(index, index + 2).join(""));
+      }
+      continue;
+    }
+
+    if (segment.text.length >= 2) {
+      terms.push(segment.text);
+    }
+  }
+
+  return terms;
+}
+
+function buildSparseTermSet(parts = []) {
+  const combinedText = buildCandidateSearchText(parts);
+  return new Set(tokenizeSparseTerms(combinedText));
+}
+
+function calculateBinaryCosineSimilarity(leftTerms, rightTerms) {
+  if (!(leftTerms instanceof Set) || !(rightTerms instanceof Set)) {
+    return 0;
+  }
+  if (leftTerms.size === 0 || rightTerms.size === 0) {
+    return 0;
+  }
+
+  let intersectionCount = 0;
+  const [smaller, larger] =
+    leftTerms.size <= rightTerms.size ? [leftTerms, rightTerms] : [rightTerms, leftTerms];
+
+  for (const term of smaller) {
+    if (larger.has(term)) {
+      intersectionCount += 1;
+    }
+  }
+
+  if (intersectionCount === 0) {
+    return 0;
+  }
+
+  return intersectionCount / Math.sqrt(leftTerms.size * rightTerms.size);
 }
 
 export class SqliteLongTermMemoryStore {
@@ -1394,7 +1497,6 @@ export class SqliteLongTermMemoryStore {
     limit = 5,
     excludeNodeIds = []
   } = {}) {
-    const normalizedName = normalizeOptionalText(name);
     const normalizedCoreMemory = normalizeOptionalText(coreMemory);
     const normalizedExplanation = normalizeOptionalText(explanation);
     const normalizedSpecificKeywords = Array.isArray(specificKeywords)
@@ -1408,8 +1510,7 @@ export class SqliteLongTermMemoryStore {
         ? excludeNodeIds.map((item) => String(item ?? "").trim()).filter(Boolean)
         : []
     );
-    const queryText = buildCandidateSearchText([
-      normalizedName,
+    const inputTerms = buildSparseTermSet([
       normalizedCoreMemory,
       normalizedExplanation,
       normalizedSpecificKeywords,
@@ -1422,38 +1523,17 @@ export class SqliteLongTermMemoryStore {
           return null;
         }
 
-        const duplicateSimilarity = calculateNodeDuplicateSimilarity(
-          {
-            name: normalizedName,
-            coreMemory: normalizedCoreMemory,
-            explanation: normalizedExplanation,
-            specificKeywords: normalizedSpecificKeywords,
-            generalKeywords: normalizedGeneralKeywords
-          },
-          {
-            name: node.name,
-            coreMemory: node.coreMemory,
-            explanation: node.explanation,
-            specificKeywords: node.specificKeywords,
-            generalKeywords: node.generalKeywords
-          }
+        const nodeCoreTerms = buildSparseTermSet([node.coreMemory, node.specificKeywords]);
+        const nodeExplanationTerms = buildSparseTermSet([
+          node.explanation,
+          node.generalKeywords
+        ]);
+        const coreSimilarity = calculateBinaryCosineSimilarity(inputTerms, nodeCoreTerms);
+        const explanationSimilarity = calculateBinaryCosineSimilarity(
+          inputTerms,
+          nodeExplanationTerms
         );
-        const exactNameSimilarity = normalizedName
-          ? calculateDuplicateSimilarity(normalizedName, node.name)
-          : 0;
-        const querySimilarity = queryText
-          ? calculateCandidateTextSimilarity(
-              queryText,
-              buildCandidateSearchText([
-                node.name,
-                node.coreMemory,
-                node.explanation,
-                node.specificKeywords,
-                node.generalKeywords
-              ])
-            )
-          : 0;
-        const score = Math.max(duplicateSimilarity, exactNameSimilarity, querySimilarity);
+        const score = coreSimilarity * 0.8 + explanationSimilarity * 0.2;
 
         return {
           memoryNodeId: node.id,
@@ -1464,7 +1544,11 @@ export class SqliteLongTermMemoryStore {
           topicName: node.topicName,
           createdAt: node.createdAt,
           updatedAt: node.updatedAt,
-          score
+          score,
+          similarityDebug: {
+            coreSimilarity,
+            explanationSimilarity
+          }
         };
       }),
       limit
@@ -1472,36 +1556,14 @@ export class SqliteLongTermMemoryStore {
   }
 
   findMemoryWriteCandidates({
-    topicName = "",
-    contentName = "",
     name = "",
     coreMemory = "",
     explanation = "",
     specificKeywords = [],
     generalKeywords = [],
     limit = 5,
-    excludeTopicIds = [],
-    excludeContentIds = [],
     excludeNodeIds = []
   } = {}) {
-    const topics = this.findTopicCandidates({
-      topicName,
-      contentName,
-      name,
-      specificKeywords,
-      generalKeywords,
-      limit,
-      excludeTopicIds
-    });
-    const contents = this.findContentCandidates({
-      topicName,
-      contentName,
-      name,
-      specificKeywords,
-      generalKeywords,
-      limit,
-      excludeContentIds
-    });
     const nodes = this.findNodeCandidates({
       name,
       coreMemory,
@@ -1511,31 +1573,35 @@ export class SqliteLongTermMemoryStore {
       limit,
       excludeNodeIds
     });
+    const enrichedNodes = nodes.map((node, index) => {
+      if (
+        index >= MAX_RELATED_NODE_PREVIEW_CANDIDATES ||
+        Number(node?.score ?? 0) < RELATED_NODE_PREVIEW_THRESHOLD
+      ) {
+        return node;
+      }
 
-    const topNodeScore = Number(nodes[0]?.score ?? 0);
-    const topContentScore = Number(contents[0]?.score ?? 0);
-    const topTopicScore = Number(topics[0]?.score ?? 0);
+      return {
+        ...node,
+        relatedMemoryNodes: this.listNodeRelations(node.memoryNodeId).slice(
+          0,
+          MAX_RELATED_NODE_PREVIEW_ITEMS
+        )
+      };
+    });
+
+    const topNodeScore = Number(enrichedNodes[0]?.score ?? 0);
 
     let recommendedAction = "create_new_structure_only_if_truly_needed";
     if (topNodeScore >= DUPLICATE_SIMILARITY_THRESHOLD) {
       recommendedAction = "update_or_merge_existing_node";
-    } else if (topNodeScore >= 0.6) {
+    } else if (topNodeScore >= REVIEW_NODE_SIMILARITY_THRESHOLD) {
       recommendedAction = "review_existing_node_candidates_before_create";
-    } else if (topContentScore >= DUPLICATE_SIMILARITY_THRESHOLD) {
-      recommendedAction = "create_node_in_existing_content";
-    } else if (topContentScore >= 0.6) {
-      recommendedAction = "review_existing_content_candidates_before_create";
-    } else if (topTopicScore >= DUPLICATE_SIMILARITY_THRESHOLD) {
-      recommendedAction = "create_content_in_existing_topic";
-    } else if (topTopicScore >= 0.6) {
-      recommendedAction = "review_existing_topic_candidates_before_create";
     }
 
     return {
       recommendedAction,
-      topicCandidates: topics,
-      contentCandidates: contents,
-      nodeCandidates: nodes
+      nodeCandidates: enrichedNodes
     };
   }
 

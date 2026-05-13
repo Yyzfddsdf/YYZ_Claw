@@ -360,7 +360,7 @@ node 的重复判断不是只看 `name`，还会综合：
 其中：
 
 - `memory_browse` 负责按层级浏览
-- `memory_find_candidates` 负责在写入前查最相近的 topic/content/node 候选
+- `memory_find_candidates` 负责在写入前查最相近的 memory node 候选
 - `memory_retrieve` 负责精确读取某个 topic/content/node 的说明
 - `memory_merge_nodes` 用于把重复或高度重合的多个记忆节点合并成一个新节点
 
@@ -368,7 +368,7 @@ node 的重复判断不是只看 `name`，还会综合：
 
 - `memory_find_candidates`
   - 在任何 create 前优先使用
-  - 返回推荐动作：优先 update / merge / 复用现有 content 或 topic，最后才 create
+  - 返回推荐动作：优先 update / merge，只有确认现有 node 都不合适时才 create
 - `memory_create_node`
   - 现在必须提供现有 `contentId`
   - 必须同时提供 `specificKeywords` 和 `generalKeywords`

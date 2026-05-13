@@ -3,6 +3,9 @@ const DEFAULT_MAX_SOURCE_USER_MESSAGES = 2;
 const DEFAULT_MIN_SCORE = 8;
 const MIN_TOKEN_LENGTH = 2;
 const MAX_EXPLANATION_CHARS = 280;
+const RELATED_NODE_PREVIEW_RECALL_SCORE = 8;
+const MAX_RECALL_RELATED_NODE_PREVIEW_CANDIDATES = 1;
+const MAX_RECALL_RELATED_NODE_PREVIEW_ITEMS = 3;
 
 const STOPWORD_SET = new Set([
   "a",
@@ -431,6 +434,23 @@ function buildMemoryContextBlock(matches = []) {
     if (matchedGeneralKeywords.length > 0) {
       lines.push(`Matched general keywords: ${matchedGeneralKeywords.join(", ")}`);
     }
+
+    const relatedMemoryNodes = Array.isArray(match?.relatedMemoryNodes)
+      ? match.relatedMemoryNodes
+      : [];
+    if (relatedMemoryNodes.length > 0) {
+      lines.push("Related memory nodes:");
+      for (const relatedNode of relatedMemoryNodes) {
+        const relatedTopicName = normalizeOptionalText(relatedNode?.topicName) || "未分类主题";
+        const relatedContentName =
+          normalizeOptionalText(relatedNode?.contentName) || "未分类内容";
+        const relatedNodeName = normalizeOptionalText(relatedNode?.memoryNodeName) || "未命名记忆";
+        const relationType = normalizeOptionalText(relatedNode?.relationType) || "related_to";
+        lines.push(
+          `- ${relatedNodeName} (${relatedTopicName} / ${relatedContentName}, relation: ${relationType})`
+        );
+      }
+    }
   }
 
   lines.push("</long-term-memory>");
@@ -615,6 +635,17 @@ export class LongTermMemoryRecallService {
     };
   }
 
+  buildRelatedMemoryNodePreview(nodeId, memoryStoreOverride = null) {
+    const memoryStore = this.ensureMemoryStore(memoryStoreOverride);
+    if (!nodeId || typeof memoryStore.listNodeRelations !== "function") {
+      return [];
+    }
+
+    return memoryStore
+      .listNodeRelations(nodeId)
+      .slice(0, MAX_RECALL_RELATED_NODE_PREVIEW_ITEMS);
+  }
+
   collectCandidateNodeIds(input, index) {
     const candidateIds = new Set();
 
@@ -773,16 +804,32 @@ export class LongTermMemoryRecallService {
     });
 
     const deduped = dedupeRankedMatches(rankedMatches).slice(0, this.maxRecalledNodes);
-    const memoryContextBlock = buildMemoryContextBlock(deduped);
+    const enrichedMatches = deduped.map((match, index) => {
+      if (
+        index >= MAX_RECALL_RELATED_NODE_PREVIEW_CANDIDATES ||
+        Number(match?.score ?? 0) < RELATED_NODE_PREVIEW_RECALL_SCORE
+      ) {
+        return match;
+      }
+
+      return {
+        ...match,
+        relatedMemoryNodes: this.buildRelatedMemoryNodePreview(
+          match?.node?.id,
+          memoryStoreOverride
+        )
+      };
+    });
+    const memoryContextBlock = buildMemoryContextBlock(enrichedMatches);
 
     return {
-      shouldRecall: deduped.length > 0,
+      shouldRecall: enrichedMatches.length > 0,
       input,
-      recalledNodes: deduped,
+      recalledNodes: enrichedMatches,
       memoryContextBlock,
       debugMeta: {
         candidateCount: candidateIds.size,
-        selectedCount: deduped.length
+        selectedCount: enrichedMatches.length
       }
     };
   }

@@ -39,7 +39,7 @@ export default {
 
     const candidateSuggestedUpdate =
       latestToolName === "memory_find_candidates" &&
-      /update_or_merge_existing_node|update_or_merge_existing_content|reuse_existing_topic/i.test(
+      /update_or_merge_existing_node|review_existing_node_candidates_before_create/i.test(
         latestToolContent
       );
 

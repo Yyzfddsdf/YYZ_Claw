@@ -28,60 +28,41 @@ function buildCandidateHooks(result) {
     ];
   }
 
-  if (recommendedAction === "create_node_in_existing_content") {
+  if (recommendedAction === "review_existing_node_candidates_before_create") {
     return [
       createToolResultHook({
         type: "memory_candidate_hint",
         level: "hint",
         message:
-          "已发现适合复用的现有 content。优先在现有 contentId 下创建 node，不要新建 topic。"
-      })
-    ];
-  }
-
-  if (recommendedAction === "create_content_in_existing_topic") {
-    return [
-      createToolResultHook({
-        type: "memory_candidate_hint",
-        level: "hint",
-        message:
-          "已发现适合复用的现有 topic。优先在现有 topicId 下创建 content，不要直接新建 topic。"
+          "已发现中高相似的现有记忆节点。先认真检查 nodeCandidates，确认不能 update 或 merge 再创建新节点。"
       })
     ];
   }
 
   return [
-    createToolResultHook({
-      type: "memory_candidate_hint",
-      level: "hint",
-      message:
-        "只有在确认现有 topic、content、node 都不合适时，才应继续创建新结构。"
-    })
-  ];
+      createToolResultHook({
+        type: "memory_candidate_hint",
+        level: "hint",
+        message:
+          "只有在确认现有相似记忆节点都不合适时，才应继续创建新节点。父级挂载位置请用 memory_browse 单独确认。"
+      })
+    ];
 }
 
 export default {
   name: "memory_find_candidates",
   description:
-    "Find the best existing topic/content/node candidates before any long-term memory write. Use this first when you are deciding whether to update, merge, or create memory.",
+    "Find the best existing memory node candidates before any long-term memory write. Use this first when you are deciding whether to update, merge, or create a new memory node.",
   parameters: {
     type: "object",
     properties: {
-      topicName: {
-        type: "string",
-        description: "Optional proposed topic name to compare against existing topics."
-      },
-      contentName: {
-        type: "string",
-        description: "Optional proposed content name to compare against existing contents."
-      },
       name: {
         type: "string",
-        description: "Optional proposed memory node name."
+        description: "Optional proposed memory node name. Used as a fallback label only; node similarity mainly relies on memory content."
       },
       coreMemory: {
         type: "string",
-        description: "Optional proposed core memory text."
+        description: "Optional proposed core memory text. This is the main field for similarity search."
       },
       explanation: {
         type: "string",
@@ -103,24 +84,20 @@ export default {
       },
       limit: {
         type: "integer",
-        description: "Optional max number of candidates per layer. Default 5, max 10."
+        description: "Optional max number of node candidates. Default 5, max 10."
       }
     },
     additionalProperties: false
   },
   async execute(args = {}, executionContext = {}) {
     const memoryStore = getMemoryStore(executionContext);
-    const topicName = normalizeName(args.topicName);
-    const contentName = normalizeName(args.contentName);
     const name = normalizeName(args.name);
     const coreMemory = normalizeName(args.coreMemory);
     const explanation = normalizeName(args.explanation);
     const specificKeywords = normalizeKeywordArray(args.specificKeywords);
     const generalKeywords = normalizeKeywordArray(args.generalKeywords);
     const hasAnySearchInput = Boolean(
-      topicName ||
-        contentName ||
-        name ||
+      name ||
         coreMemory ||
         explanation ||
         specificKeywords.length > 0 ||
@@ -129,13 +106,11 @@ export default {
 
     if (!hasAnySearchInput) {
       throw new Error(
-        "memory_find_candidates requires at least one of: topicName, contentName, name, coreMemory, explanation, specificKeywords, generalKeywords"
+        "memory_find_candidates requires at least one of: name, coreMemory, explanation, specificKeywords, generalKeywords"
       );
     }
 
     const result = memoryStore.findMemoryWriteCandidates({
-      topicName,
-      contentName,
       name,
       coreMemory,
       explanation,

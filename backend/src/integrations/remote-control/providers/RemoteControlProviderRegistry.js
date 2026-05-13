@@ -41,4 +41,13 @@ export class RemoteControlProviderRegistry {
       label: provider.label
     }));
   }
+
+  applySharedRuntimeDependencies(dependencies = {}) {
+    for (const provider of this.providers.values()) {
+      if (!provider?.adapter || typeof provider.adapter.setSharedRuntimeDependencies !== "function") {
+        continue;
+      }
+      provider.adapter.setSharedRuntimeDependencies(dependencies);
+    }
+  }
 }

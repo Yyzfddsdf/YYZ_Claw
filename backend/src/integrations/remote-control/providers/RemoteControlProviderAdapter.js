@@ -36,6 +36,13 @@ export class RemoteControlProviderAdapter {
     this.historyStore = options.historyStore ?? null;
   }
 
+  setSharedRuntimeDependencies(dependencies = {}) {
+    if (!this.runtimeService || typeof this.runtimeService.setSharedRuntimeDependencies !== "function") {
+      return;
+    }
+    this.runtimeService.setSharedRuntimeDependencies(dependencies);
+  }
+
   async getConfig() {
     if (!this.configStore || typeof this.configStore.read !== "function") {
       return {};

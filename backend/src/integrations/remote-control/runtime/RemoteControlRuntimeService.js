@@ -243,6 +243,30 @@ export class RemoteControlRuntimeService {
     this.pendingDeliveryPromise = Promise.resolve();
   }
 
+  setSharedRuntimeDependencies(dependencies = {}) {
+    if (Object.prototype.hasOwnProperty.call(dependencies, "runtimeService")) {
+      this.runtimeService = dependencies.runtimeService ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(dependencies, "wakeDispatcher")) {
+      this.wakeDispatcher = dependencies.wakeDispatcher ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(dependencies, "conversationRunCoordinator")) {
+      this.conversationRunCoordinator = dependencies.conversationRunCoordinator ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(dependencies, "orchestratorSupervisorService")) {
+      this.orchestratorSupervisorService = dependencies.orchestratorSupervisorService ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(dependencies, "pluginCatalog")) {
+      this.pluginCatalog = dependencies.pluginCatalog ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(dependencies, "skillCatalog")) {
+      this.skillCatalog = dependencies.skillCatalog ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(dependencies, "mcpManager")) {
+      this.mcpManager = dependencies.mcpManager ?? null;
+    }
+  }
+
   getStatus() {
     return {
       running: this.isRunning,

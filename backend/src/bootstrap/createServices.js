@@ -412,13 +412,15 @@ export async function createServices() {
   });
   conversationAgentRuntimeService.chatAgent = chatAgent;
   conversationAgentRuntimeService.orchestratorSupervisorService = orchestratorSupervisorService;
-  feishuRuntimeService.runtimeService = conversationAgentRuntimeService;
-  feishuRuntimeService.wakeDispatcher = wakeDispatcher;
-  feishuRuntimeService.conversationRunCoordinator = conversationRunCoordinator;
-  feishuRuntimeService.orchestratorSupervisorService = orchestratorSupervisorService;
-  feishuRuntimeService.pluginCatalog = pluginCatalog;
-  feishuRuntimeService.skillCatalog = skillCatalog;
-  feishuRuntimeService.mcpManager = mcpManager;
+  remoteControlProviderRegistry.applySharedRuntimeDependencies({
+    runtimeService: conversationAgentRuntimeService,
+    wakeDispatcher,
+    conversationRunCoordinator,
+    orchestratorSupervisorService,
+    pluginCatalog,
+    skillCatalog,
+    mcpManager
+  });
   automationSchedulerService.wakeDispatcher = wakeDispatcher;
   automationSchedulerService.orchestratorSupervisorService = orchestratorSupervisorService;
   automationSchedulerService.start();

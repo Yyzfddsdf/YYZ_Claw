@@ -329,10 +329,10 @@ export class FeishuWebhookIngestService {
       .map((item) => String(item ?? "").trim())
       .filter(Boolean)
       .join("\n\n");
+    const hasBinaryPayload = attachments.length > 0 || parsedFiles.length > 0;
     const finalContent =
       mergedContent ||
-      (messageType ? `[飞书消息类型:${messageType}]` : "") ||
-      "[收到一条飞书消息]";
+      (hasBinaryPayload ? "" : ((messageType ? `[飞书消息类型:${messageType}]` : "") || "[收到一条飞书消息]"));
 
     return {
       messageId: originMessageId,

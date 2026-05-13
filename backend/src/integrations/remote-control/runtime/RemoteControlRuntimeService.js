@@ -41,9 +41,15 @@ function normalizeParsedFile(file = {}, index = 0) {
   }
 
   return {
+    id: normalizeText(source.id) || `remote_file_${index + 1}`,
     name,
+    mimeType: normalizeText(source.mimeType),
+    extension: normalizeText(source.extension),
+    size: Number(source.size ?? 0),
     text: displayText,
-    parseStatus: normalizeText(source.parseStatus) || "parsed"
+    parseStatus: normalizeText(source.parseStatus) || "parsed",
+    note,
+    extractedText
   };
 }
 
@@ -51,13 +57,19 @@ function normalizeAttachment(attachment = {}, index = 0) {
   const source = normalizeObject(attachment);
   const name = normalizeText(source.name) || `image_${index + 1}`;
   const mimeType = normalizeText(source.mimeType);
-  if (!mimeType.startsWith("image/")) {
+  const dataUrl = String(source.dataUrl ?? "").trim();
+  const url = String(source.url ?? "").trim();
+  if (!mimeType.startsWith("image/") || (!dataUrl && !url)) {
     return null;
   }
 
   return {
+    id: normalizeText(source.id) || `remote_image_${index + 1}`,
     name,
-    mimeType
+    mimeType,
+    dataUrl,
+    url,
+    size: Number(source.size ?? 0)
   };
 }
 
@@ -98,8 +110,12 @@ function normalizeInboundMessage(message = {}, options = {}) {
 }
 
 function buildUserMessageContent(inbound) {
-  const sections = ["[远程消息]"];
   const content = normalizeText(inbound?.content);
+  if (!content) {
+    return "[远程消息]";
+  }
+
+  const sections = ["[远程消息]"];
   if (content) {
     sections.push(content);
   }
@@ -118,11 +134,38 @@ function buildUserMessageContent(inbound) {
 }
 
 function createUserMessage(inbound) {
+  const parsedFiles = Array.isArray(inbound?.parsedFiles) ? inbound.parsedFiles : [];
+  const attachments = Array.isArray(inbound?.attachments) ? inbound.attachments : [];
+  const meta = {};
+  if (parsedFiles.length > 0) {
+    meta.parsedFiles = parsedFiles.map((file) => ({
+      id: String(file.id ?? "").trim(),
+      name: String(file.name ?? "").trim(),
+      mimeType: String(file.mimeType ?? "").trim(),
+      extension: String(file.extension ?? "").trim(),
+      size: Number(file.size ?? 0),
+      parseStatus: String(file.parseStatus ?? "").trim() || "parsed",
+      note: String(file.note ?? "").trim(),
+      extractedText: String(file.extractedText ?? file.text ?? "").trim()
+    }));
+  }
+  if (attachments.length > 0) {
+    meta.attachments = attachments.map((attachment) => ({
+      id: String(attachment.id ?? "").trim(),
+      name: String(attachment.name ?? "").trim(),
+      mimeType: String(attachment.mimeType ?? "").trim(),
+      dataUrl: String(attachment.dataUrl ?? "").trim(),
+      url: String(attachment.url ?? "").trim(),
+      size: Number(attachment.size ?? 0)
+    }));
+  }
+
   return {
     id: `user_${Date.now()}_${randomUUID().slice(0, 8)}`,
     role: "user",
     content: buildUserMessageContent(inbound),
-    timestamp: Number(inbound?.timestamp ?? Date.now())
+    timestamp: Number(inbound?.timestamp ?? Date.now()),
+    meta
   };
 }
 

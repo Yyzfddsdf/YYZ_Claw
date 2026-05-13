@@ -1064,7 +1064,8 @@ export class ChatAgent {
     ) {
       return {
         conversation,
-        compressed: false
+        compressed: false,
+        flushedInsertions: []
       };
     }
 
@@ -1086,7 +1087,8 @@ export class ChatAgent {
     if (!shouldAutoCompress) {
       return {
         conversation,
-        compressed: false
+        compressed: false,
+        flushedInsertions: []
       };
     }
 
@@ -1147,12 +1149,19 @@ export class ChatAgent {
           }
         });
 
+        const nextConversation = [
+          ...systemMessages,
+          ...compressionService.buildModelMessages(nextMessages)
+        ];
+        const flushedInsertions = await this.flushRuntimeInsertionsAtCheckpoint({
+          conversation: nextConversation,
+          executionContext,
+          checkpoint: `${checkpoint}_compression_completed`
+        });
         return {
-          conversation: [
-            ...systemMessages,
-            ...compressionService.buildModelMessages(nextMessages)
-          ],
-          compressed: true
+          conversation: nextConversation,
+          compressed: true,
+          flushedInsertions
         };
       }
 
@@ -1170,7 +1179,8 @@ export class ChatAgent {
 
       return {
         conversation,
-        compressed: false
+        compressed: false,
+        flushedInsertions: []
       };
     } finally {
       if (runControl) {
@@ -1341,12 +1351,16 @@ export class ChatAgent {
           if (postRoundCompression.compressed) {
             conversation.length = 0;
             conversation.push(...postRoundCompression.conversation);
+            if (postRoundCompression.flushedInsertions.length > 0) {
+              emptyFinalResponseCount = 0;
+              continue;
+            }
           }
           emptyFinalResponseCount = 0;
           continue;
         }
 
-        await this.maybeAutoCompressAfterRound({
+        const finalCompression = await this.maybeAutoCompressAfterRound({
           validatedConfig,
           conversation,
           systemMessages,
@@ -1354,6 +1368,14 @@ export class ChatAgent {
           onEvent,
           checkpoint: "final_before_return"
         });
+        if (finalCompression.compressed) {
+          conversation.length = 0;
+          conversation.push(...finalCompression.conversation);
+          if (finalCompression.flushedInsertions.length > 0) {
+            emptyFinalResponseCount = 0;
+            continue;
+          }
+        }
 
         return {
           status: finalStatus,

@@ -1184,17 +1184,35 @@ export function ChatPanel({
         ? chat.activeConversationSkills.map((item) => String(item ?? "").trim())
         : []
     );
+    const activePluginNames = new Set(
+      (Array.isArray(chat.activeConversationPlugins) ? chat.activeConversationPlugins : [])
+        .map((item) => String(item ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    );
     const skillItems = (Array.isArray(chat.skillCatalog) ? chat.skillCatalog : [])
       .filter((skill) => {
         const skillKey = String(skill?.skillKey || skill?.relativePath || skill?.name || "").trim();
-        return activeSkillKeys.has(skillKey) && fuzzyMatchText(skill?.name, slashQuery);
+        const pluginName = String(skill?.pluginName ?? "").trim().toLowerCase();
+        const isPluginSkill = String(skill?.scope ?? "").trim().toLowerCase() === "plugin";
+        const enabledByConversation =
+          activeSkillKeys.has(skillKey) || (isPluginSkill && pluginName && activePluginNames.has(pluginName));
+        return (
+          enabledByConversation &&
+          (fuzzyMatchText(skill?.name, slashQuery) || fuzzyMatchText(skill?.displayName, slashQuery))
+        );
       })
       .slice(0, 8)
       .map((skill) => ({
         type: "skill",
         value: `/${String(skill?.name ?? "").trim()}`,
         label: `/${String(skill?.name ?? "").trim()}`,
-        description: String(skill?.shortDescription || skill?.description || "提示模型使用这个 skill").trim()
+        description: String(
+          skill?.shortDescription ||
+            skill?.description ||
+            (String(skill?.pluginDisplayName ?? "").trim()
+              ? `提示模型使用 ${String(skill.pluginDisplayName).trim()} 提供的 skill`
+              : "提示模型使用这个 skill")
+        ).trim()
       }));
     const pluginItems = (Array.isArray(chat.activeConversationPlugins)
       ? chat.activeConversationPlugins

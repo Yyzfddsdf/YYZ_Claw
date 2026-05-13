@@ -15,6 +15,7 @@ const SUPPORTED_EVENTS = new Set([
 
 const MATCHER_EVENTS = new Set(["PreToolUse", "PermissionRequest", "PostToolUse"]);
 const DEFAULT_COMMAND_TIMEOUT_SECONDS = 600;
+const ENV_TOKEN_PATTERN = /\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 function createId(prefix = "hook") {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -33,6 +34,16 @@ function normalizeHooksConfig(parsed) {
     return {};
   }
   return isPlainObject(parsed.hooks) ? parsed.hooks : {};
+}
+
+function normalizeRecord(value) {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+  const entries = Object.entries(value)
+    .map(([key, item]) => [normalizeText(key), String(item ?? "")])
+    .filter(([key]) => key);
+  return Object.fromEntries(entries);
 }
 
 function compileMatcherPattern(rawMatcher) {
@@ -64,15 +75,19 @@ function normalizeHandler(handler, eventName, groupIndex, handlerIndex, scopeLab
     return null;
   }
   const type = normalizeText(handler.type).toLowerCase();
-  if (type !== "command" && type !== "prompt") {
+  if (type !== "command" && type !== "prompt" && type !== "http") {
     return null;
   }
   const command = type === "command" ? normalizeText(handler.command) : "";
   const prompt = type === "prompt" ? String(handler.prompt ?? "") : "";
+  const url = type === "http" ? normalizeText(handler.url) : "";
   if (type === "command" && !command) {
     return null;
   }
   if (type === "prompt" && !prompt.trim()) {
+    return null;
+  }
+  if (type === "http" && !url) {
     return null;
   }
   const timeout = Number(handler.timeout ?? DEFAULT_COMMAND_TIMEOUT_SECONDS);
@@ -81,6 +96,12 @@ function normalizeHandler(handler, eventName, groupIndex, handlerIndex, scopeLab
     type,
     command,
     prompt,
+    url,
+    headers: type === "http" ? normalizeRecord(handler.headers) : {},
+    allowedEnvVars:
+      type === "http" && Array.isArray(handler.allowedEnvVars)
+        ? handler.allowedEnvVars.map((item) => normalizeText(item)).filter(Boolean)
+        : [],
     timeoutSeconds: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_COMMAND_TIMEOUT_SECONDS,
     statusMessage: normalizeText(handler.statusMessage),
     raw: handler
@@ -226,6 +247,25 @@ function expandHookCommandTokens(value, pluginRootDir = "", yyzRootDir = YYZ_DIR
     .replaceAll("$PLUGIN_ROOT", normalizedPluginRootDir);
 }
 
+function interpolateAllowedEnvTokens(value, allowedEnvVars = []) {
+  const source = String(value ?? "");
+  if (!source) {
+    return "";
+  }
+  const allowSet = new Set(
+    (Array.isArray(allowedEnvVars) ? allowedEnvVars : [])
+      .map((item) => normalizeText(item))
+      .filter(Boolean)
+  );
+  return source.replace(ENV_TOKEN_PATTERN, (match, shortName, wrappedName) => {
+    const envName = normalizeText(shortName || wrappedName);
+    if (!envName || !allowSet.has(envName)) {
+      return match;
+    }
+    return String(process.env?.[envName] ?? "");
+  });
+}
+
 async function runCommandHandler(command, input, timeoutSeconds, cwd, options = {}) {
   return new Promise((resolve) => {
     const pluginRootDir = normalizeText(options.pluginRootDir);
@@ -298,6 +338,45 @@ async function runCommandHandler(command, input, timeoutSeconds, cwd, options = 
       });
     }
   });
+}
+
+async function runHttpHandler(url, input, timeoutSeconds, options = {}) {
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1, Number(timeoutSeconds) || DEFAULT_COMMAND_TIMEOUT_SECONDS) * 1000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  const requestHeaders = {
+    "Content-Type": "application/json",
+    ...normalizeRecord(options.headers)
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: requestHeaders,
+      body: JSON.stringify(input),
+      signal: controller.signal
+    });
+    const stdout = await response.text();
+    clearTimeout(timer);
+    return {
+      ok: response.ok,
+      code: response.status,
+      stdout,
+      stderr: response.ok ? "" : `hook http request failed with status ${response.status}`
+    };
+  } catch (error) {
+    clearTimeout(timer);
+    const isAbort = error?.name === "AbortError";
+    return {
+      ok: false,
+      code: -1,
+      stdout: "",
+      stderr: isAbort
+        ? `hook http request timed out after ${Math.max(1, Number(timeoutSeconds) || DEFAULT_COMMAND_TIMEOUT_SECONDS)}s`
+        : (error?.message || "hook http request failed")
+    };
+  }
 }
 
 function parseHookStdout(stdout) {
@@ -476,15 +555,25 @@ export class HookExecutionService {
         continue;
       }
 
-      const commandResult = await runCommandHandler(
-        handler.command,
-        input,
-        handler.timeoutSeconds,
-        normalizeText(input.cwd),
-        {
-          pluginRootDir: handler.pluginRootDir
-        }
-      );
+      const commandResult =
+        handler.type === "http"
+          ? await runHttpHandler(handler.url, input, handler.timeoutSeconds, {
+              headers: Object.fromEntries(
+                Object.entries(handler.headers ?? {}).map(([key, value]) => [
+                  key,
+                  interpolateAllowedEnvTokens(value, handler.allowedEnvVars)
+                ])
+              )
+            })
+          : await runCommandHandler(
+              handler.command,
+              input,
+              handler.timeoutSeconds,
+              normalizeText(input.cwd),
+              {
+                pluginRootDir: handler.pluginRootDir
+              }
+            );
       const parsedStdout = parseHookStdout(commandResult.stdout);
       if (parsedStdout.kind === "json") {
         const runtimeSystemMessage = String(parsedStdout.value?.systemMessage ?? "").trim();
@@ -506,6 +595,13 @@ export class HookExecutionService {
       if (!commandResult.ok && parsedStdout.kind !== "json") {
         const exitCode = commandResult.code;
         const stderrText = normalizeText(commandResult.stderr);
+        if (handler.type === "http") {
+          result.errors.push({
+            handlerId: handler.id,
+            message: stderrText || `hook http request failed with status ${exitCode}`
+          });
+          continue;
+        }
         if (exitCode === 2 && stderrText) {
           // exit code 2: 快捷阻止/续跑路径 (兼容 OpenAI Codex 规范)
           if (eventName === "PreToolUse") {

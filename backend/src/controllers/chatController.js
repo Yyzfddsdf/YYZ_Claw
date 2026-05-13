@@ -49,6 +49,7 @@ import {
   resolveAgentRuntimeConfig,
   scheduleAsyncTitleGeneration
 } from "../services/chat/conversationRuntimeShared.js";
+import { resolveSlashCommandRuntime } from "../services/chat/slashCommandRuntime.js";
 import { AgentConversationRecorder } from "../services/orchestration/AgentConversationRecorder.js";
 import { resolveSubagentCompletionDispatchRequest } from "../services/orchestration/subagentCompletionShared.js";
 import {
@@ -62,40 +63,6 @@ function formatZodError(zodError) {
   return zodError.issues
     .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`)
     .join("; ");
-}
-
-function parseSlashCommandText(text) {
-  const rawText = String(text ?? "").trim();
-  if (!rawText.startsWith("/")) {
-    return {
-      handled: false,
-      action: "none",
-      messageText: rawText
-    };
-  }
-
-  if (/^\/compact\s*$/i.test(rawText)) {
-    return {
-      handled: true,
-      action: "compact"
-    };
-  }
-
-  const goalMatch = rawText.match(/^\/goal\s*[:：]\s*([\s\S]+)$/i);
-  if (goalMatch) {
-    const goal = String(goalMatch[1] ?? "").trim();
-    return {
-      handled: Boolean(goal),
-      action: goal ? "goal" : "none",
-      goal
-    };
-  }
-
-  return {
-    handled: false,
-    action: "none",
-    messageText: rawText
-  };
 }
 
 function buildAgentMeta(agent) {
@@ -1243,6 +1210,7 @@ export function createChatController({
   hookExecutionService,
   skillCatalog,
   pluginCatalog,
+  mcpManager,
   personaStore,
   conversationAgentRuntimeService,
   conversationEventBroadcaster,
@@ -2244,7 +2212,35 @@ export function createChatController({
         throw createValidationError(formatZodError(validation.error));
       }
 
-      res.json(parseSlashCommandText(validation.data.text));
+      const conversationId = String(validation.data.conversationId ?? "").trim();
+      const conversation = conversationId ? historyStore.getConversation(conversationId) : null;
+      const selectedSkillNames =
+        validation.data.selectedSkillNames.length > 0
+          ? validation.data.selectedSkillNames
+          : Array.isArray(conversation?.skills)
+            ? conversation.skills
+            : [];
+      const selectedPluginNames =
+        validation.data.selectedPluginNames.length > 0
+          ? validation.data.selectedPluginNames
+          : Array.isArray(conversation?.plugins)
+            ? conversation.plugins
+            : [];
+      const workplacePath =
+        String(validation.data.workplacePath ?? "").trim() ||
+        String(conversation?.workplacePath ?? "").trim();
+
+      res.json(
+        await resolveSlashCommandRuntime({
+          text: validation.data.text,
+          workplacePath,
+          selectedSkillNames,
+          selectedPluginNames,
+          skillCatalog,
+          pluginCatalog,
+          mcpManager
+        })
+      );
     },
 
     upsertHistoryById: async (req, res) => {

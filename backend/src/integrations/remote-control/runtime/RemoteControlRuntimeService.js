@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveSlashCommandRuntime } from "../../../services/chat/slashCommandRuntime.js";
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -171,7 +172,7 @@ function buildRemoteCommandExpansionNotice(replacements = []) {
   return `已展开命令：${uniqueNames.join("、")}`;
 }
 
-function parseRemoteSlashCommand(inbound) {
+async function parseRemoteSlashCommand(inbound, options = {}) {
   const content = normalizeText(inbound?.content);
   const hasExtraPayload =
     (Array.isArray(inbound?.parsedFiles) && inbound.parsedFiles.length > 0) ||
@@ -183,27 +184,15 @@ function parseRemoteSlashCommand(inbound) {
     };
   }
 
-  if (/^\/compact\s*$/i.test(content)) {
-    return {
-      handled: true,
-      action: "compact"
-    };
-  }
-
-  const goalMatch = content.match(/^\/goal\s*[:：]\s*([\s\S]+)$/i);
-  if (goalMatch) {
-    const goal = normalizeText(goalMatch[1]);
-    return {
-      handled: Boolean(goal),
-      action: goal ? "goal" : "none",
-      goal
-    };
-  }
-
-  return {
-    handled: false,
-    action: "none"
-  };
+  return resolveSlashCommandRuntime({
+    text: content,
+    workplacePath: options.workplacePath,
+    selectedSkillNames: options.selectedSkillNames,
+    selectedPluginNames: options.selectedPluginNames,
+    skillCatalog: options.skillCatalog,
+    pluginCatalog: options.pluginCatalog,
+    mcpManager: options.mcpManager
+  });
 }
 
 function collectAssistantContent(payload = {}) {
@@ -233,6 +222,8 @@ export class RemoteControlRuntimeService {
     this.controlConfigStore = options.controlConfigStore ?? null;
     this.historyStore = options.historyStore ?? null;
     this.pluginCatalog = options.pluginCatalog ?? null;
+    this.skillCatalog = options.skillCatalog ?? null;
+    this.mcpManager = options.mcpManager ?? null;
     this.runtimeService = options.runtimeService ?? null;
     this.wakeDispatcher = options.wakeDispatcher ?? null;
     this.conversationRunCoordinator = options.conversationRunCoordinator ?? null;
@@ -382,7 +373,14 @@ export class RemoteControlRuntimeService {
     );
     const expandedInbound = commandExpansion.inbound;
     const expansionNotice = buildRemoteCommandExpansionNotice(commandExpansion.replacements);
-    const slashCommand = parseRemoteSlashCommand(expandedInbound);
+    const slashCommand = await parseRemoteSlashCommand(expandedInbound, {
+      workplacePath: conversation?.workplacePath,
+      selectedSkillNames: Array.isArray(conversation?.skills) ? conversation.skills : [],
+      selectedPluginNames: Array.isArray(conversation?.plugins) ? conversation.plugins : [],
+      skillCatalog: this.skillCatalog,
+      pluginCatalog: this.pluginCatalog,
+      mcpManager: this.mcpManager
+    });
     if (slashCommand.handled) {
       await this.handleSlashCommand({
         conversation,
@@ -652,6 +650,20 @@ export class RemoteControlRuntimeService {
           });
         }
       }
+      return;
+    }
+
+    if (
+      action === "list_skills" ||
+      action === "list_mcps" ||
+      action === "list_commands" ||
+      action === "list_plugins"
+    ) {
+      const displayText = normalizeText(slashCommand?.displayText) || "无可显示内容";
+      await this.deliverReplyToChannel({
+        replyTarget: inbound.replyTarget,
+        text: displayText
+      });
       return;
     }
 

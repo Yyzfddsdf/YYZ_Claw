@@ -375,6 +375,7 @@ Current handler types:
 
 - `prompt`
 - `command`
+- `http`
 
 ### `prompt`
 
@@ -406,6 +407,42 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 ```
 
 If you are doing terminal file I/O, keep it explicitly UTF-8.
+
+### `http`
+
+Use `http` when the hook logic lives in a local or remote HTTP service.
+
+It sends the **same JSON input shape** as `command` hook stdin, but as an HTTP `POST` body.
+
+Example:
+
+```json
+{
+  "type": "http",
+  "url": "http://127.0.0.1:8080/hooks/pre-tool-use",
+  "timeout": 10,
+  "headers": {
+    "Authorization": "Bearer $HOOK_TOKEN"
+  },
+  "allowedEnvVars": ["HOOK_TOKEN"]
+}
+```
+
+Current YYZ_Claw behavior:
+
+- method is always `POST`
+- request body is JSON
+- default request header includes `Content-Type: application/json`
+- `headers` are optional custom request headers
+- `allowedEnvVars` whitelists environment variables that may be expanded inside header values
+- supported env token forms:
+  - `$VAR`
+  - `${VAR}`
+- non-2xx / timeout / connection failure are treated as non-blocking hook errors
+- 2xx response body is parsed the same way as `command` stdout:
+  - empty body
+  - plain text
+  - JSON
 
 ---
 

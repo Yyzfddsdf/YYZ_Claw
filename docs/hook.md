@@ -399,10 +399,11 @@ matcher 匹配的是 **工具名**。
 
 ## 当前支持的 handler 类型
 
-当前只支持两种：
+当前支持三种：
 
 - `command`
 - `prompt`
+- `http`
 
 ### command
 
@@ -416,6 +417,50 @@ matcher 匹配的是 **工具名**。
 - 安全检查
 - 审批控制
 - 根据工具结果动态返回 JSON
+
+### http
+
+`http` 不执行本地脚本，而是向一个 HTTP 服务发请求。
+
+当前 YYZ_Claw 行为：
+
+- 请求方法固定为 `POST`
+- 请求体固定为 JSON
+- 默认带 `Content-Type: application/json`
+- 请求 body 和 `command` hook 的 stdin JSON **完全一样**
+- 响应 body 的解析规则和 `command` hook 的 stdout **完全一样**
+
+支持字段：
+
+- `type`
+- `url`
+- `timeout`
+- `headers`
+- `allowedEnvVars`
+
+示例：
+
+```json
+{
+  "type": "http",
+  "url": "http://127.0.0.1:8080/hooks/pre-tool-use",
+  "timeout": 10,
+  "headers": {
+    "Authorization": "Bearer $HOOK_TOKEN"
+  },
+  "allowedEnvVars": ["HOOK_TOKEN"]
+}
+```
+
+说明：
+
+- `headers` 是附加请求头
+- `allowedEnvVars` 用来声明哪些环境变量允许在 header 值里展开
+- 当前支持两种展开写法：
+  - `$VAR`
+  - `${VAR}`
+- 未列入 `allowedEnvVars` 的变量不会被展开
+- 非 `2xx` / 超时 / 连接失败只会记为 hook error，不会阻断主流程
 
 ### prompt
 
@@ -439,9 +484,12 @@ matcher 匹配的是 **工具名**。
 
 ---
 
-## command Hook 的输入格式
+## command / http Hook 的输入格式
 
-所有 `command` hook 的输入都是 JSON，通过 `stdin` 传入。
+`command` hook 和 `http` hook 的输入结构是同一套：
+
+- `command`：通过 `stdin` 传入
+- `http`：通过 `POST body` 传入
 
 ### 通用字段
 
@@ -555,11 +603,16 @@ matcher 匹配的是 **工具名**。
 
 ---
 
-## command Hook 的输出格式
+## command / http Hook 的输出格式
 
-### 1. 纯文本 stdout
+`command` 和 `http` 的输出解析规则也是同一套：
 
-不是每个事件都支持纯文本 stdout。
+- `command`：读 `stdout`
+- `http`：读 `2xx response body`
+
+### 1. 纯文本 stdout / response body
+
+不是每个事件都支持纯文本输出。
 
 #### 会被当成上下文注入的事件
 
@@ -575,11 +628,11 @@ matcher 匹配的是 **工具名**。
 - `PostToolUse`
 - `Stop`
 
-这些事件的纯文本 stdout 不作为标准返回值使用。
+这些事件的纯文本输出不作为标准返回值使用。
 
-### 2. JSON stdout
+### 2. JSON stdout / response body
 
-推荐所有 command hook 都返回 JSON。
+推荐所有 `command` / `http` hook 都返回 JSON。
 
 通用结构：
 

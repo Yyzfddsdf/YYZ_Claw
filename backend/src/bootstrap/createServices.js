@@ -416,6 +416,9 @@ export async function createServices() {
   feishuRuntimeService.wakeDispatcher = wakeDispatcher;
   feishuRuntimeService.conversationRunCoordinator = conversationRunCoordinator;
   feishuRuntimeService.orchestratorSupervisorService = orchestratorSupervisorService;
+  feishuRuntimeService.pluginCatalog = pluginCatalog;
+  feishuRuntimeService.skillCatalog = skillCatalog;
+  feishuRuntimeService.mcpManager = mcpManager;
   automationSchedulerService.wakeDispatcher = wakeDispatcher;
   automationSchedulerService.orchestratorSupervisorService = orchestratorSupervisorService;
   automationSchedulerService.start();

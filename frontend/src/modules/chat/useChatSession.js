@@ -2218,6 +2218,32 @@ export function useChatSession(runtimeConfig = {}) {
     return normalizedMessages;
   }
 
+  function appendTransientAssistantMessage(conversationId, content, options = {}) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    const messageContent = String(content ?? "").trim();
+    if (!normalizedConversationId || !messageContent) {
+      return null;
+    }
+
+    const nextMessage = normalizeChatMessage({
+      id: createId("assistant"),
+      role: "assistant",
+      timestamp: Date.now(),
+      content: messageContent,
+      meta: {
+        kind: "runtime_info_ephemeral",
+        transient: true,
+        source: String(options.source ?? "slash_command").trim() || "slash_command"
+      }
+    });
+
+    writeConversationMessages(normalizedConversationId, [
+      ...readConversationMessages(normalizedConversationId),
+      nextMessage
+    ]);
+    return nextMessage;
+  }
+
   function clearCompressionStateForConversation(conversationId) {
     setCompressionStateForConversation(conversationId, EMPTY_COMPRESSION_STATE);
   }
@@ -5321,7 +5347,9 @@ export function useChatSession(runtimeConfig = {}) {
         const slashResult = await parseSlashCommand({
           conversationId: targetConversationId,
           text,
-          workplacePath: activeConversationWorkplace
+          workplacePath: activeConversationWorkplace,
+          selectedSkillNames: activeConversationSkills,
+          selectedPluginNames: activeConversationPlugins
         });
         const slashAction = String(slashResult?.action ?? "").trim();
 
@@ -5332,6 +5360,18 @@ export function useChatSession(runtimeConfig = {}) {
 
         if (slashResult?.handled && slashAction === "goal") {
           await setConversationGoal(String(slashResult.goal ?? ""));
+          return;
+        }
+
+        if (
+          slashResult?.handled &&
+          ["list_skills", "list_mcps", "list_commands", "list_plugins"].includes(slashAction)
+        ) {
+          appendTransientAssistantMessage(
+            targetConversationId,
+            String(slashResult?.displayText ?? "").trim() || "无可显示内容"
+          );
+          setError("");
           return;
         }
       } catch (slashError) {
@@ -5642,6 +5682,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationModelProfileId,
       activeConversationModelProfile,
       activeConversationCommands,
+      pluginCatalog,
       modelProfiles,
       activeConversationAgentDisplayName,
       activeConversationSubagents,
@@ -5737,6 +5778,7 @@ export function useChatSession(runtimeConfig = {}) {
       activeConversationModelProfileId,
       activeConversationModelProfile,
       activeConversationCommands,
+      pluginCatalog,
       modelProfiles,
       activeConversationAgentDisplayName,
       activeConversationSubagents,

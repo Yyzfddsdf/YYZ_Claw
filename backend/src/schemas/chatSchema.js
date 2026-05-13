@@ -76,5 +76,7 @@ export const conversationEditRerunSchema = z.object({
 export const slashCommandSchema = z.object({
   conversationId: z.string().trim().optional().default(""),
   text: z.string(),
-  workplacePath: z.string().trim().optional().default("")
+  workplacePath: z.string().trim().optional().default(""),
+  selectedSkillNames: z.array(z.string().trim().min(1)).optional().default([]),
+  selectedPluginNames: z.array(z.string().trim().min(1)).optional().default([])
 });

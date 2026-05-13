@@ -39,6 +39,30 @@ const SLASH_COMMANDS = [
     value: "/goal:",
     label: "/goal:目标",
     description: "设置目标，不入库也不发送给模型"
+  },
+  {
+    type: "command",
+    value: "/list-skills",
+    label: "/list-skills",
+    description: "查看当前会话实际生效的 skills，不入库"
+  },
+  {
+    type: "command",
+    value: "/list-mcps",
+    label: "/list-mcps",
+    description: "查看当前会话实际生效的 MCP，不入库"
+  },
+  {
+    type: "command",
+    value: "/list-commands",
+    label: "/list-commands",
+    description: "查看当前会话实际生效的命令，不入库"
+  },
+  {
+    type: "command",
+    value: "/list-plugins",
+    label: "/list-plugins",
+    description: "查看当前会话当前启用的插件，不入库"
   }
 ];
 const SLASH_CATEGORY_ALIASES = {

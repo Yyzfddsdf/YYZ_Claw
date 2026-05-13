@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 
 const DEFAULT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
@@ -11,6 +12,17 @@ function sanitizeFileName(value, fallback) {
 
   const sanitized = normalized.replace(/[\\/:*?"<>|]/g, "_").trim();
   return sanitized || fallback;
+}
+
+function preserveRemoteFileName(value, fallback) {
+  const normalized = String(value ?? "").trim();
+  const fallbackName = String(fallback ?? "").trim() || "remote_file";
+  if (!normalized) {
+    return fallbackName;
+  }
+
+  const baseName = path.basename(normalized);
+  return baseName || fallbackName;
 }
 
 function toDataUrl(buffer, mimeType) {
@@ -31,12 +43,48 @@ function normalizeParseFailedResult({ id, name, extension = "", note }) {
   };
 }
 
+export function buildRemoteUploadedFileNotice(uploadedFile = {}) {
+  const fileName = String(uploadedFile.name ?? "").trim() || "未命名文件";
+  const savedPath = String(uploadedFile.savedPath ?? "").trim();
+  if (!savedPath) {
+    return `远程文件 ${fileName} 已上传到本地 upload 文件夹。`;
+  }
+
+  return `远程文件 ${fileName} 已上传到本地 upload 文件夹：${savedPath}`;
+}
+
+export function resolveRemoteWorkspaceUploadDir(workplacePath = "") {
+  const normalized = String(workplacePath ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  return path.join(path.resolve(normalized), "upload");
+}
+
 export class RemoteAttachmentResolver {
   constructor(options = {}) {
     this.resourceClient = options.resourceClient ?? null;
     this.attachmentParserService = options.attachmentParserService ?? null;
+    this.uploadRootDir = String(options.uploadRootDir ?? "").trim();
+    this.targetConversationResolver =
+      typeof options.targetConversationResolver === "function"
+        ? options.targetConversationResolver
+        : null;
     this.maxImageBytes = Math.max(64 * 1024, Number(options.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES));
     this.maxFileBytes = Math.max(128 * 1024, Number(options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES));
+  }
+
+  async resolveDefaultUploadRootDir() {
+    if (this.uploadRootDir) {
+      return this.uploadRootDir;
+    }
+    if (!this.targetConversationResolver) {
+      return "";
+    }
+
+    const conversation = await this.targetConversationResolver().catch(() => null);
+    return resolveRemoteWorkspaceUploadDir(conversation?.workplacePath);
   }
 
   async resolveImageAttachment({ messageId, resourceKey, resourceType = "image", nameHint = "" }) {
@@ -88,37 +136,32 @@ export class RemoteAttachmentResolver {
     }
   }
 
-  async resolveFileParsedContent({
+  async resolveFileUpload({
     messageId,
     resourceKey,
     resourceType = "file",
     fileNameHint = "",
     missingKeyNote = "文件消息缺少资源 key，无法下载。",
-    noClientNote = "文件消息未启用资源下载能力。"
+    noClientNote = "文件消息未启用资源下载能力。",
+    uploadRootDir = this.uploadRootDir
   }) {
     const normalizedKey = String(resourceKey ?? "").trim();
     const normalizedHint = sanitizeFileName(fileNameHint, `file_${Date.now()}`);
+    const normalizedUploadRoot =
+      String(uploadRootDir ?? "").trim() || String(await this.resolveDefaultUploadRootDir()).trim();
 
     if (!normalizedKey) {
-      return [
-        normalizeParseFailedResult({
-          id: `file_missing_key_${Date.now()}`,
-          name: normalizedHint,
-          extension: path.extname(normalizedHint).toLowerCase(),
-          note: missingKeyNote
-        })
-      ];
+      return {
+        uploadedFile: null,
+        note: missingKeyNote
+      };
     }
 
     if (!this.resourceClient || typeof this.resourceClient.downloadMessageResource !== "function") {
-      return [
-        normalizeParseFailedResult({
-          id: `file_no_client_${Date.now()}`,
-          name: normalizedHint,
-          extension: path.extname(normalizedHint).toLowerCase(),
-          note: noClientNote
-        })
-      ];
+      return {
+        uploadedFile: null,
+        note: noClientNote
+      };
     }
 
     try {
@@ -128,58 +171,39 @@ export class RemoteAttachmentResolver {
         type: resourceType
       });
       const fileSize = Number(resource.size ?? resource.buffer?.length ?? 0);
-      const resolvedName = sanitizeFileName(resource.filename, normalizedHint);
-      const extension = path.extname(resolvedName).toLowerCase();
-      const mimeType = String(resource.mimeType ?? "").trim();
-
+      const resolvedName = preserveRemoteFileName(resource.filename, normalizedHint);
       if (fileSize > this.maxFileBytes) {
-        return [
-          {
-            id: `file_oversized_${Date.now()}`,
-            name: resolvedName,
-            mimeType,
-            extension,
-            size: fileSize,
-            parseStatus: "truncated",
-            note: `文件超过限制(${this.maxFileBytes} bytes)，已跳过内容提取。`,
-            extractedText: ""
-          }
-        ];
+        return {
+          uploadedFile: null,
+          note: `文件超过限制(${this.maxFileBytes} bytes)，已跳过下载。`
+        };
       }
 
-      if (!this.attachmentParserService || typeof this.attachmentParserService.parseFiles !== "function") {
-        return [
-          {
-            id: `file_plain_${Date.now()}`,
-            name: resolvedName,
-            mimeType,
-            extension,
-            size: fileSize,
-            parseStatus: "unsupported",
-            note: "文件已下载，但未启用内容解析服务。",
-            extractedText: ""
-          }
-        ];
+      if (!normalizedUploadRoot) {
+        return {
+          uploadedFile: null,
+          note: "未配置本地 upload 目录，无法保存远程文件。"
+        };
       }
 
-      const parseResult = await this.attachmentParserService.parseFiles([
-        {
-          originalname: resolvedName,
-          mimetype: mimeType,
-          size: fileSize,
-          buffer: resource.buffer
-        }
-      ]);
-      return Array.isArray(parseResult?.files) ? parseResult.files : [];
+      await fs.mkdir(normalizedUploadRoot, { recursive: true });
+      const savedPath = path.join(normalizedUploadRoot, resolvedName);
+      await fs.writeFile(savedPath, resource.buffer);
+
+      return {
+        uploadedFile: {
+          id: normalizedKey,
+          name: resolvedName,
+          savedPath,
+          size: fileSize
+        },
+        note: ""
+      };
     } catch (error) {
-      return [
-        normalizeParseFailedResult({
-          id: `file_download_failed_${Date.now()}`,
-          name: normalizedHint,
-          extension: path.extname(normalizedHint).toLowerCase(),
-          note: `文件下载失败: ${String(error?.message ?? "unknown error")}`
-        })
-      ];
+      return {
+        uploadedFile: null,
+        note: `文件下载失败: ${String(error?.message ?? "unknown error")}`
+      };
     }
   }
 }

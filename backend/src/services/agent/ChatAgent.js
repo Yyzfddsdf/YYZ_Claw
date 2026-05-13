@@ -32,7 +32,14 @@ function createStatusError(message, statusCode) {
 }
 
 function normalizeApprovalMode(value) {
-  return String(value ?? "").trim() === "auto" ? "auto" : DEFAULT_APPROVAL_MODE;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "auto") {
+    return "auto";
+  }
+  if (normalized === "full") {
+    return "full";
+  }
+  return DEFAULT_APPROVAL_MODE;
 }
 
 function getAssistantContentText(assistantRound) {

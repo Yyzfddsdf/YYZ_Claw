@@ -3089,7 +3089,11 @@ export function ChatPanel({
                 {chat.activeConversationWorkplaceLocked ? "已固定" : "首条消息后固定"}
               </span>
               <span className="chat-workplace-badge is-open">
-                {chat.activeConversationApprovalMode === "auto" ? "自动审批" : "确认审批"}
+                {chat.activeConversationApprovalMode === "full"
+                  ? "完全权限"
+                  : chat.activeConversationApprovalMode === "auto"
+                    ? "自动审批"
+                    : "确认审批"}
               </span>
               {chat.activeConversationGoal ? (
                 <span className="chat-workplace-badge is-goal">目标追踪</span>
@@ -4028,7 +4032,11 @@ export function ChatPanel({
                 <header className="composer-approval-head">
                   <strong>{isClarifyApproval ? "待用户澄清" : "待审批工具调用"}</strong>
                   <span className="composer-approval-badge">
-                    {chat.pendingApproval.approvalMode === "auto" ? "自动审批" : "确认审批"}
+                    {chat.pendingApproval.approvalMode === "full"
+                      ? "完全权限"
+                      : chat.pendingApproval.approvalMode === "auto"
+                        ? "自动审批"
+                        : "确认审批"}
                   </span>
                 </header>
 
@@ -4571,12 +4579,18 @@ export function ChatPanel({
                   >
                     <span
                       className={`approval-dot ${
-                        chat.activeConversationApprovalMode === "auto" ? "is-auto" : "is-confirm"
+                        chat.activeConversationApprovalMode === "full"
+                          ? "is-auto"
+                          : chat.activeConversationApprovalMode === "auto"
+                            ? "is-auto"
+                            : "is-confirm"
                       }`}
                     />
                     {chat.activeConversationGoal
                       ? "目标"
-                      : chat.activeConversationApprovalMode === "auto"
+                      : chat.activeConversationApprovalMode === "full"
+                        ? "全权"
+                        : chat.activeConversationApprovalMode === "auto"
                         ? "自动"
                         : "审批"}
                     <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" className={`approval-caret ${approvalMenuOpen ? "is-open" : ""}`}>
@@ -4601,6 +4615,14 @@ export function ChatPanel({
                       >
                         <span className="approval-dot is-auto" />
                         自动审批
+                      </button>
+                      <button
+                        type="button"
+                        className={chat.activeConversationApprovalMode === "full" ? "is-active" : ""}
+                        onClick={() => { chat.setConversationApprovalMode("full"); setApprovalMenuOpen(false); }}
+                      >
+                        <span className="approval-dot is-auto" />
+                        完全权限
                       </button>
                       <div className={`goal-control ${chat.activeConversationGoal ? "is-active" : ""}`}>
                         <div className="goal-control-head">

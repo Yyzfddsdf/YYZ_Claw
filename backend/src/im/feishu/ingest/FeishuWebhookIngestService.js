@@ -1,4 +1,7 @@
-import { RemoteAttachmentResolver } from "../../../integrations/remote-control/ingest/RemoteAttachmentResolver.js";
+import {
+  buildRemoteUploadedFileNotice,
+  RemoteAttachmentResolver
+} from "../../../integrations/remote-control/ingest/RemoteAttachmentResolver.js";
 import { RemoteWebhookIngestService } from "../../../integrations/remote-control/ingest/RemoteWebhookIngestService.js";
 import { safeJsonParse } from "../../../utils/safeJsonParse.js";
 
@@ -182,6 +185,10 @@ export class FeishuWebhookIngestService {
       new RemoteAttachmentResolver({
         resourceClient: this.openApiClient,
         attachmentParserService: this.attachmentParserService,
+        targetConversationResolver: () =>
+          this.runtimeService && typeof this.runtimeService.resolveTargetConversation === "function"
+            ? this.runtimeService.resolveTargetConversation()
+            : Promise.resolve(null),
         maxImageBytes: options.maxImageBytes,
         maxFileBytes: options.maxFileBytes
       });
@@ -287,7 +294,6 @@ export class FeishuWebhookIngestService {
     const content = buildMessageText(messageType, rawContent, contentPayload);
 
     const attachments = [];
-    const parsedFiles = [];
     const notes = [];
 
     if (messageType === "image") {
@@ -304,12 +310,15 @@ export class FeishuWebhookIngestService {
     }
 
     if (messageType === "file") {
-      const fileItems = await this.resolveParsedFiles({
+      const fileUpload = await this.resolveRemoteFileUpload({
         messageId: originMessageId,
         contentPayload
       });
-      if (fileItems.length > 0) {
-        parsedFiles.push(...fileItems);
+      if (fileUpload?.uploadedFile) {
+        notes.push(buildRemoteUploadedFileNotice(fileUpload.uploadedFile));
+      }
+      if (fileUpload?.note) {
+        notes.push(fileUpload.note);
       }
     }
 
@@ -329,7 +338,7 @@ export class FeishuWebhookIngestService {
       .map((item) => String(item ?? "").trim())
       .filter(Boolean)
       .join("\n\n");
-    const hasBinaryPayload = attachments.length > 0 || parsedFiles.length > 0;
+    const hasBinaryPayload = attachments.length > 0;
     const finalContent =
       mergedContent ||
       (hasBinaryPayload ? "" : ((messageType ? `[飞书消息类型:${messageType}]` : "") || "[收到一条飞书消息]"));
@@ -340,7 +349,6 @@ export class FeishuWebhookIngestService {
       content: finalContent,
       timestamp: normalizeTimestampMs(message.create_time),
       attachments,
-      parsedFiles,
       sessionKey: buildSessionKey(message, sender),
       messageType,
       replyTarget: {
@@ -360,9 +368,9 @@ export class FeishuWebhookIngestService {
     });
   }
 
-  async resolveParsedFiles({ messageId, contentPayload }) {
+  async resolveRemoteFileUpload({ messageId, contentPayload }) {
     const fileKey = String(contentPayload?.file_key ?? contentPayload?.fileKey ?? "").trim();
-    return this.attachmentResolver.resolveFileParsedContent({
+    return this.attachmentResolver.resolveFileUpload({
       messageId,
       resourceKey: fileKey,
       resourceType: "file",

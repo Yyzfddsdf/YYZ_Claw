@@ -214,6 +214,9 @@ export async function createServices() {
     dirPath: HISTORY_DIR
   });
   await orchestratorStore.initialize();
+  orchestratorStore.clearStaleRunningAgents({
+    reason: "process_startup"
+  });
   const automationTaskStore = new SqliteAutomationTaskStore({
     dbFilePath: HISTORY_DB_FILE,
     dirPath: HISTORY_DIR

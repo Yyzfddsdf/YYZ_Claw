@@ -477,6 +477,53 @@ export class SqliteOrchestratorStore {
     return rows.map((row) => normalizeAgent(row)).filter(Boolean);
   }
 
+  clearStaleRunningAgents(options = {}) {
+    const db = this.ensureDb();
+    const reason = normalizeText(options.reason) || "startup_cleanup";
+    const now = Date.now();
+    const rows = db
+      .prepare(`
+        SELECT *
+        FROM orchestrator_agents
+        WHERE status = 'running'
+           OR atomic_depth > 0
+           OR open_atomic_steps_json <> '[]'
+      `)
+      .all();
+
+    const clearedAgents = rows
+      .map((row) => normalizeAgent(row))
+      .filter(Boolean);
+
+    for (const agent of clearedAgents) {
+      db.prepare(`
+        UPDATE orchestrator_agents
+        SET
+          status = 'idle',
+          atomic_depth = 0,
+          open_atomic_steps_json = '[]',
+          metadata_json = ?,
+          updated_at = ?,
+          last_active_at = CASE
+            WHEN last_active_at <= 0 THEN ?
+            ELSE last_active_at
+          END
+        WHERE agent_id = ?
+      `).run(
+        JSON.stringify({
+          ...(agent.metadata ?? {}),
+          staleRunningClearedAt: now,
+          staleRunningClearReason: reason
+        }),
+        now,
+        now,
+        agent.agentId
+      );
+    }
+
+    return clearedAgents;
+  }
+
   deleteAgent(agentId) {
     const db = this.ensureDb();
     const normalizedAgentId = normalizeText(agentId);

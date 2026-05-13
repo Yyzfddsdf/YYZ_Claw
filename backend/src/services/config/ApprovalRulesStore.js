@@ -171,7 +171,14 @@ function parseApprovalRulesMarkdown(markdown) {
 }
 
 function normalizeApprovalMode(value) {
-  return String(value ?? "").trim() === "auto" ? "auto" : "confirm";
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "auto") {
+    return "auto";
+  }
+  if (normalized === "full") {
+    return "full";
+  }
+  return "confirm";
 }
 
 function extractCommandFromToolCall(toolCall) {
@@ -264,6 +271,9 @@ export function getApprovalGroupForToolCall(approvalRules, toolCall) {
 
 export function requiresApprovalForToolCall(approvalRules, toolCall, approvalMode) {
   const normalizedMode = normalizeApprovalMode(approvalMode);
+  if (normalizedMode === "full") {
+    return false;
+  }
   const toolName = String(toolCall?.function?.name ?? "").trim();
   const directRule = approvalRules?.toolGroupLookup?.get(toolName);
 

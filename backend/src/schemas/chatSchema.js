@@ -34,7 +34,7 @@ const chatMessageSchema = z.object({
   tokenUsage: tokenUsageSchema.optional()
 });
 
-export const approvalModeSchema = z.enum(["confirm", "auto"]);
+export const approvalModeSchema = z.enum(["confirm", "auto", "full"]);
 
 export const compressionTriggerSchema = z.enum(["manual", "auto"]);
 export const reasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);

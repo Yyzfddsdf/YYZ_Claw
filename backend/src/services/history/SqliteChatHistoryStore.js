@@ -104,7 +104,14 @@ function normalizeMessage(item, index) {
 }
 
 function normalizeApprovalMode(value) {
-  return String(value ?? "").trim() === "auto" ? "auto" : "confirm";
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "auto") {
+    return "auto";
+  }
+  if (normalized === "full") {
+    return "full";
+  }
+  return "confirm";
 }
 
 function normalizeGoalText(value) {

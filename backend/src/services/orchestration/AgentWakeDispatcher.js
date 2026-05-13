@@ -88,6 +88,26 @@ export class AgentWakeDispatcher {
     }
 
     const persistedAgent = this.orchestratorStore?.getAgent?.(agentId) ?? null;
+    if (normalizeText(persistedAgent?.status) === "running") {
+      this.orchestratorStore?.upsertAgent?.({
+        agentId,
+        sessionId,
+        conversationId: normalizeText(conversationId) || normalizeText(persistedAgent?.conversationId),
+        agentType: persistedAgent?.agentType ?? "generic",
+        displayName: persistedAgent?.displayName ?? "",
+        isPrimary: persistedAgent?.isPrimary ?? false,
+        status: "idle",
+        atomicDepth: 0,
+        openAtomicSteps: [],
+        metadata: {
+          ...(persistedAgent?.metadata ?? {}),
+          stalePersistedRunClearedAt: Date.now(),
+          stalePersistedRunClearReason: "restore_blocked"
+        },
+        lastActiveAt: Date.now()
+      });
+      return null;
+    }
     const openAtomicSteps = Array.isArray(persistedAgent?.openAtomicSteps)
       ? persistedAgent.openAtomicSteps
       : [];

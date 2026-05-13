@@ -958,9 +958,19 @@ function buildConversationUpsertPayload({
   disabledTools = [],
   messages = []
 } = {}) {
+  const normalizedApprovalMode = (() => {
+    const normalized = String(approvalMode ?? "").trim().toLowerCase();
+    if (normalized === "auto") {
+      return "auto";
+    }
+    if (normalized === "full") {
+      return "full";
+    }
+    return "confirm";
+  })();
   const payload = {
     title: String(title ?? "").trim() || "新会话",
-    approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
+    approvalMode: normalizedApprovalMode,
     personaId: String(personaId ?? "").trim(),
     modelProfileId: String(modelProfileId ?? "").trim(),
     thinkingMode: normalizeThinkingMode(thinkingMode),
@@ -1007,13 +1017,23 @@ function buildPersistenceSignature({
   planState = null,
   disabledTools = []
 } = {}) {
+  const normalizedApprovalMode = (() => {
+    const normalized = String(approvalMode ?? "").trim().toLowerCase();
+    if (normalized === "auto") {
+      return "auto";
+    }
+    if (normalized === "full") {
+      return "full";
+    }
+    return "confirm";
+  })();
   return JSON.stringify({
     title: String(title ?? "").trim() || "新会话",
     messages: toPersistableMessages(messages),
     skills: Array.isArray(skills) ? skills : [],
     plugins: Array.isArray(plugins) ? plugins : [],
     workplacePath: String(workplacePath ?? "").trim(),
-    approvalMode: String(approvalMode ?? "").trim() === "auto" ? "auto" : "confirm",
+    approvalMode: normalizedApprovalMode,
     personaId: String(personaId ?? "").trim(),
     thinkingMode: normalizeThinkingMode(thinkingMode),
     developerPrompt: normalizeDeveloperPrompt(developerPrompt),
@@ -3265,9 +3285,16 @@ export function useChatSession(runtimeConfig = {}) {
       return;
     }
 
-    const normalizedApprovalMode = String(approvalMode ?? "").trim() === "auto"
-      ? "auto"
-      : "confirm";
+    const normalizedApprovalMode = (() => {
+      const normalized = String(approvalMode ?? "").trim().toLowerCase();
+      if (normalized === "auto") {
+        return "auto";
+      }
+      if (normalized === "full") {
+        return "full";
+      }
+      return "confirm";
+    })();
 
     if (isDraftConversationActive || isDraftConversationId(activeConversationId)) {
       setDraftConversation((prev) => {

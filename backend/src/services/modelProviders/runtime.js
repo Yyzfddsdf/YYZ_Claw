@@ -15,26 +15,35 @@ function createUnsupportedProviderError(provider) {
   return new Error(`Unsupported model provider protocol: ${provider?.protocol ?? "unknown"}`);
 }
 
-function sanitizeMessageContentForVision(content, supportsVision) {
+function buildVisionOmittedTextPart(role = "") {
+  return {
+    type: "text",
+    text: buildVisionOmittedFallback(role)
+  };
+}
+
+function sanitizeMessageContentForVision(content, supportsVision, role = "") {
   if (supportsVision !== false || !Array.isArray(content)) {
     return content;
   }
 
-  return content.filter((part) => {
+  return content.map((part) => {
     if (!part || typeof part !== "object" || Array.isArray(part)) {
-      return true;
+      return part;
     }
-    return String(part.type ?? "").trim().toLowerCase() !== "image_url";
+    return String(part.type ?? "").trim().toLowerCase() === "image_url"
+      ? buildVisionOmittedTextPart(role)
+      : part;
   });
 }
 
 function buildVisionOmittedFallback(role = "") {
   const normalizedRole = String(role ?? "").trim().toLowerCase();
   if (normalizedRole === "user") {
-    return "【图片已省略：当前模型不支持视觉输入】";
+    return "[系统提示] 图片已省略：当前模型不支持视觉输入。请不要假设图片中的细节内容。";
   }
   if (normalizedRole === "system") {
-    return "【图片上下文已省略：当前模型不支持视觉输入】";
+    return "[系统提示] 图片上下文已省略：当前模型不支持视觉输入。请不要假设图片中的细节内容。";
   }
   return "";
 }
@@ -51,7 +60,11 @@ function sanitizeParamsForRuntimeCapabilities(runtimeConfig = {}, params = {}) {
         return message;
       }
 
-      const sanitizedContent = sanitizeMessageContentForVision(message.content, runtimeConfig.supportsVision);
+      const sanitizedContent = sanitizeMessageContentForVision(
+        message.content,
+        runtimeConfig.supportsVision,
+        message.role
+      );
       const contentIsEmptyArray = Array.isArray(sanitizedContent) && sanitizedContent.length === 0;
 
       return {

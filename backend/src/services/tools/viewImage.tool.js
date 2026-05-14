@@ -299,28 +299,25 @@ function applyLightCompression(buffer, mimeType) {
 export default {
   name: "view_image",
   description:
-    "Read a local image file, apply lightweight cross-platform compression (metadata stripping), and return base64 data URL payload for model vision input.",
+    "Load a local image so the model can view it. Use filePath to point to the image file.",
   parameters: {
     type: "object",
     properties: {
       filePath: {
         type: "string",
-        description: "Target image path. Supports absolute path or path relative to current workplace."
+        description: "Image file path. Supports absolute path or a path relative to the current workplace."
       },
       cwd: {
         type: "string",
-        description:
-          "Optional absolute working directory for resolving relative filePath. Defaults to current conversation workplace."
+        description: "Optional absolute working directory used to resolve a relative filePath."
       },
       mimeType: {
         type: "string",
-        description:
-          "Optional explicit image MIME type (for example image/png). Required when extension is uncommon."
+        description: "Optional explicit image MIME type, for example image/png."
       },
       disableCompression: {
         type: "boolean",
-        description:
-          "Optional. When true, skip the default lightweight compression step and use original bytes."
+        description: "Optional. When true, use the original image bytes."
       }
     },
     required: ["filePath"],

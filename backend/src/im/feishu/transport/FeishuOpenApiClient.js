@@ -89,22 +89,52 @@ function parseFilenameFromContentDisposition(value) {
     return "";
   }
 
+  const repairMojibakeFileName = (input) => {
+    const original = String(input ?? "").trim();
+    if (!original || !/[\u00C0-\u00FF]/.test(original)) {
+      return original;
+    }
+
+    const scoreReadability = (candidate) => {
+      const normalized = String(candidate ?? "");
+      if (!normalized) {
+        return 0;
+      }
+
+      const cjkCount = (normalized.match(/[\u3400-\u9fff]/g) ?? []).length;
+      const safeAsciiCount = (normalized.match(/[A-Za-z0-9._()\-\s]/g) ?? []).length;
+      const latin1NoiseCount = (normalized.match(/[\u00C0-\u00FF]/g) ?? []).length;
+      const replacementCount = (normalized.match(/\uFFFD/g) ?? []).length;
+      return cjkCount * 4 + safeAsciiCount - latin1NoiseCount * 2 - replacementCount * 4;
+    };
+
+    try {
+      const decoded = Buffer.from(original, "latin1").toString("utf8").trim();
+      if (!decoded) {
+        return original;
+      }
+      return scoreReadability(decoded) > scoreReadability(original) ? decoded : original;
+    } catch {
+      return original;
+    }
+  };
+
   const utf8Match = text.match(/filename\*=UTF-8''([^;]+)/i);
   if (utf8Match?.[1]) {
     try {
-      return decodeURIComponent(utf8Match[1]).trim();
+      return repairMojibakeFileName(decodeURIComponent(utf8Match[1]).trim());
     } catch {
-      return utf8Match[1].trim();
+      return repairMojibakeFileName(utf8Match[1].trim());
     }
   }
 
   const quotedMatch = text.match(/filename="([^"]+)"/i);
   if (quotedMatch?.[1]) {
-    return quotedMatch[1].trim();
+    return repairMojibakeFileName(quotedMatch[1].trim());
   }
 
   const plainMatch = text.match(/filename=([^;]+)/i);
-  return plainMatch?.[1] ? plainMatch[1].trim() : "";
+  return plainMatch?.[1] ? repairMojibakeFileName(plainMatch[1].trim()) : "";
 }
 
 function normalizeFileSendTarget(target = {}) {

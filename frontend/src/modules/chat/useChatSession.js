@@ -2035,7 +2035,7 @@ export function useChatSession(runtimeConfig = {}) {
         clearInterval(timerId);
       }
     };
-  }, [activeConversationId]);
+  }, [activeConversationId, historyLoaded]);
 
   useEffect(() => {
     lastPersistedSignatureRef.current = "";
@@ -2059,6 +2059,7 @@ export function useChatSession(runtimeConfig = {}) {
       ...prev,
       [normalizedConversationId]: runtime
     }));
+    hydratePendingInsertionsFromRuntimeQueue(runtime.queue, normalizedConversationId);
     hydratePendingApprovalFromPayload(runtime.pendingApproval, normalizedConversationId);
     const activeRunStatus = String(runtime?.activeRun?.status ?? "").trim();
     const currentAgentStatus = String(runtime?.currentAgent?.status ?? "").trim();
@@ -4828,6 +4829,65 @@ export function useChatSession(runtimeConfig = {}) {
     updatePendingInsertions(conversationId, (prev) =>
       prev.filter((item) => !pendingInsertionMatchesKeys(item, keys))
     );
+  }
+
+  function hydratePendingInsertionsFromRuntimeQueue(queue, fallbackConversationId = "") {
+    const normalizedConversationId = String(fallbackConversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return;
+    }
+
+    const normalizedList = Array.isArray(queue)
+      ? queue
+          .map((entry) => {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+              return null;
+            }
+
+            const subtype = String(entry.subtype ?? "").trim();
+            const metadata =
+              entry.metadata && typeof entry.metadata === "object" && !Array.isArray(entry.metadata)
+                ? entry.metadata
+                : {};
+            const payload =
+              entry.payload && typeof entry.payload === "object" && !Array.isArray(entry.payload)
+                ? entry.payload
+                : {};
+            const message =
+              entry.message && typeof entry.message === "object" && !Array.isArray(entry.message)
+                ? entry.message
+                : {};
+            const isUserCorrection =
+              subtype === "user_correction" || Boolean(metadata.userCorrection);
+            if (!isUserCorrection) {
+              return null;
+            }
+
+            const queueId = String(entry.id ?? entry.queueId ?? "").trim();
+            const messageId = String(message.id ?? entry.messageId ?? "").trim();
+            const clientInsertionId = String(
+              payload.clientInsertionId ?? metadata.clientInsertionId ?? ""
+            ).trim();
+            if (!queueId && !messageId && !clientInsertionId) {
+              return null;
+            }
+
+            return {
+              clientInsertionId,
+              queueId,
+              messageId,
+              sourceMessageId: String(
+                payload.sourceMessageId ?? metadata.sourceMessageId ?? ""
+              ).trim(),
+              content: String(payload.content ?? message.content ?? ""),
+              status: String(entry.status ?? "queued").trim() || "queued",
+              createdAt: Number(entry.createdAt ?? message.timestamp ?? Date.now())
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+    updatePendingInsertions(normalizedConversationId, normalizedList);
   }
 
   function appendApprovalTimeline(conversationId, item) {

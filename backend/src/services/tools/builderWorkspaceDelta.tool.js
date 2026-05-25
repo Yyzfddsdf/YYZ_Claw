@@ -142,7 +142,8 @@ export default {
       command: "git rev-parse --is-inside-work-tree",
       cwd,
       timeoutMs: 8000,
-      maxOutputChars: 1200
+      maxOutputChars: 1200,
+      abortSignal: executionContext?.abortSignal ?? null
     });
     if (!gitCheck.ok || gitCheck.stdout.toLowerCase() !== "true") {
       return {
@@ -156,7 +157,8 @@ export default {
     const statusRun = await runShellCommand({
       command: "git status --porcelain",
       cwd,
-      timeoutMs: 15000
+      timeoutMs: 15000,
+      abortSignal: executionContext?.abortSignal ?? null
     });
     const statusEntries = parseGitPorcelain(statusRun.stdout);
 
@@ -164,7 +166,8 @@ export default {
       command: `git diff --numstat ${baseRef}`,
       cwd,
       timeoutMs: 20000,
-      maxOutputChars: 30000
+      maxOutputChars: 30000,
+      abortSignal: executionContext?.abortSignal ?? null
     });
     const numstatEntries = numstatRun.ok ? parseNumstat(numstatRun.stdout) : [];
     const numstatMap = new Map(numstatEntries.map((entry) => [entry.path, entry]));
@@ -204,7 +207,8 @@ export default {
         command: `git diff --unified=1 ${baseRef}`,
         cwd,
         timeoutMs: 30000,
-        maxOutputChars: Math.max(4000, maxPatchChars * 2)
+        maxOutputChars: Math.max(4000, maxPatchChars * 2),
+        abortSignal: executionContext?.abortSignal ?? null
       });
       patchPreview = clipText(patchRun.stdout || patchRun.stderr, maxPatchChars);
     }

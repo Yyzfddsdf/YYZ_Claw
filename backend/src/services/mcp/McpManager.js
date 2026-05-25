@@ -373,7 +373,7 @@ export class McpManager {
                 sourceType: String(server.sourceType ?? "global").trim() || "global",
                 serverName,
                 serverDisplayName: displayName,
-                execute: async (toolArguments = {}) => {
+                execute: async (toolArguments = {}, executionContext = {}) => {
                   const args =
                     toolArguments && typeof toolArguments === "object" && !Array.isArray(toolArguments)
                       ? toolArguments
@@ -381,6 +381,8 @@ export class McpManager {
 
                   const response = await client.callTool(toolName, {
                     ...args
+                  }, {
+                    abortSignal: executionContext?.abortSignal ?? null
                   });
 
                   return {

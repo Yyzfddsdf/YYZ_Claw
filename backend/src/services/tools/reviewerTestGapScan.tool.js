@@ -172,7 +172,8 @@ export default {
       command: "git rev-parse --is-inside-work-tree",
       cwd: workspaceCwd,
       timeoutMs: 8000,
-      maxOutputChars: 1000
+      maxOutputChars: 1000,
+      abortSignal: executionContext?.abortSignal ?? null
     });
     if (!gitCheck.ok || gitCheck.stdout.toLowerCase() !== "true") {
       return {
@@ -186,7 +187,8 @@ export default {
       command: "git status --porcelain",
       cwd: workspaceCwd,
       timeoutMs: 15000,
-      maxOutputChars: 25000
+      maxOutputChars: 25000,
+      abortSignal: executionContext?.abortSignal ?? null
     });
     if (!statusRun.ok) {
       return {

@@ -134,6 +134,38 @@ function buildShellCommand(command) {
   };
 }
 
+function terminateProcessTree(child) {
+  if (!child) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    const pid = Number(child.pid ?? 0);
+    if (pid > 0) {
+      try {
+        const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore"
+        });
+        killer.unref();
+        return;
+      } catch {
+        // Fall back to direct kill below.
+      }
+    }
+  }
+
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    try {
+      child.kill();
+    } catch {
+      // Ignore secondary kill failures.
+    }
+  }
+}
+
 export function clipText(value, maxChars = 1200) {
   const text = String(value ?? "");
   if (!Number.isFinite(maxChars) || maxChars <= 0 || text.length <= maxChars) {
@@ -209,6 +241,7 @@ export async function runShellCommand(options = {}) {
   const command = normalizeText(options.command);
   const cwd = normalizeText(options.cwd);
   const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  const abortSignal = options.abortSignal ?? null;
   const maxOutputChars = normalizePositiveInteger(
     options.maxOutputChars,
     DEFAULT_MAX_OUTPUT_CHARS,
@@ -243,11 +276,53 @@ export async function runShellCommand(options = {}) {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (abortSignal && typeof abortSignal.removeEventListener === "function") {
+        abortSignal.removeEventListener("abort", abortHandler);
+      }
+    };
+
+    const settleResolve = (payload) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(payload);
+    };
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminateProcessTree(child);
     }, timeoutMs);
+
+    const abortHandler = () => {
+      terminateProcessTree(child);
+      settleResolve({
+        ok: false,
+        command,
+        cwd,
+        timeoutMs,
+        exitCode: -1,
+        signal: "SIGTERM",
+        timedOut: false,
+        aborted: true,
+        durationMs: Date.now() - startedAt,
+        stdout: stdout.trim(),
+        stderr: stderr.trim()
+      });
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        abortHandler();
+      } else if (typeof abortSignal.addEventListener === "function") {
+        abortSignal.addEventListener("abort", abortHandler, { once: true });
+      }
+    }
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -261,8 +336,7 @@ export async function runShellCommand(options = {}) {
     });
 
     child.on("close", (exitCode, signal) => {
-      clearTimeout(timer);
-      resolve({
+      settleResolve({
         ok: !timedOut && Number(exitCode ?? -1) === 0,
         command,
         cwd,
@@ -270,6 +344,7 @@ export async function runShellCommand(options = {}) {
         exitCode: Number(exitCode ?? -1),
         signal: signal ?? null,
         timedOut,
+        aborted: false,
         durationMs: Date.now() - startedAt,
         stdout: stdout.trim(),
         stderr: stderr.trim()
@@ -277,8 +352,7 @@ export async function runShellCommand(options = {}) {
     });
 
     child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({
+      settleResolve({
         ok: false,
         command,
         cwd,
@@ -286,6 +360,7 @@ export async function runShellCommand(options = {}) {
         exitCode: -1,
         signal: null,
         timedOut: false,
+        aborted: false,
         durationMs: Date.now() - startedAt,
         stdout: "",
         stderr: String(error?.message ?? "spawn failed")

@@ -115,6 +115,38 @@ function normalizeTimeoutMs(value) {
   return Math.min(normalized, MAX_TIMEOUT_MS);
 }
 
+function terminateProcessTree(child) {
+  if (!child) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    const pid = Number(child.pid ?? 0);
+    if (pid > 0) {
+      try {
+        const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore"
+        });
+        killer.unref();
+        return;
+      } catch {
+        // Fall back to direct kill below.
+      }
+    }
+  }
+
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    try {
+      child.kill();
+    } catch {
+      // Ignore secondary kill failures.
+    }
+  }
+}
+
 function detectDestructiveCommand(command) {
   const normalized = String(command ?? "").replace(/\r/g, "").trim();
   if (!normalized) {
@@ -187,7 +219,7 @@ async function resolvePowerShellExecutable() {
   return findUnixExecutable("pwsh") || findUnixExecutable("powershell") || "pwsh";
 }
 
-async function runCommand({ command, cwd, timeoutMs }) {
+async function runCommand({ command, cwd, timeoutMs, abortSignal = null }) {
   const shellFile = await resolvePowerShellExecutable();
 
   if (!shellFile) {
@@ -222,11 +254,57 @@ async function runCommand({ command, cwd, timeoutMs }) {
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (abortSignal && typeof abortSignal.removeEventListener === "function") {
+        abortSignal.removeEventListener("abort", abortHandler);
+      }
+    };
+
+    const settleResolve = (payload) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(payload);
+    };
+
+    const settleReject = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminateProcessTree(child);
     }, timeoutMs);
+
+    const abortHandler = () => {
+      terminateProcessTree(child);
+      settleResolve({
+        exitCode: -1,
+        signal: "SIGTERM",
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+        timedOut: false,
+        aborted: true
+      });
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        abortHandler();
+      } else if (typeof abortSignal.addEventListener === "function") {
+        abortSignal.addEventListener("abort", abortHandler, { once: true });
+      }
+    }
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -240,19 +318,17 @@ async function runCommand({ command, cwd, timeoutMs }) {
     });
 
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      settleReject(error);
     });
 
     child.on("close", (exitCode, signal) => {
-      clearTimeout(timer);
-
-      resolve({
+      settleResolve({
         exitCode: Number(exitCode ?? -1),
         signal: signal ?? null,
         stdout: stdout.trim(),
         stderr: stderr.trim(),
-        timedOut
+        timedOut,
+        aborted: false
       });
     });
   });
@@ -310,7 +386,8 @@ export default {
     const result = await runCommand({
       command,
       cwd,
-      timeoutMs
+      timeoutMs,
+      abortSignal: executionContext?.abortSignal ?? null
     });
 
     if (result.timedOut) {

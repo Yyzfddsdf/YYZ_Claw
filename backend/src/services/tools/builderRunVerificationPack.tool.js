@@ -72,7 +72,8 @@ export default {
         command,
         cwd,
         timeoutMs: timeoutMsPerCommand,
-        maxOutputChars: Math.max(maxOutputChars, 1500)
+        maxOutputChars: Math.max(maxOutputChars, 1500),
+        abortSignal: executionContext?.abortSignal ?? null
       });
 
       commandResults.push({

@@ -420,6 +420,16 @@ export class McpClient {
     const timeoutMs = Number.isInteger(options.timeoutMs) ? options.timeoutMs : this.requestTimeoutMs;
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+    const externalAbortSignal = options.abortSignal ?? null;
+    const abortHandler = () => abortController.abort(externalAbortSignal?.reason);
+
+    if (externalAbortSignal) {
+      if (externalAbortSignal.aborted) {
+        abortController.abort(externalAbortSignal.reason);
+      } else if (typeof externalAbortSignal.addEventListener === "function") {
+        externalAbortSignal.addEventListener("abort", abortHandler, { once: true });
+      }
+    }
 
     try {
       const response = await fetch(this.url, {
@@ -497,12 +507,18 @@ export class McpClient {
       };
     } finally {
       clearTimeout(timeoutId);
+      if (externalAbortSignal && typeof externalAbortSignal.removeEventListener === "function") {
+        externalAbortSignal.removeEventListener("abort", abortHandler);
+      }
     }
   }
 
-  sendRequest(method, params = undefined, timeoutMs = this.requestTimeoutMs) {
+  sendRequest(method, params = undefined, timeoutMs = this.requestTimeoutMs, options = {}) {
     if (this.transport === "http") {
-      return this.sendHttpRequest(method, params, { timeoutMs }).then((response) => response.result);
+      return this.sendHttpRequest(method, params, {
+        timeoutMs,
+        abortSignal: options.abortSignal ?? null
+      }).then((response) => response.result);
     }
 
     if (!this.child || !this.child.stdin || this.closed) {
@@ -512,14 +528,41 @@ export class McpClient {
     const id = String(this.nextId++);
 
     return new Promise((resolve, reject) => {
+      const abortSignal = options.abortSignal ?? null;
       const timerId = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(createStatusError(`MCP request timed out: ${method}`, 504));
       }, timeoutMs);
 
+      const abortHandler = () => {
+        clearTimeout(timerId);
+        this.pendingRequests.delete(id);
+        reject(createStatusError(`MCP request aborted: ${method}`, 499));
+      };
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          abortHandler();
+          return;
+        }
+        if (typeof abortSignal.addEventListener === "function") {
+          abortSignal.addEventListener("abort", abortHandler, { once: true });
+        }
+      }
+
       this.pendingRequests.set(id, {
-        resolve,
-        reject,
+        resolve: (value) => {
+          if (abortSignal && typeof abortSignal.removeEventListener === "function") {
+            abortSignal.removeEventListener("abort", abortHandler);
+          }
+          resolve(value);
+        },
+        reject: (error) => {
+          if (abortSignal && typeof abortSignal.removeEventListener === "function") {
+            abortSignal.removeEventListener("abort", abortHandler);
+          }
+          reject(error);
+        },
         timerId
       });
 
@@ -568,12 +611,12 @@ export class McpClient {
     return Array.isArray(result?.tools) ? result.tools : [];
   }
 
-  async callTool(toolName, args = {}) {
+  async callTool(toolName, args = {}, options = {}) {
     await this.start();
     return this.sendRequest("tools/call", {
       name: toolName,
       arguments: args
-    });
+    }, this.requestTimeoutMs, options);
   }
 
   isHealthy() {

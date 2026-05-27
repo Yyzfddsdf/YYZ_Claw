@@ -209,6 +209,17 @@ function parseToolArgumentsForHook(rawArguments) {
   }
 }
 
+function isClarifyToolCallAwaitingUserInput(toolCall) {
+  if (String(toolCall?.function?.name ?? "").trim() !== "clarify") {
+    return false;
+  }
+
+  const parsedArguments = parseToolArgumentsForHook(toolCall?.function?.arguments);
+  const selectedOption = String(parsedArguments?.selectedOption ?? "").trim();
+  const additionalText = String(parsedArguments?.additionalText ?? "").trim();
+  return !selectedOption && !additionalText;
+}
+
 function sanitizeConversationForModel(conversation = [], options = {}) {
   const includeReasoningContent = Boolean(options.includeReasoningContent);
   return Array.isArray(conversation)
@@ -649,8 +660,7 @@ export class ChatAgent {
   }
 
   requiresApproval(toolCall, approvalMode, approvalRules) {
-    const toolName = String(toolCall?.function?.name ?? "").trim();
-    if (toolName === "clarify") {
+    if (isClarifyToolCallAwaitingUserInput(toolCall)) {
       return true;
     }
     return requiresApprovalForToolCall(approvalRules, toolCall, approvalMode);
@@ -1223,7 +1233,11 @@ export class ChatAgent {
           runModelProviderStream(
             validatedConfig,
             this.createModelProviderRequestParams(apiConversation, executionContext, validatedConfig),
-            { signal: abortSignal }
+            {
+              signal: abortSignal,
+              runId: String(executionContext?.runId ?? "").trim(),
+              conversationId
+            }
           ),
         onEvent,
         abortSignal
@@ -1766,6 +1780,50 @@ export class ChatAgent {
     const conversation = Array.isArray(pendingApproval.conversationSnapshot)
       ? [...pendingApproval.conversationSnapshot]
       : [];
+    const assistantMessage =
+      pendingApproval?.assistantMessage &&
+      typeof pendingApproval.assistantMessage === "object" &&
+      !Array.isArray(pendingApproval.assistantMessage)
+        ? pendingApproval.assistantMessage
+        : null;
+    const assistantToolCallIds = new Set(
+      (Array.isArray(pendingApproval?.toolCalls) ? pendingApproval.toolCalls : [])
+        .map((toolCall) => String(toolCall?.id ?? "").trim())
+        .filter(Boolean)
+    );
+    const hasApprovedAssistantMessage =
+      assistantMessage &&
+      assistantToolCallIds.size > 0 &&
+      conversation.some((message) => {
+        if (String(message?.role ?? "").trim() !== "assistant") {
+          return false;
+        }
+
+        const toolCalls = Array.isArray(message?.tool_calls)
+          ? message.tool_calls
+          : Array.isArray(message?.toolCalls)
+            ? message.toolCalls
+            : [];
+        return toolCalls.some((toolCall) =>
+          assistantToolCallIds.has(String(toolCall?.id ?? "").trim())
+        );
+      });
+    if (assistantMessage && !hasApprovedAssistantMessage) {
+      conversation.push({
+        role: "assistant",
+        content: String(assistantMessage.content ?? ""),
+        ...(String(assistantMessage.reasoning_content ?? assistantMessage.reasoningContent ?? "").trim()
+          ? {
+              reasoning_content: String(
+                assistantMessage.reasoning_content ?? assistantMessage.reasoningContent ?? ""
+              )
+            }
+          : {}),
+        ...(Array.isArray(assistantMessage.tool_calls) && assistantMessage.tool_calls.length > 0
+          ? { tool_calls: assistantMessage.tool_calls }
+          : {})
+      });
+    }
     const executionContext = {
       ...(pendingApproval.executionContext ?? {}),
       ...(executionContextOverride ?? {})

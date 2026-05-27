@@ -322,6 +322,16 @@ function buildRuntimeStatusPayload({
   const currentAgent = agents.find(
     (agent) => String(agent?.agentId ?? "").trim() === targetAgentId
   ) ?? null;
+  const activeRunSummary = buildRunSummary(activeRun);
+  const activeRunStatus = String(activeRunSummary?.status ?? "").trim();
+  const effectiveCurrentAgent =
+    currentAgent && activeRunStatus === "running"
+      ? {
+          ...currentAgent,
+          status: "running",
+          lastActiveAt: Number(activeRunSummary?.lastEventAt ?? currentAgent?.lastActiveAt ?? Date.now())
+        }
+      : currentAgent;
   const queueByAgent =
     sessionSnapshot?.queueByAgent instanceof Map
       ? Object.fromEntries(sessionSnapshot.queueByAgent.entries())
@@ -344,9 +354,9 @@ function buildRuntimeStatusPayload({
     source: String(history?.source ?? "chat").trim() || "chat",
     targetAgentId,
     primaryAgentId: String(sessionInfo?.primaryAgentId ?? "").trim(),
-    activeRun: buildRunSummary(activeRun),
+    activeRun: activeRunSummary,
     pendingApproval: serializePendingApprovalForClient(pendingApproval),
-    currentAgent,
+    currentAgent: effectiveCurrentAgent,
     agents,
     messageStats,
     queue: currentQueue,
@@ -1145,51 +1155,6 @@ function appendCompressionSummaryMessage(historyStore, conversationId, compressi
   return historyStore.appendMessages(conversationId, [compressionResult.summaryMessage], {
     updatedAt: Number(compressionResult.summaryMessage.timestamp ?? Date.now())
   });
-}
-
-function normalizeApprovedToolCallMessages(pendingApproval, messages = []) {
-  const assistantToolCallIds = new Set(
-    (Array.isArray(pendingApproval?.toolCalls) ? pendingApproval.toolCalls : [])
-      .map((toolCall) => String(toolCall?.id ?? "").trim())
-      .filter(Boolean)
-  );
-  const assistantMessage = pendingApproval?.assistantMessage &&
-    typeof pendingApproval.assistantMessage === "object" &&
-    !Array.isArray(pendingApproval.assistantMessage)
-      ? pendingApproval.assistantMessage
-      : null;
-  const sourceMessages = Array.isArray(messages) ? messages : [];
-  const firstResultIndex = sourceMessages.findIndex((message) => {
-    if (String(message?.role ?? "").trim() !== "tool") {
-      return false;
-    }
-
-    const toolCallId = String(message?.toolCallId ?? message?.tool_call_id ?? "").trim();
-    return toolCallId && assistantToolCallIds.has(toolCallId);
-  });
-  const resultMessages = firstResultIndex >= 0 ? sourceMessages.slice(firstResultIndex) : [];
-
-  if (!assistantMessage || assistantToolCallIds.size === 0 || resultMessages.length === 0) {
-    return [];
-  }
-
-  return [
-    {
-      id: `assistant_tool_call_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
-      role: "assistant",
-      content: String(assistantMessage.content ?? ""),
-      reasoningContent: String(
-        assistantMessage.reasoningContent ?? assistantMessage.reasoning_content ?? ""
-      ),
-      timestamp: Date.now(),
-      toolCalls: Array.isArray(pendingApproval.toolCalls) ? pendingApproval.toolCalls : [],
-      meta: {
-        kind: "approved_tool_call",
-        approvalId: String(pendingApproval.id ?? "")
-      }
-    },
-    ...resultMessages
-  ];
 }
 
 export function createChatController({
@@ -2821,7 +2786,6 @@ export function createChatController({
           conversationRunCoordinator,
           res
         );
-
         executionContext = {
           ...(resolvedPendingApproval.executionContext ?? {}),
           conversationId: resolvedPendingApproval.conversationId,
@@ -2925,20 +2889,25 @@ export function createChatController({
         });
 
         const nextMessages = recorder.getMessages();
-        const approvedToolCallMessages = normalizeApprovedToolCallMessages(
-          resolvedPendingApproval,
-          nextMessages
-        );
-        let updatedResumedHistory =
-          approvedToolCallMessages.length > 0
-            ? historyStore.appendMessages(
-                resolvedPendingApproval.conversationId,
-                approvedToolCallMessages,
-                {
-                  updatedAt: Number(approvedToolCallMessages.at(-1)?.timestamp ?? Date.now())
-                }
-              )
-            : historyStore.getConversation(resolvedPendingApproval.conversationId);
+        let updatedResumedHistory = historyStore.mergeConversation({
+          conversationId: resolvedPendingApproval.conversationId,
+          title: resumedHistory?.title,
+          workplacePath: resumedHistory?.workplacePath,
+          parentConversationId: resumedHistory?.parentConversationId,
+          source: resumedHistory?.source,
+          model: resolvedPendingApproval.runtimeConfig?.model ?? resumedHistory?.model,
+          modelProfileId:
+            resolvedPendingApproval.runtimeConfig?.modelProfileId ?? resumedHistory?.modelProfileId,
+          thinkingMode: resumedHistory?.thinkingMode,
+          approvalMode: resumedHistory?.approvalMode,
+          goal: resumedHistory?.goal,
+          skills: resumedHistory?.skills,
+          plugins: resumedHistory?.plugins,
+          disabledTools: resumedHistory?.disabledTools,
+          personaId: resumedHistory?.personaId,
+          developerPrompt: resumedHistory?.developerPrompt,
+          messages: nextMessages
+        });
 
         if (executionContext?.goalState?.submitted) {
           updatedResumedHistory = historyStore.updateConversationGoal(

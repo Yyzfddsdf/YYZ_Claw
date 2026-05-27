@@ -346,6 +346,10 @@ export function buildAnthropicMessagesRequest(runtimeConfig = {}, params = {}) {
     if (VALID_ANTHROPIC_EFFORTS.has(reasoningEffort)) {
       anthropicRequest.output_config = { effort: reasoningEffort };
     }
+  } else {
+    anthropicRequest.thinking = {
+      type: "disabled"
+    };
   }
 
   return anthropicRequest;

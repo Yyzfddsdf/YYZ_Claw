@@ -113,6 +113,7 @@ async function generateConversationTitle({ configStore, firstSentence }) {
     );
     const completion = await runModelProviderCompletion(runtimeConfig, {
       temperature: 0.2,
+      max_tokens: 256,
       messages: [
         {
           role: "system",

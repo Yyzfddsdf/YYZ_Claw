@@ -4346,7 +4346,6 @@ export function useChatSession(runtimeConfig = {}) {
       const messageContent = typeof event?.content === "string" ? event.content : "";
       const reasoningContent =
         typeof event?.reasoningContent === "string" ? event.reasoningContent : "";
-
       if (toolCalls.length === 0 && streamState.activeAssistantMessageId) {
         updateTargetMessages((prev) =>
           prev.map((item) =>

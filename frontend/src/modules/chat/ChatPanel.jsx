@@ -962,6 +962,7 @@ export function ChatPanel({
   });
   const [clarifySelectedOption, setClarifySelectedOption] = useState("");
   const [clarifyAdditionalText, setClarifyAdditionalText] = useState("");
+  const lastClarifyApprovalIdRef = useRef("");
   const [viewingImage, setViewingImage] = useState(null);
   const [viewingFileText, setViewingFileText] = useState(null);
   const [draggedQueueMessageId, setDraggedQueueMessageId] = useState("");
@@ -1690,16 +1691,36 @@ export function ChatPanel({
 
   useEffect(() => {
     if (!chat.pendingApproval || !isClarifyApproval) {
+      lastClarifyApprovalIdRef.current = "";
       setClarifySelectedOption("");
       setClarifyAdditionalText("");
       return;
     }
 
+    const currentApprovalId = String(chat.pendingApproval?.approvalId ?? "").trim();
+    const hasLocalClarifyInput =
+      Boolean(String(clarifySelectedOption ?? "").trim()) ||
+      Boolean(String(clarifyAdditionalText ?? "").trim());
+    if (
+      currentApprovalId &&
+      currentApprovalId === lastClarifyApprovalIdRef.current &&
+      hasLocalClarifyInput
+    ) {
+      return;
+    }
+
     const presetOption = String(pendingApprovalArguments?.selectedOption ?? "").trim();
     const presetAdditionalText = String(pendingApprovalArguments?.additionalText ?? "").trim();
+    lastClarifyApprovalIdRef.current = currentApprovalId;
     setClarifySelectedOption(presetOption);
     setClarifyAdditionalText(presetAdditionalText);
-  }, [chat.pendingApproval, isClarifyApproval, pendingApprovalArguments]);
+  }, [
+    chat.pendingApproval,
+    isClarifyApproval,
+    pendingApprovalArguments,
+    clarifySelectedOption,
+    clarifyAdditionalText
+  ]);
 
   useEffect(() => {
     const activeConversationId = String(chat.activeConversationId ?? "").trim();

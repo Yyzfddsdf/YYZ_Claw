@@ -147,6 +147,15 @@ export class AgentWakeDispatcher {
 
     const existingRun = this.getActiveRun(sessionId, agentId);
     if (existingRun) {
+      existingRun.status = "running";
+      existingRun.lastEventAt = Date.now();
+      this.orchestratorStore?.upsertAgent?.({
+        agentId,
+        sessionId,
+        conversationId: existingRun.conversationId,
+        status: "running",
+        lastActiveAt: Date.now()
+      });
       return allowExistingRun ? existingRun : { ...existingRun, busy: true };
     }
 

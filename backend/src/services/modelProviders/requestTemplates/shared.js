@@ -88,6 +88,61 @@ function sanitizeMessage(message) {
   return nextMessage;
 }
 
+function normalizeSystemContent(content) {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") {
+          return part.trim();
+        }
+
+        if (part?.type === "text") {
+          return String(part.text ?? "").trim();
+        }
+
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  return String(content ?? "").trim();
+}
+
+function mergeSystemMessages(messages = []) {
+  const normalizedMessages = Array.isArray(messages) ? messages : [];
+  const systemContents = [];
+  const nonSystemMessages = [];
+
+  for (const message of normalizedMessages) {
+    if (message?.role === "system") {
+      const normalizedContent = normalizeSystemContent(message.content);
+      if (normalizedContent) {
+        systemContents.push(normalizedContent);
+      }
+      continue;
+    }
+
+    nonSystemMessages.push(message);
+  }
+
+  if (systemContents.length === 0) {
+    return nonSystemMessages;
+  }
+
+  return [
+    {
+      role: "system",
+      content: systemContents.join("\n\n")
+    },
+    ...nonSystemMessages
+  ];
+}
+
 export function repairConversationMessages(messages = []) {
   const output = [];
   const pendingToolOwners = new Map();
@@ -160,7 +215,7 @@ export function repairConversationMessages(messages = []) {
     }
   }
 
-  return output;
+  return mergeSystemMessages(output);
 }
 
 

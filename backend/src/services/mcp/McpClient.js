@@ -65,6 +65,22 @@ function parseSseMessages(rawText) {
   return messages;
 }
 
+function findSseBlockSeparator(buffer) {
+  const text = String(buffer ?? "");
+  const crlfIndex = text.indexOf("\r\n\r\n");
+  const lfIndex = text.indexOf("\n\n");
+
+  if (crlfIndex < 0) {
+    return lfIndex >= 0 ? { index: lfIndex, length: 2 } : null;
+  }
+
+  if (lfIndex < 0 || crlfIndex <= lfIndex) {
+    return { index: crlfIndex, length: 4 };
+  }
+
+  return { index: lfIndex, length: 2 };
+}
+
 function hasHeader(response, headerName) {
   return Boolean(response?.headers?.get(headerName) || response?.headers?.get(headerName.toLowerCase()));
 }
@@ -89,10 +105,10 @@ async function readStreamMessages(response, targetId) {
 
       buffer += decoder.decode(value, { stream: true });
 
-      let separatorIndex = buffer.indexOf("\n\n");
-      while (separatorIndex >= 0) {
-        const block = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
+      let separator = findSseBlockSeparator(buffer);
+      while (separator) {
+        const block = buffer.slice(0, separator.index);
+        buffer = buffer.slice(separator.index + separator.length);
 
         const parsedMessages = parseSseMessages(block);
         for (const message of parsedMessages) {
@@ -103,10 +119,11 @@ async function readStreamMessages(response, targetId) {
           }
         }
 
-        separatorIndex = buffer.indexOf("\n\n");
+        separator = findSseBlockSeparator(buffer);
       }
     }
   } finally {
+    buffer += decoder.decode();
     if (buffer.trim().length > 0) {
       messages.push(...parseSseMessages(buffer));
     }

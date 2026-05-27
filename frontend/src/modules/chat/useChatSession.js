@@ -276,6 +276,7 @@ function normalizeModelProfiles(config = {}) {
           name: String(profile?.name ?? "").trim(),
           model: String(profile?.model ?? "").trim(),
           maxContextWindow: Number(profile?.maxContextWindow ?? 0),
+          maxOutputTokens: Number(profile?.maxOutputTokens ?? 0),
           providerCapabilities: getProviderCapabilities(profile?.provider),
           supportsVision: profile?.supportsVision !== false
         }))

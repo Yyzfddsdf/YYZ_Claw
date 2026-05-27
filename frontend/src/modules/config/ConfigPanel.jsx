@@ -29,6 +29,10 @@ function normalizeConfig(config) {
           profile?.maxContextWindow === undefined || profile?.maxContextWindow === null
             ? ""
             : String(profile.maxContextWindow),
+        maxOutputTokens:
+          profile?.maxOutputTokens === undefined || profile?.maxOutputTokens === null
+            ? ""
+            : String(profile.maxOutputTokens),
         supportsVision: profile?.supportsVision !== false
       }))
     : [];
@@ -61,6 +65,7 @@ function createModelProfile(index = 1) {
     baseURL: "",
     apiKey: "",
     maxContextWindow: "",
+    maxOutputTokens: "",
     supportsVision: true
   };
 }
@@ -314,6 +319,7 @@ export function ConfigPanel({
       baseURL: profile.baseURL.trim(),
       apiKey: profile.apiKey.trim(),
       maxContextWindow: profile.maxContextWindow ? Number(profile.maxContextWindow) : undefined,
+      maxOutputTokens: profile.maxOutputTokens ? Number(profile.maxOutputTokens) : undefined,
       supportsVision: Boolean(profile.supportsVision)
     }));
 
@@ -323,6 +329,10 @@ export function ConfigPanel({
     }
     if (finalProfiles.some((profile) => !profile.name || !profile.model || !profile.baseURL || !profile.apiKey)) {
       setLocalError("每个模型配置的名称 / Model / Base URL / API Key 均为必填项");
+      return;
+    }
+    if (finalProfiles.some((profile) => !Number.isFinite(Number(profile.maxOutputTokens)) || Number(profile.maxOutputTokens) <= 0)) {
+      setLocalError("每个模型配置都必须填写最大输出 Token 数，且必须大于 0");
       return;
     }
     if (!form.defaultMainModelProfileId || !form.defaultSubagentModelProfileId || !form.defaultCompressionModelProfileId || !form.defaultVisionModelProfileId) {
@@ -528,6 +538,7 @@ export function ConfigPanel({
                         <em>{getModelProviderOption(profile.provider).label}</em>
                         {profile.supportsVision && <em>图片识别</em>}
                         {profile.maxContextWindow && <em>{profile.maxContextWindow} ctx</em>}
+                        {profile.maxOutputTokens && <em>{profile.maxOutputTokens} out</em>}
                       </div>
                     </div>
                     <div className="model-profile-actions">
@@ -621,6 +632,12 @@ export function ConfigPanel({
                     value={profile.maxContextWindow}
                     onChange={(value) => updateModelProfile(index, "maxContextWindow", value)}
                     placeholder="上下文窗口，例如 128000"
+                    disabled={loading || saving}
+                  />
+                  <NumericInput
+                    value={profile.maxOutputTokens}
+                    onChange={(value) => updateModelProfile(index, "maxOutputTokens", value)}
+                    placeholder="最大输出 Token，例如 128000"
                     disabled={loading || saving}
                   />
                   <div className="model-capability-row">

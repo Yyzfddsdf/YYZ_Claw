@@ -3,7 +3,6 @@ import {
   resolveProviderThinkingEnabled
 } from "./shared.js";
 
-const DEFAULT_ANTHROPIC_MAX_TOKENS = 4096;
 const VALID_ANTHROPIC_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 function normalizeText(value) {
@@ -12,9 +11,10 @@ function normalizeText(value) {
 
 function normalizeMaxTokens(value) {
   const number = Number(value ?? 0);
-  return Number.isFinite(number) && number > 0
-    ? Math.trunc(number)
-    : DEFAULT_ANTHROPIC_MAX_TOKENS;
+  if (Number.isFinite(number) && number > 0) {
+    return Math.trunc(number);
+  }
+  return 128000;
 }
 
 function parseDataUrl(value) {

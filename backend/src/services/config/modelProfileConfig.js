@@ -81,6 +81,7 @@ export function normalizeModelProfile(profile = {}) {
     baseURL,
     apiKey,
     maxContextWindow: normalizeNumber(source.maxContextWindow),
+    maxOutputTokens: normalizeNumber(source.maxOutputTokens),
     supportsVision: normalizeBoolean(
       source.supportsVision,
       createModelProviderCapabilities(provider).supportsVision
@@ -148,6 +149,7 @@ function appendMigratedProfile({ profiles, existingIds, fingerprints, id, name, 
     baseURL,
     apiKey,
     maxContextWindow: normalizeNumber(source.maxContextWindow),
+    maxOutputTokens: normalizeNumber(source.maxOutputTokens),
     supportsVision: normalizeBoolean(
       source.supportsVision,
       createModelProviderCapabilities(provider).supportsVision
@@ -180,6 +182,7 @@ export function migrateLegacyModelConfig(config = {}) {
         baseURL: source.baseURL,
         apiKey: source.apiKey,
         maxContextWindow: source.maxContextWindow,
+        maxOutputTokens: source.maxOutputTokens,
         supportsVision: source.supportsVision
       }
     });
@@ -197,6 +200,7 @@ export function migrateLegacyModelConfig(config = {}) {
         baseURL: source.subagentBaseURL || source.baseURL,
         apiKey: source.subagentApiKey || source.apiKey,
         maxContextWindow: source.subagentMaxContextWindow || source.maxContextWindow,
+        maxOutputTokens: source.subagentMaxOutputTokens || source.maxOutputTokens,
         supportsVision: source.subagentSupportsVision ?? source.supportsVision
       }
     }) ||
@@ -215,6 +219,7 @@ export function migrateLegacyModelConfig(config = {}) {
         baseURL: source.compressionBaseURL || source.baseURL,
         apiKey: source.compressionApiKey || source.apiKey,
         maxContextWindow: source.compressionMaxContextWindow || source.maxContextWindow,
+        maxOutputTokens: source.compressionMaxOutputTokens || source.maxOutputTokens,
         supportsVision: false
       }
     }) ||
@@ -275,6 +280,7 @@ export function applyModelProfileToRuntimeConfig(config = {}, profile = null) {
     baseURL: profile.baseURL,
     apiKey: profile.apiKey,
     maxContextWindow: profile.maxContextWindow,
+    maxOutputTokens: profile.maxOutputTokens,
     supportsVision:
       profile.supportsVision !== false &&
       createModelProviderCapabilities(profile.provider).supportsVision !== false

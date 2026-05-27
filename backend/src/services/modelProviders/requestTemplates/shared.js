@@ -246,6 +246,13 @@ export function createBaseModelRequest(runtimeConfig = {}, params = {}) {
     request.max_tokens = params.maxTokens;
   }
 
+  if (request.max_tokens === undefined) {
+    const configuredMaxOutputTokens = Number(runtimeConfig?.maxOutputTokens ?? 0);
+    if (Number.isFinite(configuredMaxOutputTokens) && configuredMaxOutputTokens > 0) {
+      request.max_tokens = Math.trunc(configuredMaxOutputTokens);
+    }
+  }
+
   delete request.maxTokens;
 
   return request;

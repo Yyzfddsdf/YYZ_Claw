@@ -12,6 +12,7 @@ const modelProfileSchema = z.object({
   baseURL: z.string().trim().url("baseURL must be a valid URL"),
   apiKey: z.string().trim().min(1),
   maxContextWindow: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive(),
   supportsVision: z.boolean().optional()
 });
 

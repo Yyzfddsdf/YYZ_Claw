@@ -744,6 +744,36 @@ function normalizeClarifyOptions(options) {
     .slice(0, 12);
 }
 
+function normalizeClarifyQuestions(questions) {
+  if (!Array.isArray(questions)) {
+    return [];
+  }
+
+  return questions
+    .map((item, index) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+
+      const id = String(item?.id ?? "").trim() || `question_${index + 1}`;
+      const question = String(item?.question ?? "").trim();
+      if (!question) {
+        return null;
+      }
+
+      return {
+        id,
+        question,
+        options: normalizeClarifyOptions(item?.options),
+        allowAdditionalText: Boolean(item?.allowAdditionalText ?? true),
+        selectedOption: String(item?.selectedOption ?? "").trim(),
+        additionalText: String(item?.additionalText ?? "").trim()
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
 function getFileBadgeLabel(name, mimeType) {
   const fileName = String(name ?? "").trim();
   const extension = fileName.includes(".")
@@ -962,6 +992,8 @@ export function ChatPanel({
   });
   const [clarifySelectedOption, setClarifySelectedOption] = useState("");
   const [clarifyAdditionalText, setClarifyAdditionalText] = useState("");
+  const [clarifyAnswersByQuestionId, setClarifyAnswersByQuestionId] = useState({});
+  const [clarifyQuestionPage, setClarifyQuestionPage] = useState(0);
   const lastClarifyApprovalIdRef = useRef("");
   const [viewingImage, setViewingImage] = useState(null);
   const [viewingFileText, setViewingFileText] = useState(null);
@@ -1502,6 +1534,7 @@ export function ChatPanel({
   const isClarifyApproval = String(chat?.pendingApproval?.toolName ?? "").trim() === "clarify";
   const clarifyQuestion = String(pendingApprovalArguments?.question ?? "").trim();
   const clarifyOptions = normalizeClarifyOptions(pendingApprovalArguments?.options);
+  const clarifyQuestions = normalizeClarifyQuestions(pendingApprovalArguments?.questions);
   const clarifyAllowAdditionalText = Boolean(
     pendingApprovalArguments?.allowAdditionalText ?? true
   );
@@ -1694,33 +1727,54 @@ export function ChatPanel({
       lastClarifyApprovalIdRef.current = "";
       setClarifySelectedOption("");
       setClarifyAdditionalText("");
+      setClarifyAnswersByQuestionId({});
+      setClarifyQuestionPage(0);
       return;
     }
 
     const currentApprovalId = String(chat.pendingApproval?.approvalId ?? "").trim();
-    const hasLocalClarifyInput =
-      Boolean(String(clarifySelectedOption ?? "").trim()) ||
-      Boolean(String(clarifyAdditionalText ?? "").trim());
-    if (
-      currentApprovalId &&
-      currentApprovalId === lastClarifyApprovalIdRef.current &&
-      hasLocalClarifyInput
-    ) {
+    if (currentApprovalId && currentApprovalId === lastClarifyApprovalIdRef.current) {
       return;
     }
 
     const presetOption = String(pendingApprovalArguments?.selectedOption ?? "").trim();
     const presetAdditionalText = String(pendingApprovalArguments?.additionalText ?? "").trim();
+    const presetAnswers = normalizeClarifyQuestions(pendingApprovalArguments?.questions).reduce(
+      (accumulator, question) => {
+        accumulator[question.id] = {
+          selectedOption: String(question.selectedOption ?? "").trim(),
+          additionalText: String(question.additionalText ?? "").trim()
+        };
+        return accumulator;
+      },
+      {}
+    );
     lastClarifyApprovalIdRef.current = currentApprovalId;
     setClarifySelectedOption(presetOption);
     setClarifyAdditionalText(presetAdditionalText);
+    setClarifyAnswersByQuestionId(presetAnswers);
+    setClarifyQuestionPage(0);
   }, [
     chat.pendingApproval,
     isClarifyApproval,
     pendingApprovalArguments,
     clarifySelectedOption,
-    clarifyAdditionalText
+    clarifyAdditionalText,
+    clarifyAnswersByQuestionId
   ]);
+
+  useEffect(() => {
+    if (clarifyQuestions.length === 0) {
+      if (clarifyQuestionPage !== 0) {
+        setClarifyQuestionPage(0);
+      }
+      return;
+    }
+
+    if (clarifyQuestionPage >= clarifyQuestions.length) {
+      setClarifyQuestionPage(clarifyQuestions.length - 1);
+    }
+  }, [clarifyQuestions, clarifyQuestionPage]);
 
   useEffect(() => {
     const activeConversationId = String(chat.activeConversationId ?? "").trim();
@@ -2507,16 +2561,37 @@ export function ChatPanel({
   function handleClarifyConfirm() {
     const selectedOption = String(clarifySelectedOption ?? "").trim();
     const additionalText = String(clarifyAdditionalText ?? "").trim();
-    if (!selectedOption && !additionalText) {
+    const answers = clarifyQuestions
+      .map((question) => {
+        const currentAnswer = clarifyAnswersByQuestionId?.[question.id] ?? {};
+        return {
+          id: question.id,
+          selectedOption: String(currentAnswer?.selectedOption ?? "").trim(),
+          additionalText: String(currentAnswer?.additionalText ?? "").trim()
+        };
+      })
+      .filter((item) => item.selectedOption || item.additionalText);
+    if (!selectedOption && !additionalText && answers.length === 0) {
       return;
     }
 
     chat.confirmPendingApproval({
       approvalInput: {
         selectedOption,
-        additionalText
+        additionalText,
+        answers
       }
     });
+  }
+
+  function goToPreviousClarifyQuestion() {
+    setClarifyQuestionPage((current) => Math.max(0, current - 1));
+  }
+
+  function goToNextClarifyQuestion() {
+    setClarifyQuestionPage((current) =>
+      Math.min(Math.max(clarifyQuestions.length - 1, 0), current + 1)
+    );
   }
 
   return (
@@ -4063,62 +4138,187 @@ export function ChatPanel({
 
                 {isClarifyApproval ? (
                   <>
-                    <div className="composer-clarify-question">
-                      <strong>{clarifyQuestion || "请补充你的选择或说明。"}</strong>
-                    </div>
+                    {clarifyQuestions.length > 0 ? (
+                      (() => {
+                        const currentQuestion = clarifyQuestions[clarifyQuestionPage] ?? clarifyQuestions[0];
+                        const currentAnswer = clarifyAnswersByQuestionId?.[currentQuestion.id] ?? {};
+                        const currentSelectedOption = String(currentAnswer?.selectedOption ?? "").trim();
+                        const currentAdditionalText = String(currentAnswer?.additionalText ?? "").trim();
+                        const currentQuestionAnswered = Boolean(
+                          currentSelectedOption || currentAdditionalText
+                        );
+                        const isLastQuestion = clarifyQuestionPage >= clarifyQuestions.length - 1;
 
-                    {clarifyOptions.length > 0 ? (
-                      <div className="composer-clarify-options" role="radiogroup" aria-label="澄清选项">
-                        {clarifyOptions.map((option) => (
-                          <label key={option} className="composer-clarify-option">
-                            <input
-                              type="radio"
-                              name="clarify-option"
-                              value={option}
-                              checked={clarifySelectedOption === option}
-                              onChange={() => setClarifySelectedOption(option)}
-                              disabled={chat.isStreaming || chat.isCompressing}
-                            />
-                            <span>{option}</span>
-                          </label>
-                        ))}
+                        return (
+                          <>
+                            <div className="composer-clarify-question">
+                              <strong>{currentQuestion.question}</strong>
+                              <span className="composer-approval-badge">
+                                第 {clarifyQuestionPage + 1} / {clarifyQuestions.length} 题
+                              </span>
+                            </div>
+
+                            {currentQuestion.options.length > 0 ? (
+                              <div className="composer-clarify-options" role="radiogroup" aria-label={currentQuestion.question}>
+                                {currentQuestion.options.map((option) => (
+                                  <label key={`${currentQuestion.id}:${option}`} className="composer-clarify-option">
+                                    <input
+                                      type="radio"
+                                      name={`clarify-option-${currentQuestion.id}`}
+                                      value={option}
+                                      checked={currentSelectedOption === option}
+                                      onChange={() =>
+                                        setClarifyAnswersByQuestionId((prev) => ({
+                                          ...prev,
+                                          [currentQuestion.id]: {
+                                            ...prev?.[currentQuestion.id],
+                                            selectedOption: option
+                                          }
+                                        }))
+                                      }
+                                      disabled={chat.isStreaming || chat.isCompressing}
+                                    />
+                                    <span>{option}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {currentQuestion.allowAdditionalText ? (
+                              <textarea
+                                className="composer-clarify-textarea"
+                                value={currentAdditionalText}
+                                onChange={(event) =>
+                                  setClarifyAnswersByQuestionId((prev) => ({
+                                    ...prev,
+                                    [currentQuestion.id]: {
+                                      ...prev?.[currentQuestion.id],
+                                      additionalText: event.target.value
+                                    }
+                                  }))
+                                }
+                                placeholder="可补充说明（选填）"
+                                rows={3}
+                                disabled={chat.isStreaming || chat.isCompressing}
+                              />
+                            ) : null}
+
+                            <div className="composer-approval-actions">
+                              <button
+                                type="button"
+                                className="approval-reject"
+                                onClick={goToPreviousClarifyQuestion}
+                                disabled={chat.isStreaming || chat.isCompressing || clarifyQuestionPage <= 0}
+                              >
+                                上一题
+                              </button>
+                              {isLastQuestion ? (
+                                <button
+                                  type="button"
+                                  className="approval-confirm"
+                                  onClick={handleClarifyConfirm}
+                                  disabled={
+                                    chat.isStreaming ||
+                                    chat.isCompressing ||
+                                    !clarifyQuestions.every((question) => {
+                                      const answer = clarifyAnswersByQuestionId?.[question.id] ?? {};
+                                      return (
+                                        String(answer?.selectedOption ?? "").trim() ||
+                                        String(answer?.additionalText ?? "").trim()
+                                      );
+                                    })
+                                  }
+                                >
+                                  提交澄清
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="approval-confirm"
+                                  onClick={goToNextClarifyQuestion}
+                                  disabled={
+                                    chat.isStreaming ||
+                                    chat.isCompressing ||
+                                    !currentQuestionAnswered
+                                  }
+                                >
+                                  下一题
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="approval-reject"
+                                onClick={chat.rejectPendingApproval}
+                                disabled={chat.isStreaming || chat.isCompressing}
+                              >
+                                取消
+                              </button>
+                            </div>
+                          </>
+                        );
+                      })()
+                    ) : (
+                      <>
+                        <div className="composer-clarify-question">
+                          <strong>{clarifyQuestion || "请补充你的选择或说明。"}</strong>
+                        </div>
+
+                        {clarifyOptions.length > 0 ? (
+                          <div className="composer-clarify-options" role="radiogroup" aria-label="澄清选项">
+                            {clarifyOptions.map((option) => (
+                              <label key={option} className="composer-clarify-option">
+                                <input
+                                  type="radio"
+                                  name="clarify-option"
+                                  value={option}
+                                  checked={clarifySelectedOption === option}
+                                  onChange={() => setClarifySelectedOption(option)}
+                                  disabled={chat.isStreaming || chat.isCompressing}
+                                />
+                                <span>{option}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {clarifyAllowAdditionalText ? (
+                          <textarea
+                            className="composer-clarify-textarea"
+                            value={clarifyAdditionalText}
+                            onChange={(event) => setClarifyAdditionalText(event.target.value)}
+                            placeholder="可补充说明（选填）"
+                            rows={3}
+                            disabled={chat.isStreaming || chat.isCompressing}
+                          />
+                        ) : null}
+                      </>
+                    )}
+
+                    {clarifyQuestions.length === 0 ? (
+                      <div className="composer-approval-actions">
+                        <button
+                          type="button"
+                          className="approval-confirm"
+                          onClick={handleClarifyConfirm}
+                          disabled={
+                            chat.isStreaming ||
+                            chat.isCompressing ||
+                            (!String(clarifySelectedOption ?? "").trim() &&
+                              !String(clarifyAdditionalText ?? "").trim())
+                          }
+                        >
+                          提交澄清
+                        </button>
+                        <button
+                          type="button"
+                          className="approval-reject"
+                          onClick={chat.rejectPendingApproval}
+                          disabled={chat.isStreaming || chat.isCompressing}
+                        >
+                          取消
+                        </button>
                       </div>
                     ) : null}
-
-                    {clarifyAllowAdditionalText ? (
-                      <textarea
-                        className="composer-clarify-textarea"
-                        value={clarifyAdditionalText}
-                        onChange={(event) => setClarifyAdditionalText(event.target.value)}
-                        placeholder="可补充说明（选填）"
-                        rows={3}
-                        disabled={chat.isStreaming || chat.isCompressing}
-                      />
-                    ) : null}
-
-                    <div className="composer-approval-actions">
-                      <button
-                        type="button"
-                        className="approval-confirm"
-                        onClick={handleClarifyConfirm}
-                        disabled={
-                          chat.isStreaming ||
-                          chat.isCompressing ||
-                          (!String(clarifySelectedOption ?? "").trim() &&
-                            !String(clarifyAdditionalText ?? "").trim())
-                        }
-                      >
-                        提交澄清
-                      </button>
-                      <button
-                        type="button"
-                        className="approval-reject"
-                        onClick={chat.rejectPendingApproval}
-                        disabled={chat.isStreaming || chat.isCompressing}
-                      >
-                        取消
-                      </button>
-                    </div>
                   </>
                 ) : (
                   <>

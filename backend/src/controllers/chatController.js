@@ -392,7 +392,16 @@ function resolveClarifyApprovalInput(body = {}) {
       : {};
   return {
     selectedOption: String(approvalInput?.selectedOption ?? "").trim(),
-    additionalText: String(approvalInput?.additionalText ?? "").trim()
+    additionalText: String(approvalInput?.additionalText ?? "").trim(),
+    answers: Array.isArray(approvalInput?.answers)
+      ? approvalInput.answers
+          .map((item) => ({
+            id: String(item?.id ?? "").trim(),
+            selectedOption: String(item?.selectedOption ?? "").trim(),
+            additionalText: String(item?.additionalText ?? "").trim()
+          }))
+          .filter((item) => item.id)
+      : []
   };
 }
 
@@ -403,7 +412,12 @@ function applyClarifyApprovalInput(pendingApproval, clarifyInput = {}) {
 
   const selectedOption = String(clarifyInput?.selectedOption ?? "").trim();
   const additionalText = String(clarifyInput?.additionalText ?? "").trim();
-  const hasInput = Boolean(selectedOption || additionalText);
+  const answers = Array.isArray(clarifyInput?.answers) ? clarifyInput.answers : [];
+  const hasInput = Boolean(
+    selectedOption ||
+    additionalText ||
+    answers.some((item) => String(item?.selectedOption ?? "").trim() || String(item?.additionalText ?? "").trim())
+  );
   if (!hasInput) {
     return pendingApproval;
   }
@@ -420,10 +434,40 @@ function applyClarifyApprovalInput(pendingApproval, clarifyInput = {}) {
     }
 
     const parsedArguments = parseJsonIfString(toolCall?.function?.arguments);
+    const parsedQuestions = Array.isArray(parsedArguments?.questions) ? parsedArguments.questions : [];
+    const answerMap = new Map(
+      answers
+        .map((item) => ({
+          id: String(item?.id ?? "").trim(),
+          selectedOption: String(item?.selectedOption ?? "").trim(),
+          additionalText: String(item?.additionalText ?? "").trim()
+        }))
+        .filter((item) => item.id)
+        .map((item) => [item.id, item])
+    );
     const nextArguments = {
       ...parsedArguments,
       selectedOption,
-      additionalText
+      additionalText,
+      ...(answers.length > 0 ? { answers } : {}),
+      ...(parsedQuestions.length > 0
+        ? {
+            questions: parsedQuestions.map((question, index) => {
+              const questionId = String(question?.id ?? "").trim() || `question_${index + 1}`;
+              const answer = answerMap.get(questionId) ?? {};
+              return {
+                ...question,
+                id: questionId,
+                selectedOption:
+                  String(answer?.selectedOption ?? "").trim() ||
+                  String(question?.selectedOption ?? "").trim(),
+                additionalText:
+                  String(answer?.additionalText ?? "").trim() ||
+                  String(question?.additionalText ?? "").trim()
+              };
+            })
+          }
+        : {})
     };
 
     return {
@@ -439,7 +483,26 @@ function applyClarifyApprovalInput(pendingApproval, clarifyInput = {}) {
   const nextToolArguments = JSON.stringify({
     ...parsedToolArguments,
     selectedOption,
-    additionalText
+    additionalText,
+    ...(answers.length > 0 ? { answers } : {}),
+    ...(Array.isArray(parsedToolArguments?.questions)
+      ? {
+          questions: parsedToolArguments.questions.map((question, index) => {
+            const questionId = String(question?.id ?? "").trim() || `question_${index + 1}`;
+            const answer = answers.find((item) => item.id === questionId) ?? {};
+            return {
+              ...question,
+              id: questionId,
+              selectedOption:
+                String(answer?.selectedOption ?? "").trim() ||
+                String(question?.selectedOption ?? "").trim(),
+              additionalText:
+                String(answer?.additionalText ?? "").trim() ||
+                String(question?.additionalText ?? "").trim()
+            };
+          })
+        }
+      : {})
   });
 
   return {
@@ -2687,7 +2750,12 @@ export function createChatController({
 
       const clarifyInput = resolveClarifyApprovalInput(req.body ?? {});
       const isClarifyApproval = String(pendingApproval?.toolName ?? "").trim() === "clarify";
-      if (isClarifyApproval && !clarifyInput.selectedOption && !clarifyInput.additionalText) {
+      if (
+        isClarifyApproval &&
+        !clarifyInput.selectedOption &&
+        !clarifyInput.additionalText &&
+        !clarifyInput.answers.some((item) => item.selectedOption || item.additionalText)
+      ) {
         throw createValidationError("clarify approval requires selectedOption or additionalText");
       }
       const resolvedPendingApproval = applyClarifyApprovalInput(pendingApproval, clarifyInput);

@@ -215,6 +215,30 @@ function isClarifyToolCallAwaitingUserInput(toolCall) {
   }
 
   const parsedArguments = parseToolArgumentsForHook(toolCall?.function?.arguments);
+  const questions = Array.isArray(parsedArguments?.questions) ? parsedArguments.questions : [];
+  if (questions.length > 0) {
+    const answerMap = new Map(
+      Array.isArray(parsedArguments?.answers)
+        ? parsedArguments.answers
+            .map((item) => ({
+              id: String(item?.id ?? "").trim(),
+              selectedOption: String(item?.selectedOption ?? "").trim(),
+              additionalText: String(item?.additionalText ?? "").trim()
+            }))
+            .filter((item) => item.id)
+            .map((item) => [item.id, item])
+        : []
+    );
+    return questions.some((question, index) => {
+      const questionId = String(question?.id ?? "").trim() || `question_${index + 1}`;
+      const selectedOption = String(question?.selectedOption ?? "").trim()
+        || String(answerMap.get(questionId)?.selectedOption ?? "").trim();
+      const additionalText = String(question?.additionalText ?? "").trim()
+        || String(answerMap.get(questionId)?.additionalText ?? "").trim();
+      return !selectedOption && !additionalText;
+    });
+  }
+
   const selectedOption = String(parsedArguments?.selectedOption ?? "").trim();
   const additionalText = String(parsedArguments?.additionalText ?? "").trim();
   return !selectedOption && !additionalText;

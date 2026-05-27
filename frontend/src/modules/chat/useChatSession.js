@@ -1362,6 +1362,7 @@ export function useChatSession(runtimeConfig = {}) {
   const externalAgentEventHandlerRef = useRef(null);
   const activeAgentRunConversationIdsRef = useRef(new Set());
   const recentlyDeletedConversationIdsRef = useRef(new Set());
+  const foregroundOwnedRunIdsRef = useRef(new Map());
   const processedRunEventSeqByRunIdRef = useRef(new Map());
   const stopContinuationConversationIdsRef = useRef(new Set());
 
@@ -1815,6 +1816,16 @@ export function useChatSession(runtimeConfig = {}) {
     externalAgentEventHandlerRef.current = (event) => {
       const normalizedConversationId = String(event?.conversationId ?? "").trim();
       if (!normalizedConversationId) {
+        return;
+      }
+      const eventRunId = String(event?.runId ?? "").trim();
+      const foregroundOwnedConversationId = eventRunId
+        ? String(foregroundOwnedRunIdsRef.current.get(eventRunId) ?? "").trim()
+        : "";
+      if (
+        foregroundOwnedConversationId &&
+        foregroundOwnedConversationId === normalizedConversationId
+      ) {
         return;
       }
 
@@ -2463,6 +2474,7 @@ export function useChatSession(runtimeConfig = {}) {
     activeAgentRunConversationIdsRef.current.delete(normalizedConversationId);
     externalStreamStatesRef.current.delete(normalizedConversationId);
     stopContinuationConversationIdsRef.current.delete(normalizedConversationId);
+    releaseForegroundRunOwnershipByConversation(normalizedConversationId);
     updateConversationRunStateLocally(normalizedConversationId, {
       agentBusy: false,
       agentStatus:
@@ -2505,6 +2517,42 @@ export function useChatSession(runtimeConfig = {}) {
     }
 
     return true;
+  }
+
+  function rememberForegroundRunOwnership(conversationId, runId) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    const normalizedRunId = String(runId ?? "").trim();
+    if (!normalizedConversationId || !normalizedRunId) {
+      return;
+    }
+
+    const ownedRuns = foregroundOwnedRunIdsRef.current;
+    ownedRuns.set(normalizedRunId, normalizedConversationId);
+    if (ownedRuns.size > 2048) {
+      const overflowCount = ownedRuns.size - 1536;
+      let removed = 0;
+      for (const key of ownedRuns.keys()) {
+        ownedRuns.delete(key);
+        removed += 1;
+        if (removed >= overflowCount) {
+          break;
+        }
+      }
+    }
+  }
+
+  function releaseForegroundRunOwnershipByConversation(conversationId) {
+    const normalizedConversationId = String(conversationId ?? "").trim();
+    if (!normalizedConversationId) {
+      return;
+    }
+
+    const ownedRuns = foregroundOwnedRunIdsRef.current;
+    for (const [runId, ownedConversationId] of ownedRuns.entries()) {
+      if (String(ownedConversationId ?? "").trim() === normalizedConversationId) {
+        ownedRuns.delete(runId);
+      }
+    }
   }
 
   function isConversationCompressionActive(conversationId) {
@@ -3955,6 +4003,10 @@ export function useChatSession(runtimeConfig = {}) {
   function applyAgentEvent(event, streamState, targetConversationId, options = {}) {
     const normalizedTargetConversationId = String(targetConversationId ?? "").trim();
     const source = String(options?.source ?? "direct").trim().toLowerCase();
+    const eventRunId = String(event?.runId ?? "").trim();
+    if (source === "foreground" && eventRunId) {
+      rememberForegroundRunOwnership(normalizedTargetConversationId, eventRunId);
+    }
     const isForegroundConversationExternalEvent =
       source === "external" &&
       (
@@ -3969,7 +4021,6 @@ export function useChatSession(runtimeConfig = {}) {
       return true;
     }
 
-    const eventRunId = String(event?.runId ?? "").trim();
     const currentStreamRunId = String(streamState.runId ?? "").trim();
     if (eventRunId && currentStreamRunId && eventRunId !== currentStreamRunId) {
       streamState.activeAssistantMessageId = null;

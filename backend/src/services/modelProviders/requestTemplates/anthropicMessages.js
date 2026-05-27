@@ -167,21 +167,56 @@ function convertToolResultMessage(message) {
   };
 }
 
-function appendOrMergeUserMessage(messages, content) {
-  const previous = messages[messages.length - 1];
-  const contentParts = Array.isArray(content)
-    ? content
-    : [{ type: "text", text: String(content ?? "") }];
+function normalizeUserContentParts(content) {
+  if (Array.isArray(content)) {
+    return content;
+  }
 
-  if (!previous || previous.role !== "user") {
-    messages.push({ role: "user", content });
+  return [{ type: "text", text: String(content ?? "") }];
+}
+
+function messageHasToolResultBlocks(message) {
+  const parts = Array.isArray(message?.content) ? message.content : [];
+  return parts.some((part) => String(part?.type ?? "").trim() === "tool_result");
+}
+
+function messageContainsOnlyToolResultBlocks(message) {
+  const parts = Array.isArray(message?.content) ? message.content : [];
+  return parts.length > 0 && parts.every((part) => String(part?.type ?? "").trim() === "tool_result");
+}
+
+function appendOrMergePlainUserMessage(messages, content) {
+  const previous = messages[messages.length - 1];
+  const contentParts = normalizeUserContentParts(content);
+
+  if (!previous || previous.role !== "user" || messageHasToolResultBlocks(previous)) {
+    messages.push({ role: "user", content: contentParts });
     return;
   }
 
   previous.content = [
-    ...(Array.isArray(previous.content)
-      ? previous.content
-      : [{ type: "text", text: String(previous.content ?? "") }]),
+    ...normalizeUserContentParts(previous.content),
+    ...contentParts
+  ];
+}
+
+function appendOrMergeToolResultMessage(messages, content) {
+  const previous = messages[messages.length - 1];
+  const contentParts = normalizeUserContentParts(content).filter(
+    (part) => String(part?.type ?? "").trim() === "tool_result"
+  );
+
+  if (contentParts.length === 0) {
+    return;
+  }
+
+  if (!previous || previous.role !== "user" || !messageContainsOnlyToolResultBlocks(previous)) {
+    messages.push({ role: "user", content: contentParts });
+    return;
+  }
+
+  previous.content = [
+    ...normalizeUserContentParts(previous.content),
     ...contentParts
   ];
 }
@@ -202,7 +237,7 @@ function convertMessages(messages = []) {
     if (role === "tool") {
       const toolResult = convertToolResultMessage(message);
       if (toolResult) {
-        appendOrMergeUserMessage(anthropicMessages, toolResult.content);
+        appendOrMergeToolResultMessage(anthropicMessages, toolResult.content);
       }
       continue;
     }
@@ -232,7 +267,7 @@ function convertMessages(messages = []) {
       continue;
     }
 
-    appendOrMergeUserMessage(anthropicMessages, content);
+    appendOrMergePlainUserMessage(anthropicMessages, content);
   }
 
   return {

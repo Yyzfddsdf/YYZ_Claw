@@ -1552,6 +1552,21 @@ export class ChatAgent {
           conversation.splice(assistantMessageIndex, 1);
         }
 
+        for (const toolCall of remainingToolCalls) {
+          this.recordRuntimeToolEvent(executionContext, {
+            phase: "call",
+            toolCallId: toolCall.id,
+            toolName: toolCall.function.name,
+            argumentsText: toolCall.function.arguments
+          });
+          onEvent?.({
+            type: "tool_call",
+            toolName: toolCall.function.name,
+            arguments: toolCall.function.arguments,
+            toolCallId: toolCall.id
+          });
+        }
+
         onEvent?.({
           type: "tool_pending_approval",
           approvalId: approvalRecord.id,

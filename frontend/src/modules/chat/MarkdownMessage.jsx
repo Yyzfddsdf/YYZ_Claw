@@ -1,13 +1,9 @@
-import { createMathPlugin } from "@streamdown/math";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Streamdown } from "streamdown";
+import { memo, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import "streamdown/styles.css";
-
-const streamdownMathPlugin = createMathPlugin({
-  errorColor: "currentColor",
-  singleDollarTextMath: true
-});
 
 function normalizeMathDelimiters(input) {
   const source = String(input ?? "");
@@ -44,10 +40,10 @@ function createHeading(level) {
   };
 }
 
-function getAlignmentClass(style = {}) {
-  const textAlign = String(style?.textAlign ?? "").trim().toLowerCase();
-  if (textAlign === "center" || textAlign === "right") {
-    return `markdown-table-cell is-${textAlign}`;
+function getAlignmentClass(node) {
+  const align = String(node?.properties?.align ?? "").trim().toLowerCase();
+  if (align === "center" || align === "right") {
+    return `markdown-table-cell is-${align}`;
   }
   return "markdown-table-cell is-left";
 }
@@ -99,16 +95,16 @@ const markdownComponents = {
       </div>
     );
   },
-  th({ children, style, ...props }) {
+  th({ children, node, ...props }) {
     return (
-      <th {...props} style={style} className={getAlignmentClass(style)}>
+      <th {...props} className={getAlignmentClass(node)}>
         {children}
       </th>
     );
   },
-  td({ children, style, ...props }) {
+  td({ children, node, ...props }) {
     return (
-      <td {...props} style={style} className={getAlignmentClass(style)}>
+      <td {...props} className={getAlignmentClass(node)}>
         {children}
       </td>
     );
@@ -127,9 +123,6 @@ const markdownComponents = {
       </code>
     );
   },
-  inlineCode({ children, ...props }) {
-    return <code {...props}>{children}</code>;
-  },
   a({ children, href = "", ...props }) {
     return (
       <a {...props} href={href} target="_blank" rel="noreferrer">
@@ -142,78 +135,28 @@ const markdownComponents = {
   }
 };
 
-function useThrottledStreamingContent(content, streaming) {
+function MarkdownMessageComponent({ content, className = "" }) {
   const source = String(content ?? "");
-  const latestRef = useRef(source);
-  const timerRef = useRef(null);
-  const [visibleContent, setVisibleContent] = useState(source);
+  const processedContent = useMemo(() => normalizeMathDelimiters(source), [source]);
 
-  useEffect(() => {
-    latestRef.current = source;
-
-    if (!streaming) {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-      setVisibleContent(source);
-      return undefined;
-    }
-
-    if (timerRef.current) {
-      return undefined;
-    }
-
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      setVisibleContent(latestRef.current);
-    }, 16);
-
-    return undefined;
-  }, [source, streaming]);
-
-  useEffect(
-    () => () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    },
-    []
-  );
-
-  return streaming ? visibleContent : source;
-}
-
-function MarkdownMessageComponent({ content, className = "", streaming = false }) {
-  const renderContent = useThrottledStreamingContent(content, streaming);
-  const processedContent = useMemo(() => normalizeMathDelimiters(renderContent), [renderContent]);
-
-  if (!String(content ?? "").trim()) {
+  if (!source.trim()) {
     return <p className={`markdown markdown-empty ${className}`.trim()}>...</p>;
   }
 
   return (
-    <Streamdown
-      animated={false}
+    <ReactMarkdown
       className={`markdown ${className}`.trim()}
       components={markdownComponents}
-      controls={false}
-      mode={streaming ? "streaming" : "static"}
-      normalizeHtmlIndentation
-      parseIncompleteMarkdown={streaming}
-      plugins={{ math: streamdownMathPlugin }}
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
       skipHtml
     >
       {processedContent}
-    </Streamdown>
+    </ReactMarkdown>
   );
 }
 
 export const MarkdownMessage = memo(
   MarkdownMessageComponent,
-  (prev, next) =>
-    prev.content === next.content &&
-    prev.className === next.className &&
-    prev.streaming === next.streaming
+  (prev, next) => prev.content === next.content && prev.className === next.className
 );

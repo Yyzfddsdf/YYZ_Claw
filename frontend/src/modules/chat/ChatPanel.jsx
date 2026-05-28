@@ -7,6 +7,7 @@ import {
   updateAutomationBinding,
   upsertAutomationBinding
 } from "../../api/automationApi";
+import { Fragment } from "react";
 import { createTtsStreamUrl, parseChatFiles, transcribeAudioBytes } from "../../api/chatApi";
 import { searchWorkspaceFiles } from "../../api/workspaceApi";
 import { formatTimestamp } from "../../shared/formatTimestamp";
@@ -949,6 +950,99 @@ function findPreviousRunnableUserMessageId(messages, currentIndex) {
   return "";
 }
 
+function buildAssistantTurnGroups(messages = [], options = {}) {
+  const list = Array.isArray(messages) ? messages : [];
+  const isStreaming = Boolean(options?.isStreaming);
+  const turns = [];
+  const ignoredUserKinds = new Set([
+    "runtime_hook_injected",
+    "hook_prompt",
+    "hook_status",
+    "goal_continuation",
+    "plan_continuation",
+    "tool_image_input"
+  ]);
+
+  for (let index = 0; index < list.length; index += 1) {
+    const message = list[index];
+    const messageRole = String(message?.role ?? "").trim();
+    const messageKind = getMessageMetaKind(message);
+    if (messageRole !== "user" || ignoredUserKinds.has(messageKind)) {
+      continue;
+    }
+
+    let endExclusive = list.length;
+    for (let cursor = index + 1; cursor < list.length; cursor += 1) {
+      const candidate = list[cursor];
+      const candidateRole = String(candidate?.role ?? "").trim();
+      const candidateKind = getMessageMetaKind(candidate);
+      if (candidateRole === "user" && !ignoredUserKinds.has(candidateKind)) {
+        endExclusive = cursor;
+        break;
+      }
+    }
+
+    const messageSlice = list.slice(index + 1, endExclusive);
+    if (messageSlice.length === 0) {
+      continue;
+    }
+
+    const lastAssistantWithContentIndex = (() => {
+      for (let cursor = endExclusive - 1; cursor > index; cursor -= 1) {
+        const candidate = list[cursor];
+        if (
+          String(candidate?.role ?? "").trim() === "assistant" &&
+          String(candidate?.content ?? "").trim()
+        ) {
+          return cursor;
+        }
+      }
+      return -1;
+    })();
+
+    const hasRenderableProcess = messageSlice.some((candidate) => {
+      const role = String(candidate?.role ?? "").trim();
+      return role === "assistant" || role === "tool";
+    });
+    if (!hasRenderableProcess) {
+      continue;
+    }
+
+    const anchorIndex = (() => {
+      for (let cursor = index + 1; cursor < endExclusive; cursor += 1) {
+        const candidate = list[cursor];
+        const role = String(candidate?.role ?? "").trim();
+        const hasToolShellOnly =
+          role === "assistant" &&
+          Array.isArray(candidate?.toolCalls) &&
+          candidate.toolCalls.length > 0 &&
+          !String(candidate?.content ?? "").trim() &&
+          !String(candidate?.reasoningContent ?? "").trim();
+        if (hasToolShellOnly) {
+          continue;
+        }
+        return cursor;
+      }
+      return index + 1;
+    })();
+
+    const isLatestTurn = endExclusive === list.length;
+    const isActive = isStreaming && isLatestTurn;
+    turns.push({
+      id: `turn_${String(message?.id ?? index).trim() || index}`,
+      userIndex: index,
+        anchorIndex,
+        startIndex: index + 1,
+        endIndex: endExclusive - 1,
+        endExclusive,
+        summaryMessageIndex: lastAssistantWithContentIndex,
+        isActive
+      });
+  }
+
+  return turns;
+}
+
 export function ChatPanel({
   chat,
   modelContextWindow = 0,
@@ -1012,6 +1106,10 @@ export function ChatPanel({
   const [editingMessageId, setEditingMessageId] = useState("");
   const [editingMessageText, setEditingMessageText] = useState("");
   const [planPanelCollapsed, setPlanPanelCollapsed] = useState(false);
+  const [expandedAssistantTurnMap, setExpandedAssistantTurnMap] = useState({});
+  const [collapsingAssistantTurnMap, setCollapsingAssistantTurnMap] = useState({});
+  const assistantTurnCollapseTimersRef = useRef({});
+  const lastAutoCollapseFingerprintRef = useRef("");
   const chatStreamRef = useRef(null);
   const inputRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -1435,6 +1533,53 @@ export function ChatPanel({
           ),
     [chat.messages, orchestratorLogOpen]
   );
+  const assistantTurnGroups = useMemo(
+    () => buildAssistantTurnGroups(visibleMessages, { isStreaming: chat.isStreaming }),
+    [visibleMessages, chat.isStreaming]
+  );
+  const collapsedTurnByStartIndex = useMemo(() => {
+    const result = new Map();
+    for (const turn of assistantTurnGroups) {
+      if (!turn || turn.isActive) {
+        continue;
+      }
+      const isExpanded = Boolean(expandedAssistantTurnMap?.[turn.id]);
+      const isCollapsing = Boolean(collapsingAssistantTurnMap?.[turn.id]);
+      if (!isExpanded && !isCollapsing) {
+        result.set(turn.anchorIndex, turn);
+      }
+    }
+    return result;
+  }, [assistantTurnGroups, expandedAssistantTurnMap, collapsingAssistantTurnMap]);
+  const expandedTurnByAnchorIndex = useMemo(() => {
+    const result = new Map();
+    for (const turn of assistantTurnGroups) {
+      if (!turn || turn.isActive) {
+        continue;
+      }
+      if (Boolean(expandedAssistantTurnMap?.[turn.id])) {
+        result.set(turn.anchorIndex, turn);
+      }
+    }
+    return result;
+  }, [assistantTurnGroups, expandedAssistantTurnMap]);
+  const hiddenTurnIndexes = useMemo(() => {
+    const result = new Set();
+    for (const turn of assistantTurnGroups) {
+      if (
+        !turn ||
+        turn.isActive ||
+        Boolean(expandedAssistantTurnMap?.[turn.id]) ||
+        Boolean(collapsingAssistantTurnMap?.[turn.id])
+      ) {
+        continue;
+      }
+      for (let index = turn.startIndex; index <= turn.endIndex; index += 1) {
+        result.add(index);
+      }
+    }
+    return result;
+  }, [assistantTurnGroups, expandedAssistantTurnMap, collapsingAssistantTurnMap]);
   const latestOrchestratorNotice = orchestratorMessages.length > 0
     ? buildOrchestratorNotice(orchestratorMessages[orchestratorMessages.length - 1])
     : null;
@@ -1826,6 +1971,12 @@ export function ChatPanel({
   }, [queuedUserMessages.length]);
 
   useEffect(() => {
+    if (Boolean(chat.isStreaming)) {
+      lastAutoCollapseFingerprintRef.current = "";
+    }
+  }, [chat.isStreaming]);
+
+  useEffect(() => {
     const hasActiveReasoning = Array.isArray(chat.messages)
       ? chat.messages.some((message) => {
           const startedAt = Number(message?.reasoningStartedAt ?? 0);
@@ -1846,6 +1997,75 @@ export function ChatPanel({
       window.clearInterval(timerId);
     };
   }, [chat.messages]);
+  useEffect(() => {
+    return () => {
+      const timerMap = assistantTurnCollapseTimersRef.current || {};
+      for (const timerId of Object.values(timerMap)) {
+        if (typeof timerId === "number" && Number.isFinite(timerId)) {
+          window.clearTimeout(timerId);
+        }
+      }
+      assistantTurnCollapseTimersRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Boolean(chat.isStreaming)) {
+      return;
+    }
+
+    const latestCompletedTurn = [...assistantTurnGroups]
+      .reverse()
+      .find((turn) => turn && !turn.isActive);
+
+    if (!latestCompletedTurn) {
+      return;
+    }
+
+    const turnId = latestCompletedTurn.id;
+    const summaryMessage =
+      latestCompletedTurn.summaryMessageIndex >= 0
+        ? visibleMessages[latestCompletedTurn.summaryMessageIndex]
+        : null;
+    const summaryContent = String(summaryMessage?.content ?? "").trim();
+    if (!turnId || !summaryContent || Boolean(collapsingAssistantTurnMap?.[turnId])) {
+      return;
+    }
+
+    const fingerprint = `${turnId}::${String(summaryMessage?.id ?? "")}::${summaryContent}`;
+    if (lastAutoCollapseFingerprintRef.current === fingerprint) {
+      return;
+    }
+
+    lastAutoCollapseFingerprintRef.current = fingerprint;
+
+    setCollapsingAssistantTurnMap((prev) => ({
+      ...prev,
+      [turnId]: true
+    }));
+
+    const existingTimerId = assistantTurnCollapseTimersRef.current?.[turnId];
+    if (typeof existingTimerId === "number" && Number.isFinite(existingTimerId)) {
+      window.clearTimeout(existingTimerId);
+    }
+
+    assistantTurnCollapseTimersRef.current = {
+      ...assistantTurnCollapseTimersRef.current,
+      [turnId]: window.setTimeout(() => {
+        setExpandedAssistantTurnMap((prev) => ({
+          ...prev,
+          [turnId]: false
+        }));
+        setCollapsingAssistantTurnMap((prev) => ({
+          ...prev,
+          [turnId]: false
+        }));
+        const nextTimers = { ...(assistantTurnCollapseTimersRef.current || {}) };
+        delete nextTimers[turnId];
+        assistantTurnCollapseTimersRef.current = nextTimers;
+      }, 420)
+    };
+  }, [chat.isStreaming, assistantTurnGroups, visibleMessages, collapsingAssistantTurnMap]);
 
   useEffect(() => {
     setPromptDrawerOpen(false);
@@ -1937,6 +2157,49 @@ export function ChatPanel({
       ...prev,
       [messageId]: !Boolean(currentExpanded)
     }));
+  }
+
+  function toggleAssistantTurn(turnId) {
+    const normalizedTurnId = String(turnId ?? "").trim();
+    if (!normalizedTurnId) {
+      return;
+    }
+
+    const isExpanded = Boolean(expandedAssistantTurnMap?.[normalizedTurnId]);
+    if (!isExpanded) {
+      setExpandedAssistantTurnMap((prev) => ({
+        ...prev,
+        [normalizedTurnId]: true
+      }));
+      return;
+    }
+
+    setCollapsingAssistantTurnMap((prev) => ({
+      ...prev,
+      [normalizedTurnId]: true
+    }));
+
+    const existingTimerId = assistantTurnCollapseTimersRef.current?.[normalizedTurnId];
+    if (typeof existingTimerId === "number" && Number.isFinite(existingTimerId)) {
+      window.clearTimeout(existingTimerId);
+    }
+
+    assistantTurnCollapseTimersRef.current = {
+      ...assistantTurnCollapseTimersRef.current,
+      [normalizedTurnId]: window.setTimeout(() => {
+        setExpandedAssistantTurnMap((prev) => ({
+          ...prev,
+          [normalizedTurnId]: false
+        }));
+        setCollapsingAssistantTurnMap((prev) => ({
+          ...prev,
+          [normalizedTurnId]: false
+        }));
+        const nextTimers = { ...(assistantTurnCollapseTimersRef.current || {}) };
+        delete nextTimers[normalizedTurnId];
+        assistantTurnCollapseTimersRef.current = nextTimers;
+      }, 260)
+    };
   }
 
   function toggleSkill(skillName) {
@@ -3307,6 +3570,12 @@ export function ChatPanel({
             )}
 
             {visibleMessages.map((message, index) => {
+                const collapsedTurn = collapsedTurnByStartIndex.get(index) ?? null;
+                const expandedTurnAnchor = expandedTurnByAnchorIndex.get(index) ?? null;
+                const activeCollapsingTurn = expandedTurnAnchor && Boolean(collapsingAssistantTurnMap?.[expandedTurnAnchor.id]);
+                if (hiddenTurnIndexes.has(index) && !collapsedTurn) {
+                  return null;
+                }
               const isLastMessage = index === visibleMessages.length - 1;
               const isStreamingThisMessage = isLastMessage && chat.isStreaming && message.role === "assistant";
               const messageMetaKind = getMessageMetaKind(message);
@@ -3477,262 +3746,328 @@ export function ChatPanel({
                 return null;
               }
 
-              return (
-                <article
-                  key={message.id}
-                  className={`bubble ${
-                    isOrchestratorMessage ? "bubble-orchestrator-note" : `bubble-${message.role}`
-                  } ${isCompressionSummary ? "bubble-compression" : ""} ${
-                    isMemoryToolCard ? "bubble-memory-tool" : ""
-                  } ${isAttachmentOnlyUserMessage ? "bubble-user-attachment-only" : ""} ${
-                    isAttachmentOnlyUserMessage ? "bubble-attachment-only" : ""
-                  } ${isInternalToolImageMessage ? "bubble-tool-image-input" : ""} ${
-                    isRuntimeHookInjectedMessage ? "bubble-runtime-hook-injected" : ""
-                  } ${isHookPromptMessage ? "bubble-hook-prompt" : ""} ${
-                    isHookStatusMessage ? "bubble-hook-status" : ""
-                  } ${
-                    isGoalContinuationMessage ? "bubble-goal-continuation" : ""
-                  } ${
-                    isPlanContinuationMessage ? "bubble-plan-continuation" : ""
-                  } ${
-                    isStreamingThisMessage ? "is-streaming" : ""
-                  }`}
-                >
-                  {!isMemoryToolCard && !isOrchestratorMessage && (
-                    <header>
-                      <strong>
-                        {isInternalToolImageMessage && "Tool Image Input"}
-                        {message.role === "user" &&
-                          !isInternalToolImageMessage &&
-                          !isHookPromptMessage &&
-                          !isHookStatusMessage &&
-                          "User"}
-                        {isHookPromptMessage && "Hook Prompt"}
-                        {isHookStatusMessage && "Hook Status"}
-                        {message.role === "assistant" && (isCompressionSummary ? "Compression" : "Assistant")}
-                        {message.role === "tool" && "Tool"}
-                        {message.role === "system" && "System"}
-                      </strong>
-                      {isInternalToolImageMessage && (
-                        <span className="bubble-meta-badge is-tool-image-input">自动注入</span>
-                      )}
-                      {Number(message?.timestamp ?? 0) > 0 && (
-                        <span>{formatTimestamp(Number(message.timestamp))}</span>
-                      )}
-                      {!isToolCard && deleteButton}
-                    </header>
-                  )}
+              if (collapsedTurn) {
+                const summaryMessage =
+                  collapsedTurn.summaryMessageIndex >= 0
+                    ? visibleMessages[collapsedTurn.summaryMessageIndex]
+                    : null;
+                const summaryContent = String(summaryMessage?.content ?? "").trim();
+                const hasSummaryContent = summaryContent.length > 0;
 
-                  {isRuntimeHookInjectedMessage ? (
-                    <div className="runtime-hook-strip">
-                      <span className="runtime-hook-strip-label">{getRuntimeHookStripText(message)}</span>
+                return (
+                  <div key={`collapsed-turn:${collapsedTurn.id}`} className="assistant-turn-collapsed-summary">
+                    <button
+                      type="button"
+                      className="assistant-turn-toggle"
+                      onClick={() => toggleAssistantTurn(collapsedTurn.id)}
+                      aria-label="展开本轮"
+                    >
+                      <span className="assistant-turn-toggle-line" aria-hidden="true" />
+                      <span>展开本轮</span>
+                      <span className="assistant-turn-toggle-line is-reversed" aria-hidden="true" />
+                    </button>
+                    {summaryMessage ? (
+                      <article className="bubble bubble-assistant assistant-turn-summary-bubble">
+                        <header>
+                          <strong>Assistant</strong>
+                          {Number(summaryMessage?.timestamp ?? 0) > 0 && (
+                            <span>{formatTimestamp(Number(summaryMessage.timestamp))}</span>
+                          )}
+                        </header>
+                        {hasSummaryContent && (
+                          <MarkdownMessage
+                            content={summaryMessage.content || ""}
+                            className="bubble-content"
+                            streaming={false}
+                          />
+                        )}
+                        {summaryMessage.tokenUsage && (
+                          <footer className="assistant-token-footer assistant-turn-summary-tokens">
+                            <span>本轮用量 {summaryMessage.tokenUsage.totalTokens} tokens</span>
+                            {buildTokenBreakdown(summaryMessage.tokenUsage).map((item) => (
+                              <span key={`${summaryMessage.id}-${item}`}>{item}</span>
+                            ))}
+                          </footer>
+                        )}
+                      </article>
+                    ) : null}
+                  </div>
+                );
+              }
+
+              return (
+                <Fragment key={message.id}>
+                  {expandedTurnAnchor ? (
+                    <div
+                      className={`assistant-turn-collapsed-summary assistant-turn-collapsed-summary-open ${
+                        activeCollapsingTurn ? "is-collapsing" : "is-expanded"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="assistant-turn-toggle is-open"
+                        onClick={() => toggleAssistantTurn(expandedTurnAnchor.id)}
+                        aria-label="重新折叠本轮"
+                      >
+                        <span className="assistant-turn-toggle-line" aria-hidden="true" />
+                        <span>重新折叠本轮</span>
+                        <span className="assistant-turn-toggle-line is-reversed" aria-hidden="true" />
+                      </button>
                     </div>
-                  ) : isHookStatusMessage ? (
-                    <div className="hook-status-strip">
-                      <span className="hook-status-strip-label">{getHookStatusText(message)}</span>
-                    </div>
-                  ) : isHookPromptMessage ? (
-                    <div className="hook-prompt-card">
-                      <div className="hook-prompt-main">
-                        <span className="hook-prompt-badge">{getHookPromptBadgeText(message)}</span>
-                      </div>
-                      {messageText.length > 0 && (
-                        <MarkdownMessage
-                          content={message.content || ""}
-                          className="bubble-content"
-                          streaming={isStreamingThisMessage}
-                        />
-                      )}
-                    </div>
-                  ) : isGoalContinuationMessage ? (
-                    <div className="goal-continuation-card">
-                      <div className="goal-continuation-main">
-                        <span className="goal-continuation-badge">目标追踪</span>
-                        <p>系统已提醒继续推进目标。</p>
-                      </div>
-                    </div>
-                  ) : isPlanContinuationMessage ? (
-                    <div className="plan-continuation-card">
-                      <div className="plan-continuation-main">
-                        <span className="plan-continuation-badge">计划追踪</span>
-                        <p>系统已提醒继续完成计划。</p>
-                      </div>
-                    </div>
-                  ) : isCompressionSummary ? (
-                    <div className="compression-card-content">
-                      <p className="compression-card-title">上下文压缩节点</p>
-                      <MarkdownMessage content={message.content || ""} className="bubble-content" />
-                    </div>
-                  ) : isOrchestratorMessage ? (
-                    <div className="orchestrator-note-card">
-                      <div className="orchestrator-note-main">
-                        <span className="orchestrator-note-badge">{orchestratorNotice.badge}</span>
-                        <p className="orchestrator-note-summary">{orchestratorNotice.summary}</p>
-                      </div>
-                      <div className="orchestrator-note-meta">
+                  ) : null}
+                  <article
+                    className={`bubble ${
+                      isOrchestratorMessage ? "bubble-orchestrator-note" : `bubble-${message.role}`
+                      } ${isCompressionSummary ? "bubble-compression" : ""} ${
+                        isMemoryToolCard ? "bubble-memory-tool" : ""
+                      } ${isAttachmentOnlyUserMessage ? "bubble-user-attachment-only" : ""} ${
+                        isAttachmentOnlyUserMessage ? "bubble-attachment-only" : ""
+                      } ${isInternalToolImageMessage ? "bubble-tool-image-input" : ""} ${
+                        isRuntimeHookInjectedMessage ? "bubble-runtime-hook-injected" : ""
+                      } ${isHookPromptMessage ? "bubble-hook-prompt" : ""} ${
+                        isHookStatusMessage ? "bubble-hook-status" : ""
+                      } ${
+                        isGoalContinuationMessage ? "bubble-goal-continuation" : ""
+                      } ${
+                        isPlanContinuationMessage ? "bubble-plan-continuation" : ""
+                      } ${
+                        isToolCard && !isMemoryToolCard ? "bubble-tool-plain" : ""
+                      } ${
+                        isStreamingThisMessage ? "is-streaming" : ""
+                      }`}
+                  >
+                    {!isMemoryToolCard && !isOrchestratorMessage && !isToolCard && (
+                      <header>
+                        <strong>
+                          {isInternalToolImageMessage && "Tool Image Input"}
+                          {message.role === "user" &&
+                            !isInternalToolImageMessage &&
+                            !isHookPromptMessage &&
+                            !isHookStatusMessage &&
+                            "User"}
+                          {isHookPromptMessage && "Hook Prompt"}
+                          {isHookStatusMessage && "Hook Status"}
+                          {message.role === "assistant" && (isCompressionSummary ? "Compression" : "Assistant")}
+                          {message.role === "tool" && "Tool"}
+                          {message.role === "system" && "System"}
+                        </strong>
+                        {isInternalToolImageMessage && (
+                          <span className="bubble-meta-badge is-tool-image-input">自动注入</span>
+                        )}
                         {Number(message?.timestamp ?? 0) > 0 && (
                           <span>{formatTimestamp(Number(message.timestamp))}</span>
                         )}
-                        {deleteButton}
+                        {!isToolCard && deleteButton}
+                      </header>
+                    )}
+
+                    {isRuntimeHookInjectedMessage ? (
+                      <div className="runtime-hook-strip">
+                        <span className="runtime-hook-strip-label">{getRuntimeHookStripText(message)}</span>
                       </div>
-                    </div>
-                  ) : isMemoryToolCard ? (
-                    <div className="memory-tool-strip">
-                      <div className="memory-tool-strip-main">
-                        <span className="memory-tool-strip-text">
-                          {getMemoryToolSummary(toolPayload.toolName)}
-                        </span>
-                        {Number(message?.timestamp ?? 0) > 0 && (
-                          <span className="memory-tool-strip-time">
-                            {formatTimestamp(Number(message.timestamp))}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          className="memory-tool-strip-expand"
-                          onClick={() => toggleToolResult(message.id)}
-                        >
-                          {isExpanded ? "收起" : "详情"}
-                        </button>
-                        {branchButton}
-                        {deleteButton}
+                    ) : isHookStatusMessage ? (
+                      <div className="hook-status-strip">
+                        <span className="hook-status-strip-label">{getHookStatusText(message)}</span>
                       </div>
-
-                      {isExpanded && (
-                        <pre
-                          className={`tool-result-body memory-tool-result-body ${
-                            toolPayload.isError ? "is-error" : ""
-                          }`}
-                        >
-                          {toolPayload.result || "暂无响应"}
-                        </pre>
-                      )}
-                    </div>
-                  ) : isToolCard ? (
-                    <div className="tool-card-content">
-                      <p className="tool-call-title">调用工具：{toolPayload.toolName}</p>
-
-                      {toolPayload.command && (
-                        <p className="tool-command-line" title={toolPayload.command}>
-                          命令：{toCommandPreview(toolPayload.command)}
-                        </p>
-                      )}
-
-                      <div className="tool-card-actions">
-                      <span
-                        className={`tool-status ${
-                          toolPayload.approvalStatus === "pending_approval"
-                            ? "is-pending"
-                            : toolPayload.isError
-                              ? "is-error"
-                              : toolPayload.result
-                                ? "is-success"
-                                : "is-pending"
-                        }`}
-                      >
-                        {toolPayload.approvalStatus === "pending_approval"
-                          ? "等待确认"
-                          : toolPayload.isError
-                            ? "执行失败"
-                            : toolPayload.result
-                              ? "执行完成"
-                              : "执行中"}
-                        </span>
-
-                        <button
-                          type="button"
-                          className="tool-expand"
-                          onClick={() => toggleToolResult(message.id)}
-                        >
-                          {isExpanded ? "收起响应" : "展开响应"}
-                        </button>
-                        {branchButton}
-                        {deleteButton}
-                      </div>
-
-                      {isExpanded && (
-                        <pre
-                          className={`tool-result-body ${
-                            toolPayload.isError ? "is-error" : ""
-                          }`}
-                        >
-                          {toolPayload.result || "暂无响应"}
-                        </pre>
-                      )}
-
-                      {toolHooks.length > 0 && (
-                        <div className="tool-hooks" aria-label="工具提示">
-                          {toolHooks.map((hook) => (
-                            <div
-                              key={hook.id}
-                              className={`tool-hook tool-hook-${hook.level || "hint"}`}
-                            >
-                              <span className="tool-hook-badge">
-                                {hook.level === "warning"
-                                  ? "提示"
-                                  : hook.level === "info"
-                                    ? "信息"
-                                    : "建议"}
-                              </span>
-                              <span className="tool-hook-text">{hook.message}</span>
-                            </div>
-                          ))}
+                    ) : isHookPromptMessage ? (
+                      <div className="hook-prompt-card">
+                        <div className="hook-prompt-main">
+                          <span className="hook-prompt-badge">{getHookPromptBadgeText(message)}</span>
                         </div>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      {hasReasoningContent && (
-                        <div className="assistant-reasoning-card">
+                        {messageText.length > 0 && (
+                          <MarkdownMessage
+                            content={message.content || ""}
+                            className="bubble-content"
+                            streaming={isStreamingThisMessage}
+                          />
+                        )}
+                      </div>
+                    ) : isGoalContinuationMessage ? (
+                      <div className="goal-continuation-card">
+                        <div className="goal-continuation-main">
+                          <span className="goal-continuation-badge">目标追踪</span>
+                          <p>系统已提醒继续推进目标。</p>
+                        </div>
+                      </div>
+                    ) : isPlanContinuationMessage ? (
+                      <div className="plan-continuation-card">
+                        <div className="plan-continuation-main">
+                          <span className="plan-continuation-badge">计划追踪</span>
+                          <p>系统已提醒继续完成计划。</p>
+                        </div>
+                      </div>
+                    ) : isCompressionSummary ? (
+                      <div className="compression-card-content">
+                        <p className="compression-card-title">上下文压缩节点</p>
+                        <MarkdownMessage content={message.content || ""} className="bubble-content" />
+                      </div>
+                    ) : isOrchestratorMessage ? (
+                      <div className="orchestrator-note-card">
+                        <div className="orchestrator-note-main">
+                          <span className="orchestrator-note-badge">{orchestratorNotice.badge}</span>
+                          <p className="orchestrator-note-summary">{orchestratorNotice.summary}</p>
+                        </div>
+                        <div className="orchestrator-note-meta">
+                          {Number(message?.timestamp ?? 0) > 0 && (
+                            <span>{formatTimestamp(Number(message.timestamp))}</span>
+                          )}
+                          {deleteButton}
+                        </div>
+                      </div>
+                    ) : isMemoryToolCard ? (
+                      <div className="memory-tool-strip">
+                        <div className="memory-tool-strip-main">
+                          <span className="memory-tool-strip-text">
+                            {getMemoryToolSummary(toolPayload.toolName)}
+                          </span>
+                          {Number(message?.timestamp ?? 0) > 0 && (
+                            <span className="memory-tool-strip-time">
+                              {formatTimestamp(Number(message.timestamp))}
+                            </span>
+                          )}
                           <button
                             type="button"
-                            className={`assistant-reasoning-toggle ${
-                              isReasoningExpanded ? "is-open" : ""
-                            }`}
-                            onClick={() => toggleReasoningResult(message.id, isReasoningExpanded)}
+                            className="memory-tool-strip-expand"
+                            onClick={() => toggleToolResult(message.id)}
                           >
-                            <span className="assistant-reasoning-label">
-                              思考过程
-                              {reasoningDurationMs > 0 && (
-                                <small>{formatReasoningDuration(reasoningDurationMs)}</small>
-                              )}
-                            </span>
-                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-                            </svg>
+                            {isExpanded ? "收起" : "详情"}
                           </button>
-
-                          {isReasoningExpanded && (
-                            <div className="assistant-reasoning-body">
-                              <MarkdownMessage
-                                content={message.reasoningContent || ""}
-                                className="bubble-content"
-                                streaming={isStreamingThisMessage}
-                              />
-                            </div>
-                          )}
+                          {branchButton}
+                          {deleteButton}
                         </div>
-                      )}
 
-                      {isEditingThisMessage ? (
-                        <form
-                          className="message-edit-card"
-                          onSubmit={(event) => handleSubmitEditMessage(event, message.id)}
-                        >
-                          <textarea
-                            value={editingMessageText}
-                            onChange={(event) => setEditingMessageText(event.target.value)}
-                            autoFocus
-                            rows={Math.min(12, Math.max(3, editingMessageText.split(/\r?\n/).length + 1))}
-                          />
-                          <div className="message-edit-actions">
+                        {isExpanded && (
+                          <pre
+                            className={`tool-result-body memory-tool-result-body ${
+                              toolPayload.isError ? "is-error" : ""
+                            }`}
+                          >
+                            {toolPayload.result || "暂无响应"}
+                          </pre>
+                        )}
+                      </div>
+                    ) : isToolCard ? (
+                      <div className="tool-card-content tool-row-content">
+                        <div className="tool-row-main">
+                          <span className="tool-call-title">工具：{toolPayload.toolName}</span>
+                          <span
+                            className={`tool-status ${
+                              toolPayload.approvalStatus === "pending_approval"
+                                ? "is-pending"
+                                : toolPayload.isError
+                                  ? "is-error"
+                                  : toolPayload.result
+                                    ? "is-success"
+                                    : "is-pending"
+                            }`}
+                          >
+                            {toolPayload.approvalStatus === "pending_approval"
+                              ? "等待确认"
+                              : toolPayload.isError
+                                ? "执行失败"
+                                : toolPayload.result
+                                  ? "执行完成"
+                                  : "执行中"}
+                          </span>
+                          {toolPayload.command && (
+                            <span className="tool-command-line" title={toolPayload.command}>
+                              {toCommandPreview(toolPayload.command)}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            className="tool-expand"
+                            onClick={() => toggleToolResult(message.id)}
+                          >
+                            {isExpanded ? "收起" : "展开"}
+                          </button>
+                          {branchButton}
+                          {deleteButton}
+                        </div>
+
+                        {isExpanded && (
+                          <pre
+                            className={`tool-result-body ${
+                              toolPayload.isError ? "is-error" : ""
+                            }`}
+                          >
+                            {toolPayload.result || "暂无响应"}
+                          </pre>
+                        )}
+
+                        {toolHooks.length > 0 && (
+                          <div className="tool-hooks" aria-label="工具提示">
+                            {toolHooks.map((hook) => (
+                              <div
+                                key={hook.id}
+                                className={`tool-hook tool-hook-${hook.level || "hint"}`}
+                              >
+                                <span className="tool-hook-badge">
+                                  {hook.level === "warning"
+                                    ? "提示"
+                                    : hook.level === "info"
+                                      ? "信息"
+                                      : "建议"}
+                                </span>
+                                <span className="tool-hook-text">{hook.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        {hasReasoningContent && (
+                          <div className="assistant-reasoning-card">
                             <button
                               type="button"
-                              className="message-edit-cancel"
-                              onClick={handleCancelEditMessage}
+                              className={`assistant-reasoning-toggle ${
+                                isReasoningExpanded ? "is-open" : ""
+                              }`}
+                              onClick={() => toggleReasoningResult(message.id, isReasoningExpanded)}
                             >
-                              取消
+                              <span className="assistant-reasoning-label">
+                                思考过程
+                                {reasoningDurationMs > 0 && (
+                                  <small>{formatReasoningDuration(reasoningDurationMs)}</small>
+                                )}
+                              </span>
+                              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                              </svg>
                             </button>
+
+                            {isReasoningExpanded && (
+                              <div className="assistant-reasoning-body">
+                                <MarkdownMessage
+                                  content={message.reasoningContent || ""}
+                                  className="bubble-content"
+                                  streaming={isStreamingThisMessage}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {isEditingThisMessage ? (
+                          <form
+                            className="message-edit-card"
+                            onSubmit={(event) => handleSubmitEditMessage(event, message.id)}
+                          >
+                            <textarea
+                              value={editingMessageText}
+                              onChange={(event) => setEditingMessageText(event.target.value)}
+                              autoFocus
+                              rows={Math.min(12, Math.max(3, editingMessageText.split(/\r?\n/).length + 1))}
+                            />
+                            <div className="message-edit-actions">
+                              <button
+                                type="button"
+                                className="message-edit-cancel"
+                                onClick={handleCancelEditMessage}
+                              >
+                                取消
+                              </button>
                             <button
                               type="submit"
                               className="message-edit-submit"
@@ -3742,120 +4077,121 @@ export function ChatPanel({
                             </button>
                           </div>
                         </form>
-                      ) : messageText.length > 0 && (
-                        <MarkdownMessage
-                          content={message.content || ""}
-                          className="bubble-content"
-                          streaming={isStreamingThisMessage}
-                        />
-                      )}
-                      {imageAttachments.length > 0 && (
-                        <div
-                          className={`message-image-grid ${
-                            isAttachmentOnlyUserMessage ? "is-large" : ""
-                          }`}
-                        >
-                          {imageAttachments.slice(0, 3).map((attachment) => (
-                            <img
-                              key={String(attachment.id ?? attachment.dataUrl)}
-                              src={String(attachment.dataUrl ?? attachment.url ?? "")}
-                              alt={String(attachment.name ?? "图片")}
-                              className="message-image-thumb clickable"
-                              onClick={() => setViewingImage(String(attachment.dataUrl ?? attachment.url ?? ""))}
-                            />
-                          ))}
-                          {imageAttachments.length > 3 && (
-                            <div className="message-image-more">
-                              +{imageAttachments.length - 3}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {parsedFileAttachments.length > 0 && (
-                        <div
-                          className={`message-file-grid ${
-                            isAttachmentOnlyUserMessage ? "is-large" : ""
-                          }`}
-                        >
-                          {parsedFileAttachments.slice(0, 3).map((file) => (
-                            <button
-                              key={file.id}
-                              type="button"
-                              className="message-file-thumb clickable"
-                              title={file.name}
-                              onClick={() =>
-                                setViewingFileText({
-                                  name: file.name,
-                                  mimeType: file.mimeType || file.extension || "unknown",
-                                  size: file.size,
-                                  content: getParsedFileViewerContent(file)
-                                })
-                              }
-                            >
-                              <span className="message-file-ext">
-                                {getFileBadgeLabel(file.name, file.mimeType)}
-                              </span>
-                              <small className="message-file-name">{file.name}</small>
-                            </button>
-                          ))}
-
-                          {parsedFileAttachments.length > 3 && (
-                            <div className="message-file-more">
-                              +{parsedFileAttachments.length - 3}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {message.role === "assistant" && message.tokenUsage && (
-                        <footer className="assistant-token-footer">
-                          <span>本轮用量 {message.tokenUsage.totalTokens} tokens</span>
-                          {buildTokenBreakdown(message.tokenUsage).map((item) => (
-                            <span key={`${message.id}-${item}`}>{item}</span>
-                          ))}
-                        </footer>
-                      )}
-                      {runtimeReplyErrorForMessage && (
-                        <div className="assistant-runtime-error">
-                          <strong>本次运行报错</strong>
-                          <p>{runtimeReplyErrorForMessage.message}</p>
-                        </div>
-                      )}
-                      {showBubbleActionRow && (
-                        <div className="bubble-action-row">
-                          {branchButton}
-                          {rerunButton}
-                          {editButton}
-                          <button
-                            type="button"
-                            className="bubble-action-btn bubble-action-btn-icon"
-                            onClick={() => handleCopyMessageClick(message.id, copyText)}
-                            disabled={!canCopyMessage}
-                            title={copyButtonLabel}
-                            aria-label={copyButtonLabel}
+                        ) : messageText.length > 0 && (
+                          <MarkdownMessage
+                            content={message.content || ""}
+                            className="bubble-content"
+                            streaming={isStreamingThisMessage}
+                          />
+                        )}
+                        {imageAttachments.length > 0 && (
+                          <div
+                            className={`message-image-grid ${
+                              isAttachmentOnlyUserMessage ? "is-large" : ""
+                            }`}
                           >
-                            <BubbleCopyIcon copied={isCopiedThisMessage} />
-                          </button>
-                          <button
-                            type="button"
-                            className={`bubble-action-btn bubble-action-btn-icon ${isPlayingThisMessage ? "is-playing" : ""}`}
-                            onClick={() => handleBubbleSpeakClick(message.id, speakText)}
-                            disabled={isSpeakDisabled}
-                            title={speakButtonLabel}
-                            aria-label={speakButtonLabel}
-                          >
-                            {isLoadingThisMessage ? (
-                              <span className="bubble-tts-spinner" aria-hidden="true" />
-                            ) : (
-                              <BubbleSpeakIcon playing={isPlayingThisMessage} />
+                            {imageAttachments.slice(0, 3).map((attachment) => (
+                              <img
+                                key={String(attachment.id ?? attachment.dataUrl)}
+                                src={String(attachment.dataUrl ?? attachment.url ?? "")}
+                                alt={String(attachment.name ?? "图片")}
+                                className="message-image-thumb clickable"
+                                onClick={() => setViewingImage(String(attachment.dataUrl ?? attachment.url ?? ""))}
+                              />
+                            ))}
+                            {imageAttachments.length > 3 && (
+                              <div className="message-image-more">
+                                +{imageAttachments.length - 3}
+                              </div>
                             )}
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </article>
+                          </div>
+                        )}
+
+                        {parsedFileAttachments.length > 0 && (
+                          <div
+                            className={`message-file-grid ${
+                              isAttachmentOnlyUserMessage ? "is-large" : ""
+                            }`}
+                          >
+                            {parsedFileAttachments.slice(0, 3).map((file) => (
+                              <button
+                                key={file.id}
+                                type="button"
+                                className="message-file-thumb clickable"
+                                title={file.name}
+                                onClick={() =>
+                                  setViewingFileText({
+                                    name: file.name,
+                                    mimeType: file.mimeType || file.extension || "unknown",
+                                    size: file.size,
+                                    content: getParsedFileViewerContent(file)
+                                  })
+                                }
+                              >
+                                <span className="message-file-ext">
+                                  {getFileBadgeLabel(file.name, file.mimeType)}
+                                </span>
+                                <small className="message-file-name">{file.name}</small>
+                              </button>
+                            ))}
+
+                            {parsedFileAttachments.length > 3 && (
+                              <div className="message-file-more">
+                                +{parsedFileAttachments.length - 3}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {message.role === "assistant" && message.tokenUsage && (
+                          <footer className="assistant-token-footer">
+                            <span>本轮用量 {message.tokenUsage.totalTokens} tokens</span>
+                            {buildTokenBreakdown(message.tokenUsage).map((item) => (
+                              <span key={`${message.id}-${item}`}>{item}</span>
+                            ))}
+                          </footer>
+                        )}
+                        {runtimeReplyErrorForMessage && (
+                          <div className="assistant-runtime-error">
+                            <strong>本次运行报错</strong>
+                            <p>{runtimeReplyErrorForMessage.message}</p>
+                          </div>
+                        )}
+                        {showBubbleActionRow && (
+                          <div className="bubble-action-row">
+                            {branchButton}
+                            {rerunButton}
+                            {editButton}
+                            <button
+                              type="button"
+                              className="bubble-action-btn bubble-action-btn-icon"
+                              onClick={() => handleCopyMessageClick(message.id, copyText)}
+                              disabled={!canCopyMessage}
+                              title={copyButtonLabel}
+                              aria-label={copyButtonLabel}
+                            >
+                              <BubbleCopyIcon copied={isCopiedThisMessage} />
+                            </button>
+                            <button
+                              type="button"
+                              className={`bubble-action-btn bubble-action-btn-icon ${isPlayingThisMessage ? "is-playing" : ""}`}
+                              onClick={() => handleBubbleSpeakClick(message.id, speakText)}
+                              disabled={isSpeakDisabled}
+                              title={speakButtonLabel}
+                              aria-label={speakButtonLabel}
+                            >
+                              {isLoadingThisMessage ? (
+                                <span className="bubble-tts-spinner" aria-hidden="true" />
+                              ) : (
+                                <BubbleSpeakIcon playing={isPlayingThisMessage} />
+                              )}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </article>
+                </Fragment>
               );
             })}
 

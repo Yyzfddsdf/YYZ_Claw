@@ -98,6 +98,12 @@ function normalizeHooks(hooks) {
     .filter(Boolean);
 }
 
+function normalizeMetadata(metadata) {
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata
+    : {};
+}
+
 export function createToolMessagePayloadFromCall(event) {
   const argumentsObject = normalizeArguments(event?.arguments);
 
@@ -112,7 +118,8 @@ export function createToolMessagePayloadFromCall(event) {
     isError: false,
     approvalStatus: "running",
     pendingApprovalId: "",
-    hooks: normalizeHooks(event?.hooks)
+    hooks: normalizeHooks(event?.hooks),
+    metadata: normalizeMetadata(event?.metadata)
   };
 }
 
@@ -137,7 +144,8 @@ export function createToolMessagePayloadFromResult(event) {
     isError: Boolean(event?.isError),
     approvalStatus: "approved",
     pendingApprovalId: "",
-    hooks: normalizeHooks(event?.hooks)
+    hooks: normalizeHooks(event?.hooks),
+    metadata: normalizeMetadata(event?.metadata)
   };
 }
 
@@ -148,7 +156,8 @@ export function applyToolResultToPayload(payload, event) {
     result: normalizeResultText(event?.content),
     isError: Boolean(event?.isError),
     approvalStatus: "approved",
-    hooks: nextHooks.length > 0 ? nextHooks : normalizeHooks(payload?.hooks)
+    hooks: nextHooks.length > 0 ? nextHooks : normalizeHooks(payload?.hooks),
+    metadata: normalizeMetadata(event?.metadata)
   };
 }
 
@@ -177,7 +186,8 @@ export function parseToolMessagePayload(content) {
     isError: Boolean(parsed.isError),
     approvalStatus: normalizeApprovalStatus(parsed.approvalStatus),
     pendingApprovalId: typeof parsed.pendingApprovalId === "string" ? parsed.pendingApprovalId : "",
-    hooks: normalizeHooks(parsed.hooks)
+    hooks: normalizeHooks(parsed.hooks),
+    metadata: normalizeMetadata(parsed.metadata)
   };
 }
 

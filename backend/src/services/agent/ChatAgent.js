@@ -1701,6 +1701,10 @@ export class ChatAgent {
           toolCallId: toolCall.id,
           toolName: toolResult.name,
           content: toolResult.content,
+          metadata:
+            toolResult.metadata && typeof toolResult.metadata === "object" && !Array.isArray(toolResult.metadata)
+              ? toolResult.metadata
+              : {},
           hooks: Array.isArray(toolResult.hooks) ? toolResult.hooks : [],
           isError: toolResult.isError,
           mergedText: assembler.getMergedText()
@@ -1885,6 +1889,10 @@ export class ChatAgent {
         toolCallId: toolCall.id,
         toolName: toolResult.name,
         content: toolResult.content,
+        metadata:
+          toolResult.metadata && typeof toolResult.metadata === "object" && !Array.isArray(toolResult.metadata)
+            ? toolResult.metadata
+            : {},
         hooks: Array.isArray(toolResult.hooks) ? toolResult.hooks : [],
         isError: toolResult.isError,
         mergedText: assembler.getMergedText()

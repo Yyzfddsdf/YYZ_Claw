@@ -140,6 +140,50 @@ function normalizeEntry(entry, index) {
   };
 }
 
+function countTextLines(content) {
+  const source = typeof content === "string" ? content.replace(/\r\n/g, "\n") : "";
+  if (!source) {
+    return 0;
+  }
+  return source.split("\n").length;
+}
+
+function createWriteViewFile({
+  filePath,
+  content,
+  append = false,
+  overwrite = false,
+  existingLineCount = 0
+} = {}) {
+  const action = append ? "append" : overwrite ? "overwrite" : "create";
+  const actionLabel =
+    action === "append"
+      ? "追加写入"
+      : action === "overwrite"
+        ? "覆盖写入"
+        : "新建写入";
+  const newLineCount = countTextLines(content);
+  const oldLineCount = overwrite ? existingLineCount : 0;
+
+  return {
+    path: filePath,
+    action,
+    actionLabel,
+    note: overwrite ? "未提供旧内容，以下为将写入的新内容。" : "",
+    additions: newLineCount,
+    deletions: oldLineCount,
+    hunks: [
+      {
+        header: actionLabel,
+        oldStart: overwrite ? 1 : null,
+        newStart: newLineCount > 0 ? (append ? existingLineCount + 1 : 1) : null,
+        oldCount: oldLineCount,
+        newCount: newLineCount
+      }
+    ]
+  };
+}
+
 async function writeOne(entry, index, executionContext) {
   const cwdInput = typeof entry.cwd === "string" ? entry.cwd.trim() : "";
   const contextCwd = resolveContextWorkingDirectory(executionContext);
@@ -164,6 +208,10 @@ async function writeOne(entry, index, executionContext) {
 
   const existingStats = await getStatsOrNull(resolvedFilePath);
   const staleWarning = await checkFileStaleness(resolvedFilePath, taskKey);
+  const existingContent =
+    existingStats && !existingStats.isDirectory()
+      ? await fs.readFile(resolvedFilePath, "utf8").catch(() => "")
+      : "";
 
   if (existingStats?.isDirectory()) {
     throw new Error(`operations[${index}].filePath points to a directory`);
@@ -196,6 +244,13 @@ async function writeOne(entry, index, executionContext) {
     appended: entry.append,
     bytesWritten: Buffer.byteLength(content, "utf8"),
     totalBytes: Number(finalStats.size),
+    viewFile: createWriteViewFile({
+      filePath: resolvedFilePath,
+      content,
+      append: entry.append,
+      overwrite: Boolean(existingStats && !entry.append),
+      existingLineCount: countTextLines(existingContent)
+    }),
     ...(staleWarning ? { _warning: staleWarning } : {})
   };
 }
@@ -262,9 +317,27 @@ export default {
       });
     }
 
+    const viewFiles = results
+      .map((result) => result.viewFile)
+      .filter((file) => file && typeof file === "object");
+    const resultEntries = results.map(({ viewFile, ...result }) => result);
+
     return {
-      operationCount: results.length,
-      results
+      __toolResultEnvelope: true,
+      result: {
+        operationCount: results.length,
+        results: resultEntries
+      },
+      metadata: {
+        view: {
+          kind: "write",
+          summaryText:
+            viewFiles.length === 1
+              ? String(viewFiles[0]?.path ?? "").trim()
+              : `${viewFiles.length} 个文件写入`,
+          files: viewFiles
+        }
+      }
     };
   }
 };

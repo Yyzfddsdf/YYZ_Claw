@@ -17,6 +17,7 @@ import { WorkspaceDock } from "../workspace/WorkspaceDock";
 import { MarkdownMessage } from "./MarkdownMessage";
 import "./chat.css";
 import { parseToolMessagePayload } from "./toolMessageCodec";
+import { buildToolDiffViewModel } from "./toolDiffViewModel";
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 72;
 const MAX_IMAGE_PAYLOAD_BYTES = 2_000_000;
 const MAX_UPLOAD_FILE_SIZE_BYTES = 20 * 1024 * 1024;
@@ -1041,6 +1042,17 @@ function buildAssistantTurnGroups(messages = [], options = {}) {
   }
 
   return turns;
+}
+
+function summarizeToolDiffStats(viewModel) {
+  const files = Array.isArray(viewModel?.files) ? viewModel.files : [];
+  return files.reduce(
+    (summary, file) => ({
+      additions: summary.additions + Number(file?.additions ?? 0),
+      deletions: summary.deletions + Number(file?.deletions ?? 0)
+    }),
+    { additions: 0, deletions: 0 }
+  );
 }
 
 export function ChatPanel({
@@ -3610,6 +3622,14 @@ export function ChatPanel({
                 !String(message.reasoningContent ?? "").trim();
               const isToolCard = Boolean(toolPayload);
               const isMemoryToolCard = isToolCard && isMemoryToolName(toolPayload.toolName);
+              const toolDiffViewModel =
+                isToolCard && !isMemoryToolCard ? buildToolDiffViewModel(toolPayload) : null;
+              const normalizedToolName = String(toolPayload?.toolName ?? "").trim().toLowerCase();
+              const isStructuredDiffTool =
+                normalizedToolName === "write" || normalizedToolName === "edit";
+              const toolDiffStats = toolDiffViewModel
+                ? summarizeToolDiffStats(toolDiffViewModel)
+                : { additions: 0, deletions: 0 };
               const toolHooks =
                 toolPayload && Array.isArray(toolPayload.hooks) ? toolPayload.hooks : [];
               const isExpanded = Boolean(expandedToolMap[message.id]);
@@ -3974,6 +3994,17 @@ export function ChatPanel({
                               {toCommandPreview(toolPayload.command)}
                             </span>
                           )}
+                          {toolDiffViewModel?.summaryText && (
+                            <span className="tool-command-line" title={toolDiffViewModel.summaryText}>
+                              {toolDiffViewModel.summaryText}
+                            </span>
+                          )}
+                          {isStructuredDiffTool && toolDiffStats.additions > 0 ? (
+                            <span className="tool-inline-stat is-add">+{toolDiffStats.additions}</span>
+                          ) : null}
+                          {isStructuredDiffTool && toolDiffStats.deletions > 0 ? (
+                            <span className="tool-inline-stat is-remove">-{toolDiffStats.deletions}</span>
+                          ) : null}
                           <button
                             type="button"
                             className="tool-expand"
@@ -3986,13 +4017,88 @@ export function ChatPanel({
                         </div>
 
                         {isExpanded && (
-                          <pre
-                            className={`tool-result-body ${
-                              toolPayload.isError ? "is-error" : ""
-                            }`}
-                          >
-                            {toolPayload.result || "暂无响应"}
-                          </pre>
+                          toolDiffViewModel ? (
+                            <div className="tool-diff-preview">
+                              {(Array.isArray(toolDiffViewModel?.files) ? toolDiffViewModel.files : []).map((file) => (
+                                <section key={file.id} className="tool-diff-file">
+                                  <header className="tool-diff-file-header">
+                                    <div className="tool-diff-file-main">
+                                      <strong className="tool-diff-file-path">{file.path}</strong>
+                                      {file.moveTo ? (
+                                        <span className="tool-diff-file-move">→ {file.moveTo}</span>
+                                      ) : null}
+                                    </div>
+                                    <div className="tool-diff-file-meta">
+                                      <span className={`tool-diff-action is-${file.action}`}>
+                                        {file.actionLabel}
+                                      </span>
+                                      {typeof file.additions === "number" && file.additions > 0 ? (
+                                        <span className="tool-diff-stat is-add">+{file.additions}</span>
+                                      ) : null}
+                                      {typeof file.deletions === "number" && file.deletions > 0 ? (
+                                        <span className="tool-diff-stat is-remove">-{file.deletions}</span>
+                                      ) : null}
+                                    </div>
+                                  </header>
+                                  {file.note ? <p className="tool-diff-note">{file.note}</p> : null}
+                                  {Array.isArray(file.hunks) && file.hunks.length > 0 ? (
+                                    <div className="tool-diff-hunks">
+                                      {file.hunks.map((hunk, hunkIndex) => (
+                                        <div key={`${file.id}:hunk:${hunkIndex}`} className="tool-diff-hunk">
+                                          {hunk.header ? (
+                                            <div className="tool-diff-hunk-header">{hunk.header}</div>
+                                          ) : null}
+                                          <div className="tool-diff-lines">
+                                            {Array.isArray(hunk.lines) && hunk.lines.length > 0 ? (
+                                              hunk.lines.map((line, lineIndex) => (
+                                                <div
+                                                  key={`${file.id}:hunk:${hunkIndex}:line:${lineIndex}`}
+                                                  className={`tool-diff-line is-${line.kind || "context"}`}
+                                                >
+                                                  <span className="tool-diff-gutter">
+                                                    <span className="tool-diff-line-number">
+                                                      {Number.isFinite(line.oldLineNumber) ? line.oldLineNumber : ""}
+                                                    </span>
+                                                    <span className="tool-diff-line-number">
+                                                      {Number.isFinite(line.newLineNumber) ? line.newLineNumber : ""}
+                                                    </span>
+                                                    <span className="tool-diff-line-marker">
+                                                      {line.kind === "add"
+                                                        ? "+"
+                                                        : line.kind === "remove"
+                                                          ? "-"
+                                                          : " "}
+                                                    </span>
+                                                  </span>
+                                                  <span className="tool-diff-text">{line.text || " "}</span>
+                                                </div>
+                                              ))
+                                            ) : (
+                                              <div className="tool-diff-empty">无行级内容</div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="tool-diff-empty">此操作没有可展示的行级变更。</div>
+                                  )}
+                                </section>
+                              ))}
+                            </div>
+                          ) : (
+                            isStructuredDiffTool ? (
+                              <div className="tool-diff-empty">当前参数不足，无法生成可视化改动视图。</div>
+                            ) : (
+                              <pre
+                                className={`tool-result-body ${
+                                  toolPayload.isError ? "is-error" : ""
+                                }`}
+                              >
+                                {toolPayload.result || "暂无响应"}
+                              </pre>
+                            )
+                          )
                         )}
 
                         {toolHooks.length > 0 && (

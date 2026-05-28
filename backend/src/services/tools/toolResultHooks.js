@@ -163,6 +163,10 @@ export function normalizeExecutedToolResponse({
     envelope.result && typeof envelope.result === "object" && !Array.isArray(envelope.result)
       ? envelope.result
       : null;
+  const metadata =
+    envelope.metadata && typeof envelope.metadata === "object" && !Array.isArray(envelope.metadata)
+      ? envelope.metadata
+      : {};
 
   return {
     name: String(toolName ?? "").trim(),
@@ -170,6 +174,7 @@ export function normalizeExecutedToolResponse({
     modelContent: appendToolResultHooksToContent(content, hooks),
     hooks,
     imageAttachments,
+    metadata,
     resultPayload,
     isError: Boolean(isError)
   };

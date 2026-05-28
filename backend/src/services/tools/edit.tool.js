@@ -98,6 +98,56 @@ function applyLineEnding(text, lineEnding) {
   return text.replace(/\n/g, lineEnding);
 }
 
+function countTextLines(content) {
+  const source = typeof content === "string" ? content.replace(/\r\n/g, "\n") : "";
+  if (!source) {
+    return 0;
+  }
+  return source.split("\n").length;
+}
+
+function charIndexToLineNumber(content, index) {
+  if (!Number.isFinite(index) || index < 0) {
+    return 1;
+  }
+  return String(content ?? "").slice(0, index).split(/\r\n|\n/).length;
+}
+
+function countPatchDiffKinds(hunkLines = []) {
+  let additions = 0;
+  let deletions = 0;
+
+  for (const line of hunkLines) {
+    if (typeof line !== "string" || line.startsWith("@@")) {
+      continue;
+    }
+    if (line.startsWith("+")) {
+      additions += 1;
+    } else if (line.startsWith("-")) {
+      deletions += 1;
+    }
+  }
+
+  return { additions, deletions };
+}
+
+function parseUnifiedHunkHeader(header = "") {
+  const match = String(header)
+    .trim()
+    .match(/^@@\s*-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s*@@/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    oldStart: Number(match[1]),
+    oldCount: Number(match[2] ?? 1),
+    newStart: Number(match[3]),
+    newCount: Number(match[4] ?? 1)
+  };
+}
+
 function finalizeStructuredBlock(current, blocks) {
   if (!current) {
     return;
@@ -380,13 +430,32 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
       throw new Error(`Delete target is a directory: ${resolvedFilePath}`);
     }
 
+    const currentContent = await fs.readFile(resolvedFilePath, "utf8");
+
     if (!checkOnly) {
       await fs.unlink(resolvedFilePath);
     }
 
     return {
       filePath: resolvedFilePath,
-      operation: "delete"
+      operation: "delete",
+      viewFile: {
+        path: resolvedFilePath,
+        action: "delete",
+        actionLabel: "删除文件",
+        moveTo: "",
+        additions: 0,
+        deletions: countTextLines(currentContent),
+        hunks: [
+          {
+            header: "删除文件",
+            oldStart: 1,
+            oldCount: countTextLines(currentContent),
+            newStart: null,
+            newCount: 0
+          }
+        ]
+      }
     };
   }
 
@@ -405,7 +474,24 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
 
     return {
       filePath: resolvedFilePath,
-      operation: "add"
+      operation: "add",
+      viewFile: {
+        path: resolvedFilePath,
+        action: "add",
+        actionLabel: "新增文件",
+        moveTo: "",
+        additions: countTextLines(content),
+        deletions: 0,
+        hunks: [
+          {
+            header: "新增文件",
+            oldStart: null,
+            oldCount: 0,
+            newStart: 1,
+            newCount: countTextLines(content)
+          }
+        ]
+      }
     };
   }
 
@@ -436,6 +522,7 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
   }
 
   let nextContent = currentContent;
+  const viewHunks = [];
 
   for (const hunk of block.hunks ?? []) {
     const replacement = buildStructuredBlockReplacement(hunk);
@@ -448,6 +535,15 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
     }
 
     if (oldText.length === 0 && newText.length > 0) {
+      const additionsOnly = countPatchDiffKinds(hunk);
+      viewHunks.push({
+        header: String(hunk?.[0] ?? "").startsWith("@@") ? String(hunk[0]) : "",
+        oldStart: 1,
+        oldCount: 0,
+        newStart: 1,
+        newCount: countTextLines(newText),
+        ...additionsOnly
+      });
       nextContent = newText + nextContent;
       continue;
     }
@@ -457,6 +553,17 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
       oldText,
       resolvedFilePath
     );
+    const oldStart = charIndexToLineNumber(nextContent, matchIndex);
+    const { additions, deletions } = countPatchDiffKinds(hunk);
+    viewHunks.push({
+      header: String(hunk?.[0] ?? "").startsWith("@@") ? String(hunk[0]) : "",
+      oldStart,
+      oldCount: countTextLines(oldText),
+      newStart: oldStart,
+      newCount: countTextLines(newText),
+      additions,
+      deletions
+    });
 
     nextContent =
       nextContent.slice(0, matchIndex) +
@@ -498,7 +605,22 @@ async function applyStructuredPatchBlock(block, cwd, checkOnly) {
     filePath: resolvedFilePath,
     targetFilePath: targetPath,
     operation: block.moveTo ? "move_update" : "update",
-    changed: true
+    changed: true,
+    viewFile: {
+      path: resolvedFilePath,
+      action: block.moveTo ? "move_update" : "update",
+      actionLabel: block.moveTo ? "移动并修改" : "修改文件",
+      moveTo: block.moveTo ? targetPath : "",
+      additions: viewHunks.reduce((sum, hunk) => sum + Number(hunk?.additions ?? 0), 0),
+      deletions: viewHunks.reduce((sum, hunk) => sum + Number(hunk?.deletions ?? 0), 0),
+      hunks: viewHunks.map((hunk) => ({
+        header: hunk.header,
+        oldStart: hunk.oldStart,
+        oldCount: hunk.oldCount,
+        newStart: hunk.newStart,
+        newCount: hunk.newCount
+      }))
+    }
   };
 }
 
@@ -587,6 +709,96 @@ function runGitApply({ cwd, patch, checkOnly, timeoutMs }) {
   });
 }
 
+function parseUnifiedDiffView(patch) {
+  const lines = splitPatchLines(patch);
+  const files = [];
+  let currentFile = null;
+  let currentHunk = null;
+
+  const pushCurrentHunk = () => {
+    if (!currentFile || !currentHunk) {
+      return;
+    }
+    currentFile.hunks.push(currentHunk);
+    currentHunk = null;
+  };
+
+  const pushCurrentFile = () => {
+    if (!currentFile) {
+      return;
+    }
+    files.push({
+      ...currentFile,
+      additions: currentFile.hunks.reduce((sum, hunk) => sum + Number(hunk?.additions ?? 0), 0),
+      deletions: currentFile.hunks.reduce((sum, hunk) => sum + Number(hunk?.deletions ?? 0), 0)
+    });
+    currentFile = null;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (line.startsWith("--- ")) {
+      const oldPath = line.slice(4).trim().replace(/^a\//, "");
+      const nextLine = lines[index + 1] ?? "";
+      if (!nextLine.startsWith("+++ ")) {
+        continue;
+      }
+
+      pushCurrentHunk();
+      pushCurrentFile();
+
+      const newPath = nextLine.slice(4).trim().replace(/^b\//, "");
+      const isAdd = oldPath === "/dev/null";
+      const isDelete = newPath === "/dev/null";
+      const pathValue = isAdd ? newPath : oldPath;
+
+      currentFile = {
+        path: pathValue,
+        action: isAdd ? "add" : isDelete ? "delete" : "update",
+        actionLabel: isAdd ? "新增文件" : isDelete ? "删除文件" : "修改文件",
+        moveTo: !isAdd && !isDelete && oldPath !== newPath ? newPath : "",
+        hunks: []
+      };
+      index += 1;
+      continue;
+    }
+
+    if (!currentFile) {
+      continue;
+    }
+
+    if (line.startsWith("@@")) {
+      pushCurrentHunk();
+      const parsed = parseUnifiedHunkHeader(line);
+      currentHunk = {
+        header: line,
+        oldStart: parsed?.oldStart ?? null,
+        oldCount: parsed?.oldCount ?? 0,
+        newStart: parsed?.newStart ?? null,
+        newCount: parsed?.newCount ?? 0,
+        additions: 0,
+        deletions: 0
+      };
+      continue;
+    }
+
+    if (!currentHunk || line.startsWith("\\")) {
+      continue;
+    }
+
+    if (line.startsWith("+")) {
+      currentHunk.additions += 1;
+    } else if (line.startsWith("-")) {
+      currentHunk.deletions += 1;
+    }
+  }
+
+  pushCurrentHunk();
+  pushCurrentFile();
+  return files;
+}
+
 function buildGitApplyError(result) {
   return [
     `git apply failed with code ${result.exitCode}.`,
@@ -654,13 +866,30 @@ export default {
           cwd,
           checkOnly
         });
+        const viewFiles = structuredResult.results
+          .map((result) => result?.viewFile)
+          .filter((file) => file && typeof file === "object");
+        const resultEntries = structuredResult.results.map(({ viewFile, ...result }) => result);
 
         return {
-          cwd,
-          checkOnly,
-          applied: !checkOnly,
-          mode: structuredResult.mode,
-          results: structuredResult.results
+          __toolResultEnvelope: true,
+          result: {
+            cwd,
+            checkOnly,
+            applied: !checkOnly,
+            mode: structuredResult.mode,
+            results: resultEntries
+          },
+          metadata: {
+            view: {
+              kind: "edit",
+              summaryText:
+                viewFiles.length === 1
+                  ? String(viewFiles[0]?.path ?? "").trim()
+                  : `${viewFiles.length} 个文件补丁`,
+              files: viewFiles
+            }
+          }
         };
       } catch (error) {
         throw new Error(
@@ -687,13 +916,28 @@ export default {
       throw new Error(buildGitApplyError(result));
     }
 
+    const unifiedViewFiles = parseUnifiedDiffView(patch);
+
     return {
-      cwd,
-      checkOnly,
-      applied: !checkOnly,
-      mode: "git",
-      stdout: result.stdout,
-      stderr: result.stderr
+      __toolResultEnvelope: true,
+      result: {
+        cwd,
+        checkOnly,
+        applied: !checkOnly,
+        mode: "git",
+        stdout: result.stdout,
+        stderr: result.stderr
+      },
+      metadata: {
+        view: {
+          kind: "edit",
+          summaryText:
+            unifiedViewFiles.length === 1
+              ? String(unifiedViewFiles[0]?.path ?? "").trim()
+              : `${unifiedViewFiles.length} 个文件补丁`,
+          files: unifiedViewFiles
+        }
+      }
     };
   }
 };
